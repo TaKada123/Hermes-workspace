@@ -49,6 +49,7 @@ def _copy_tree() -> list[str]:
         (src, home / "policies" / src.name)
         for src in sorted((SOURCE / "policies").glob("*.md"))
     ]
+    mappings.append((SOURCE / "MASTER_SPEC.md", home / "policies" / "MASTER_SPEC.md"))
     mappings.append((SOURCE / "CHANGELOG.md", home / "policies" / "CHANGELOG.md"))
 
     for src, dst in mappings:
