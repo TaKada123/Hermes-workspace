@@ -66,37 +66,39 @@ def _runtime_memory_store() -> MemoryStore:
 def main() -> int:
     home = get_hermes_home()
 
-    # 1) Native SOUL identity.
+    # 1) SOUL.md uses Hermes' native identity loader.
     soul = load_soul_md(home_override=home) or ""
     _require("Главный Hermes" in soul, "SOUL.md was not loaded by Hermes native identity loader")
     _require("Русский язык по умолчанию" in soul, "SOUL.md identity rules are missing")
 
-    # 2) Native USER.md memory surface.
+    # 2) USER.md uses Hermes' native MemoryStore prompt snapshot.
     store = _runtime_memory_store()
     store.load_from_disk()
     user = store.format_for_system_prompt("user") or ""
     _require("EndeavourOS" in user, "USER.md was not loaded by Hermes MemoryStore")
-    _require("AI, агенты, обвязки и автоматизация" in user, "USER.md goals are missing from prompt snapshot")
+    _require("AI, агенты, обвязки и автоматизация" in user, "USER.md goals are missing")
 
     cfg = load_config()
     memory_cfg = cfg.get("memory", {}) if isinstance(cfg, dict) else {}
-    _require(isinstance(memory_cfg, dict)
-             and memory_cfg.get("memory_enabled", True) is True
-             and memory_cfg.get("user_profile_enabled", True) is True
-             and memory_cfg.get("write_approval", False) is False,
-             "memory mode B config is not active")
+    _require(
+        isinstance(memory_cfg, dict)
+        and memory_cfg.get("memory_enabled", True) is True
+        and memory_cfg.get("user_profile_enabled", True) is True
+        and memory_cfg.get("write_approval", False) is False,
+        "memory mode B config is not active",
+    )
 
-    # 3) Master spec is installed as reference/source of truth.
+    # 3) MASTER_SPEC is installed as the human-readable source of truth.
     master = home / "policies" / "MASTER_SPEC.md"
     _require(master.is_file(), "MASTER_SPEC.md was not installed into HERMES_HOME/policies")
 
-    # 4) Plugin is enabled through config.
+    # 4) Runtime policy plugin is enabled.
     raw = read_raw_config() or {}
     plugins = raw.get("plugins") if isinstance(raw, dict) else {}
     enabled = plugins.get("enabled", []) if isinstance(plugins, dict) else []
     _require(PLUGIN_ID in enabled, f"{PLUGIN_ID} is not enabled in config.yaml")
 
-    # 5) Policy plugin registers and renders both bounded prompt sections.
+    # 5) Plugin registers and renders both bounded native system-prompt sections.
     module = _load_policy_plugin()
     probe = _PromptProbe()
     module.register(probe)
@@ -135,26 +137,44 @@ def main() -> int:
     system = texts["gumar.runtime.02-architecture"]
 
     # Always-on governance.
-    _require("git push" in governance and "подтверждение обязательно" in governance,
-             "PERMISSIONS policy is not present in runtime prompt")
-    _require("Не использовать generative LLM" in governance,
-             "EXECUTION_POLICY is not present in runtime prompt")
-    _require("Первые несколько строк должны быть самодостаточными" in governance,
-             "RESPONSE_POLICY is not present in runtime prompt")
-    _require("[Priority]" in governance and "явная текущая команда пользователя" in governance,
-             "MASTER_SPEC priority rules are not present in runtime prompt")
-    _require("[Source of truth]" in governance and "Актуальный исходный файл" in governance,
-             "MASTER_SPEC source-of-truth rules are not present in runtime prompt")
+    _require(
+        "git push" in governance
+        and "production changes" in governance
+        and "покупки и трата денег" in governance,
+        "PERMISSIONS policy is not present in runtime prompt",
+    )
+    _require(
+        "Не использовать generative LLM" in governance,
+        "EXECUTION_POLICY is not present in runtime prompt",
+    )
+    _require(
+        "Первые несколько строк должны быть самодостаточными" in governance,
+        "RESPONSE_POLICY is not present in runtime prompt",
+    )
+    _require(
+        "[Priority]" in governance and "явная текущая команда пользователя" in governance,
+        "MASTER_SPEC priority rules are not present in runtime prompt",
+    )
+    _require(
+        "[Source of truth]" in governance and "Актуальный исходный файл" in governance,
+        "MASTER_SPEC source-of-truth rules are not present in runtime prompt",
+    )
 
-    # Architecture + memory.
-    _require("JEV выбирает только зарегистрированный" in system,
-             "ARCHITECTURE/ACTION_REGISTRY rules are not present in runtime prompt")
-    _require("SUBAGENT" in system and "orchestrator" in system,
-             "ARCHITECTURE orchestration rules are not present in runtime prompt")
-    _require("Не сохранять автоматически" in system and "Никогда не хранить секреты" in system,
-             "MEMORY_POLICY is not present in runtime prompt")
+    # Architecture, Action Registry and memory policy.
+    _require(
+        "JEV выбирает только зарегистрированный" in system,
+        "ARCHITECTURE/ACTION_REGISTRY rules are not present in runtime prompt",
+    )
+    _require(
+        "Временный исполнитель конкретной подзадачи" in system and "orchestrator" in system,
+        "ARCHITECTURE orchestration rules are not present in runtime prompt",
+    )
+    _require(
+        "медицинские сведения" in system and "Никогда не хранить секреты" in system,
+        "MEMORY_POLICY is not present in runtime prompt",
+    )
 
-    # On-demand policy links.
+    # Large policies remain connected on demand instead of consuming always-on prompt budget.
     for policy_name in ("QUALITY_POLICY.md", "SELF_IMPROVEMENT.md", "ACTIVE_TASKS_POLICY.md"):
         _require(policy_name in system, f"{policy_name} on-demand runtime link is missing")
 
