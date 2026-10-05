@@ -29,14 +29,22 @@ def _compact_policy(text: str) -> str:
     """Remove source metadata/fence noise while preserving behavioral meaning."""
     output: list[str] = []
     skipped_h1 = False
+    in_yaml_example = False
     for raw in text.splitlines():
         stripped = raw.strip()
+        if in_yaml_example:
+            if stripped == "```":
+                in_yaml_example = False
+            continue
+        if stripped == "```yaml":
+            in_yaml_example = True
+            continue
         if not skipped_h1 and stripped.startswith("# "):
             skipped_h1 = True
             continue
         if stripped.startswith("**Version:**") or stripped.startswith("**Updated:**"):
             continue
-        if stripped in {"```", "```yaml", "```text"}:
+        if stripped in {"```", "```text"}:
             continue
         if not stripped:
             continue
@@ -55,7 +63,14 @@ def _render_group(names: Iterable[str], policy_dir: Path | None = None) -> str:
         content = _compact_policy(path.read_text(encoding="utf-8-sig"))
         if content:
             blocks.append(f"[{name}]\n{content}")
-    return "\n\n".join(blocks)
+    body = "\n\n".join(blocks)
+    if body:
+        body += (
+            "\n\nFull schemas/examples remain authoritative in HERMES_HOME/policies. "
+            "Before changing profiles, action registry entries, or active-task record formats, "
+            "read the relevant source policy file."
+        )
+    return body
 
 
 def register(ctx) -> None:
