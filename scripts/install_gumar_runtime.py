@@ -78,6 +78,18 @@ def _enable_plugin() -> None:
         enabled.append(PLUGIN_ID)
     plugins["enabled"] = enabled
 
+    # USER.md is a native Hermes memory surface. The supplied profile is larger
+    # than the stock 1375-char write budget, so keep it enabled and raise only
+    # the user-profile budget; do not alter the user's general MEMORY.md policy.
+    memory = config.get("memory")
+    if not isinstance(memory, dict):
+        memory = {}
+        config["memory"] = memory
+    memory["user_profile_enabled"] = True
+    current_limit = memory.get("user_char_limit")
+    if not isinstance(current_limit, int) or isinstance(current_limit, bool) or current_limit < 4000:
+        memory["user_char_limit"] = 4000
+
     save_config(config, merge_existing=True)
 
 
