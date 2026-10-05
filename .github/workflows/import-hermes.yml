@@ -1,0 +1,48 @@
+name: Import Hermes Agent
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/import-hermes.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout workspace
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Clone official Hermes Agent
+        run: |
+          git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /tmp/hermes-agent
+
+      - name: Copy Hermes Agent into workspace
+        run: |
+          rsync -a --delete \
+            --exclude='.git' \
+            --exclude='.github/workflows/import-hermes.yml' \
+            /tmp/hermes-agent/ ./
+          mkdir -p .github/workflows
+          cp "$GITHUB_WORKSPACE/.github/workflows/import-hermes.yml" /tmp/import-hermes.yml 2>/dev/null || true
+          if [ -f /tmp/import-hermes.yml ]; then
+            cp /tmp/import-hermes.yml .github/workflows/import-hermes.yml
+          fi
+
+      - name: Commit imported source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "Import official NousResearch/hermes-agent"
+          git push origin HEAD:main
