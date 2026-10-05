@@ -106,7 +106,7 @@ def register(ctx) -> None:
     )
     ctx.register_system_prompt_section(
         "gumar.runtime.02-architecture",
-        lambda _session: _render_group(_SYSTEM) + "\n\n[On demand] quality→QUALITY_POLICY.md; reuse→SELF_IMPROVEMENT.md; temporary state→ACTIVE_TASKS_POLICY.md. Read named file first.",
+        lambda _session: _render_group(_SYSTEM) + "\n\n[On demand] quality→QUALITY_POLICY.md; reuse→SELF_IMPROVEMENT.md; tasks→ACTIVE_TASKS_POLICY.md.",
         position="after_memory",
         max_chars=4000,
     )
