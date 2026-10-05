@@ -66,7 +66,7 @@ def _runtime_memory_store() -> MemoryStore:
 def main() -> int:
     home = get_hermes_home()
 
-    # 1) Native identity loader.
+    # 1) Native SOUL identity.
     soul = load_soul_md(home_override=home) or ""
     _require("Главный Hermes" in soul, "SOUL.md was not loaded by Hermes native identity loader")
     _require("Русский язык по умолчанию" in soul, "SOUL.md identity rules are missing")
@@ -78,13 +78,17 @@ def main() -> int:
     _require("EndeavourOS" in user, "USER.md was not loaded by Hermes MemoryStore")
     _require("AI, агенты, обвязки и автоматизация" in user, "USER.md goals are missing from prompt snapshot")
 
-    # 3) Plugin is enabled through config.
+    # 3) Master spec is installed as reference/source of truth.
+    master = home / "policies" / "MASTER_SPEC.md"
+    _require(master.is_file(), "MASTER_SPEC.md was not installed into HERMES_HOME/policies")
+
+    # 4) Plugin is enabled through config.
     raw = read_raw_config() or {}
     plugins = raw.get("plugins") if isinstance(raw, dict) else {}
     enabled = plugins.get("enabled", []) if isinstance(plugins, dict) else []
     _require(PLUGIN_ID in enabled, f"{PLUGIN_ID} is not enabled in config.yaml")
 
-    # 4) Policy plugin really registers and renders prompt sections.
+    # 5) Policy plugin registers and renders both bounded prompt sections.
     module = _load_policy_plugin()
     probe = _PromptProbe()
     module.register(probe)
@@ -97,18 +101,18 @@ def main() -> int:
     rendered: list[RenderedPluginSystemPromptSection] = []
     texts: dict[str, str] = {}
     for section_id in sorted(probe.sections):
-        spec = probe.sections[section_id]
-        provider = spec["content"]
+        section = probe.sections[section_id]
+        provider = section["content"]
         text = provider({}) if callable(provider) else str(provider)
         _require(bool(text.strip()), f"{section_id} rendered empty")
-        _require(len(text) <= spec["max_chars"], f"{section_id} exceeds declared max_chars")
+        _require(len(text) <= section["max_chars"], f"{section_id} exceeds declared max_chars")
         _require(len(text) <= MAX_SYSTEM_PROMPT_SECTION_CHARS, f"{section_id} exceeds Hermes section limit")
         texts[section_id] = text
         rendered.append(
             RenderedPluginSystemPromptSection(
                 id=section_id,
                 content=text,
-                position=spec["position"],
+                position=section["position"],
                 plugin=PLUGIN_ID,
             )
         )
@@ -120,28 +124,42 @@ def main() -> int:
     )
 
     governance = texts["gumar.runtime.01-governance"]
-    architecture = texts["gumar.runtime.02-architecture"]
+    system = texts["gumar.runtime.02-architecture"]
 
+    # Always-on governance.
     _require("git push" in governance and "подтверждение обязательно" in governance,
              "PERMISSIONS policy is not present in runtime prompt")
     _require("Не использовать generative LLM" in governance,
              "EXECUTION_POLICY is not present in runtime prompt")
-    _require("решает исходную задачу" in governance,
-             "QUALITY_POLICY is not present in runtime prompt")
-    _require("JEV выбирает только зарегистрированный" in architecture,
+    _require("Первые несколько строк должны быть самодостаточными" in governance,
+             "RESPONSE_POLICY is not present in runtime prompt")
+    _require("[Priority]" in governance and "явная текущая команда пользователя" in governance,
+             "MASTER_SPEC priority rules are not present in runtime prompt")
+    _require("[Source of truth]" in governance and "Актуальный исходный файл" in governance,
+             "MASTER_SPEC source-of-truth rules are not present in runtime prompt")
+
+    # Architecture + memory.
+    _require("JEV выбирает только зарегистрированный" in system,
              "ARCHITECTURE/ACTION_REGISTRY rules are not present in runtime prompt")
-    _require("SUBAGENT" in architecture and "orchestrator" in architecture,
+    _require("SUBAGENT" in system and "orchestrator" in system,
              "ARCHITECTURE orchestration rules are not present in runtime prompt")
+    _require("Не сохранять автоматически" in system and "Никогда не хранить секреты" in system,
+             "MEMORY_POLICY is not present in runtime prompt")
+
+    # On-demand policy links.
+    for policy_name in ("QUALITY_POLICY.md", "SELF_IMPROVEMENT.md", "ACTIVE_TASKS_POLICY.md"):
+        _require(policy_name in system, f"{policy_name} on-demand runtime link is missing")
 
     print("Gumar runtime verification: OK")
     print(f"  HERMES_HOME: {home}")
     print("  SOUL.md: native identity loader OK")
     print("  USER.md: native MemoryStore prompt snapshot OK")
+    print("  MASTER_SPEC.md: installed source of truth OK")
     print(f"  plugin: {PLUGIN_ID} enabled")
     print(f"  governance prompt chars: {len(governance)}")
-    print(f"  architecture prompt chars: {len(architecture)}")
+    print(f"  architecture/memory prompt chars: {len(system)}")
     print(f"  combined framed prompt chars: {len(full_plugin_prompt)}")
-    print("  permissions/execution/response/memory/master/architecture markers: OK")
+    print("  permissions/execution/response/memory/master/architecture/on-demand links: OK")
     return 0
 
 
