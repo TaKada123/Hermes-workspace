@@ -76,7 +76,15 @@ def main() -> int:
     store.load_from_disk()
     user = store.format_for_system_prompt("user") or ""
     _require("EndeavourOS" in user, "USER.md was not loaded by Hermes MemoryStore")
-    _require("AI, агенты, обвязки и автоматизация" in user, "USER.md goals are missing from prompt snapshot")\n\n    cfg = load_config()\n    memory_cfg = cfg.get("memory", {}) if isinstance(cfg, dict) else {}\n    _require(isinstance(memory_cfg, dict)\n             and memory_cfg.get("memory_enabled", True) is True\n             and memory_cfg.get("user_profile_enabled", True) is True\n             and memory_cfg.get("write_approval", False) is False,\n             "memory mode B config is not active")
+    _require("AI, агенты, обвязки и автоматизация" in user, "USER.md goals are missing from prompt snapshot")
+
+    cfg = load_config()
+    memory_cfg = cfg.get("memory", {}) if isinstance(cfg, dict) else {}
+    _require(isinstance(memory_cfg, dict)
+             and memory_cfg.get("memory_enabled", True) is True
+             and memory_cfg.get("user_profile_enabled", True) is True
+             and memory_cfg.get("write_approval", False) is False,
+             "memory mode B config is not active")
 
     # 3) Master spec is installed as reference/source of truth.
     master = home / "policies" / "MASTER_SPEC.md"
