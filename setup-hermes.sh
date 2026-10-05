@@ -193,7 +193,13 @@ if [ -f "$SCRIPT_DIR/scripts/install_gumar_runtime.py" ]; then
         echo -e "${RED}✗${NC} custom runtime configuration install failed" >&2
         exit 1
     fi
-    echo -e "${GREEN}✓${NC} Custom runtime configuration installed"
+    if [ -f "$SCRIPT_DIR/scripts/verify_gumar_runtime.py" ]; then
+        if ! "$boot_py" -X utf8 "$SCRIPT_DIR/scripts/verify_gumar_runtime.py"; then
+            echo -e "${RED}✗${NC} custom runtime configuration verification failed" >&2
+            exit 1
+        fi
+    fi
+    echo -e "${GREEN}✓${NC} Custom runtime configuration installed and verified"
 fi
 
 if [ "$runtime_only" = true ]; then
