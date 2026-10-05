@@ -141,7 +141,7 @@ def main() -> int:
     print(f"  governance prompt chars: {len(governance)}")
     print(f"  architecture prompt chars: {len(architecture)}")
     print(f"  combined framed prompt chars: {len(full_plugin_prompt)}")
-    print("  permissions/execution/quality/architecture markers: OK")
+    print("  permissions/execution/response/memory/master/architecture markers: OK")
     return 0
 
 
