@@ -1,53 +1,74 @@
 # Hermes runtime configuration
 
-This directory is the source of truth for the customized Hermes runtime.
+This directory is the source-of-truth bundle for the customized Hermes runtime.
 
 ## Native Hermes files
 
-- `SOUL.md` → installed to `$HERMES_HOME/SOUL.md`. Hermes loads it natively as the primary identity.
-- `memories/USER.md` → installed to `$HERMES_HOME/memories/USER.md`. Hermes loads it through the built-in MemoryStore into the system prompt at session start.
+- `SOUL.md` → `$HERMES_HOME/SOUL.md`; native Hermes identity loader.
+- `memories/USER.md` → `$HERMES_HOME/memories/USER.md`; native MemoryStore snapshot in the system prompt.
 
-The installer explicitly keeps `memory.user_profile_enabled: true` and raises
-`memory.user_char_limit` to at least 4000 so this USER profile is not left above
-Hermes' stock 1375-character write budget.
+The installer keeps `memory.user_profile_enabled: true` and raises
+`memory.user_char_limit` to at least 4000 so the supplied USER profile fits safely.
 
-## Policy files
+## Master and reference files
 
-The files under `policies/` remain the authoritative source documents. The bundled
-`gumar-runtime-policy` plugin reads them from `$HERMES_HOME/policies/` and injects
-two session-frozen native plugin system-prompt sections:
+- `MASTER_SPEC.md` is the human-readable configuration source of truth. It is copied to
+  `$HERMES_HOME/policies/MASTER_SPEC.md`, but the whole document is not injected every turn.
+  The runtime bridge loads only its **instruction priority** and **source of truth** sections.
+- `reference/HERMES_USER_PROFILE.md` is the original monolithic profile kept for provenance
+  and migration reference. It is **not loaded at runtime**, because its content has been split
+  into SOUL, USER and dedicated policies and loading it again would duplicate/conflict with them.
 
-1. governance: permissions, execution, quality, active tasks;
-2. architecture: architecture, action registry, self-improvement.
+## Runtime policies
 
-Hermes allows 4,000 characters per plugin prompt section and 8,000 characters total.
-The runtime bridge removes document metadata, blank lines and fenced YAML examples from
-the always-on prompt while keeping the original files unchanged. Full schemas/examples
-remain in `$HERMES_HOME/policies/`; the runtime prompt explicitly requires reading the
-relevant source file before changing profiles, action-registry entries or active-task
-record formats.
+The authoritative policy files live under `runtime-config/policies/` and are copied to
+`$HERMES_HOME/policies/`.
 
-`CHANGELOG.md` is installed for audit/history but is not injected into the prompt because
-it is not a behavioral rule.
+Always-on plugin prompt content:
 
-## Why AGENTS.md is not used for these policies
+1. `PERMISSIONS.md`
+2. `EXECUTION_POLICY.md`
+3. `RESPONSE_POLICY.md`
+4. `ARCHITECTURE.md`
+5. `ACTION_REGISTRY.md`
+6. `MEMORY_POLICY.md`
+7. the priority/source-of-truth sections from `MASTER_SPEC.md`
 
-Hermes loads project context by working directory and only one project-context family wins
-(`HERMES.md` → `AGENTS.md` → `CLAUDE.md` → Cursor rules). These policies are user/runtime
-rules that must also apply outside a repository, including gateway and desktop sessions, so
-they are connected through native SOUL/USER loaders plus the plugin system-prompt API instead.
+The bridge removes Markdown headings, metadata and fenced schemas/examples before injection.
+The source files themselves remain unchanged.
+
+On-demand policy files stay connected without consuming permanent prompt space:
+
+- `QUALITY_POLICY.md` — read before the final quality/acceptance gate;
+- `SELF_IMPROVEMENT.md` — read before promoting a solution into reusable/stable action;
+- `ACTIVE_TASKS_POLICY.md` — read when creating/updating temporary task state.
+
+`CHANGELOG.md` is installed for audit/history and is never injected as behavioral context.
+
+## Prompt budgets
+
+Hermes allows 4,000 characters per plugin system-prompt section and 8,000 characters total.
+The bridge uses two bounded sections and `scripts/verify_gumar_runtime.py` fails if either
+section or the aggregate framed prompt exceeds Hermes' native limits.
+
+## Why AGENTS.md is not used
+
+Hermes loads `HERMES.md` / `AGENTS.md` as project/worktree context. These policies are
+global user-runtime rules that must also apply in CLI, gateway and desktop sessions outside a
+specific repository. Therefore SOUL/USER use native Hermes loaders and the remaining runtime
+rules use the native plugin system-prompt API.
 
 ## Installation and verification
 
 `scripts/install_gumar_runtime.py`:
 
-- copies source-of-truth files into the active `HERMES_HOME`;
+- copies the runtime bundle into the active `HERMES_HOME`;
 - backs up changed runtime copies;
-- enables `gumar-runtime-policy` under `plugins.enabled` without replacing unrelated config;
-- enables the native USER profile with sufficient character budget.
+- enables `gumar-runtime-policy` in `plugins.enabled` without replacing unrelated config;
+- keeps the native USER profile enabled with enough character budget.
 
-`scripts/verify_gumar_runtime.py` verifies the native SOUL loader, native USER MemoryStore,
-plugin enablement, prompt-section registration, Hermes prompt budgets, and markers from
-permissions, execution, quality and architecture.
+`scripts/verify_gumar_runtime.py` verifies native SOUL loading, native USER loading,
+plugin enablement, system-prompt registration, prompt budgets, and critical markers for
+permissions, execution, response, memory, master priority/source-of-truth and architecture.
 
-`setup-hermes.sh` runs both scripts automatically and fails installation if verification fails.
+`setup-hermes.sh` runs installation and verification automatically and stops on failure.
