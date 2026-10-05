@@ -29,8 +29,6 @@ def _compact_policy(text: str) -> str:
     """Remove source metadata/fence noise while preserving behavioral meaning."""
     output: list[str] = []
     skipped_h1 = False
-    previous_blank = False
-
     for raw in text.splitlines():
         stripped = raw.strip()
         if not skipped_h1 and stripped.startswith("# "):
@@ -40,12 +38,9 @@ def _compact_policy(text: str) -> str:
             continue
         if stripped in {"```", "```yaml", "```text"}:
             continue
-
-        blank = not stripped
-        if blank and previous_blank:
+        if not stripped:
             continue
         output.append(raw)
-        previous_blank = blank
 
     return "\n".join(output).strip()
 
