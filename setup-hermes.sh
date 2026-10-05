@@ -183,6 +183,19 @@ if ! "$boot_py" -m pm.cli install "${pm_args[@]}"; then
 fi
 echo -e "${GREEN}✓${NC} Tools + dependencies installed (hash-verified via pm + uv.lock)"
 
+# ============================================================================
+# Install this fork's runtime identity and policy bundle
+# ============================================================================
+
+if [ -f "$SCRIPT_DIR/scripts/install_gumar_runtime.py" ]; then
+    echo -e "${CYAN}→${NC} Installing custom Hermes runtime configuration..."
+    if ! "$boot_py" -X utf8 "$SCRIPT_DIR/scripts/install_gumar_runtime.py"; then
+        echo -e "${RED}✗${NC} custom runtime configuration install failed" >&2
+        exit 1
+    fi
+    echo -e "${GREEN}✓${NC} Custom runtime configuration installed"
+fi
+
 if [ "$runtime_only" = true ]; then
     exit 0
 fi
