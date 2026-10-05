@@ -86,7 +86,9 @@ def _enable_plugin() -> None:
     if not isinstance(memory, dict):
         memory = {}
         config["memory"] = memory
-    memory["memory_enabled"] = True\n    memory["user_profile_enabled"] = True\n    memory["write_approval"] = False
+    memory["memory_enabled"] = True
+    memory["user_profile_enabled"] = True
+    memory["write_approval"] = False
     current_limit = memory.get("user_char_limit")
     if not isinstance(current_limit, int) or isinstance(current_limit, bool) or current_limit < 4000:
         memory["user_char_limit"] = 4000
