@@ -19,21 +19,20 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Preserve importer
+        run: cp .github/workflows/import-hermes.yml /tmp/import-hermes.yml
+
       - name: Clone official Hermes Agent
-        run: |
-          git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /tmp/hermes-agent
+        run: git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /tmp/hermes-agent
 
       - name: Copy Hermes Agent into workspace
         run: |
           rsync -a --delete \
             --exclude='.git' \
-            --exclude='.github/workflows/import-hermes.yml' \
+            --exclude='.github/workflows/' \
             /tmp/hermes-agent/ ./
           mkdir -p .github/workflows
-          cp "$GITHUB_WORKSPACE/.github/workflows/import-hermes.yml" /tmp/import-hermes.yml 2>/dev/null || true
-          if [ -f /tmp/import-hermes.yml ]; then
-            cp /tmp/import-hermes.yml .github/workflows/import-hermes.yml
-          fi
+          cp /tmp/import-hermes.yml .github/workflows/import-hermes.yml
 
       - name: Commit imported source
         run: |
@@ -44,5 +43,5 @@ jobs:
             echo "No changes to commit"
             exit 0
           fi
-          git commit -m "Import official NousResearch/hermes-agent"
+          git commit -m "Import official NousResearch/hermes-agent (excluding upstream workflows)"
           git push origin HEAD:main
