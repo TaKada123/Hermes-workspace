@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "/library/register": {
+      "targetKind": "new-ui",
+      "projectId": "5de6ee62-8d59-49f2-8533-7f8811476912",
+      "activeDraftId": "62ccf224-4d82-49cd-a5db-a9ebd35937bf",
+      "designSystemPath": ".superdesign/design-system.md",
+      "referenceIds": [],
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        ".superdesign/init/theme.md:1:38",
+        "web/src/App.tsx:515:936",
+        "web/src/contexts/PageHeaderProvider.tsx",
+        "web/src/pages/ProfileBuilderPage.tsx:283:834",
+        "web/src/index.css",
+        "web/src/lib/utils.ts"
+      ],
+      "fingerprints": {
+        ".superdesign/design-system.md": "54ebcdc7c4630dc0eabdaebda2aaabc72c5929d741d3e2696130319719fa79e0",
+        ".superdesign/init/theme.md": "ad942af417f55c334cd0e877b186d1ab385b3e10353cf50fb23ac2395aaf8ea7",
+        "web/src/App.tsx": "5e805f5b5ba656aa746b867b8dc38484dbc2ed5f12abed744af5d2d9d40fd53e",
+        "web/src/contexts/PageHeaderProvider.tsx": "8a1809e7c89fd12a50b6af8869b8cc8e0f5ae72a8501cae4425091d4ca5863c2",
+        "web/src/pages/ProfileBuilderPage.tsx": "b7adc26ab630a974c40ebae0d585108a1a697dcec9a0d85ad80224ae24e3b3ac",
+        "web/src/index.css": "0f65b06e327494f599d59d57cd0633387a0f0bef11be2917a70cc2ffde60690b",
+        "web/src/lib/utils.ts": "4e13dd449bd4aa30829e93d9f44b9dcc4b64cf31f836efc9756132c58d70b4e7"
+      },
+      "components": [
+        {
+          "name": "HermesAppShell",
+          "id": "1e80d3e1-0acf-4995-9ffc-d308cc23f6bd",
+          "sourcePath": "web/src/App.tsx"
+        }
+      ],
+      "drafts": {
+        "62ccf224-4d82-49cd-a5db-a9ebd35937bf": {
+          "title": "Концепция 1 — Единая форма",
+          "visualDirection": "all-at-once two-column Hermes Teal registration form",
+          "currentVersion": 1
+        },
+        "69bdf078-46d6-41a1-92c8-59a3d19004bd": {
+          "title": "Концепция 2 — Пошаговая регистрация",
+          "visualDirection": "guided five-step workspace with ticket preview and review checklist",
+          "currentVersion": 1
+        }
+      },
+      "updatedAt": "2026-10-06T15:58:01+05:00"
+    }
+  }
+}

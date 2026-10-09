@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "profile": "design",
+  "title": "Design Agent",
+  "description": "Ведущий дизайнер и арт-директор: маршрутизирует визуальные задачи к domain skills, сохраняет дизайн-контекст изолированно и проверяет реальный рендер.",
+  "route": {
+    "route_type": "profile",
+    "route_id": "design",
+    "action_id": "design.route"
+  },
+  "model": {
+    "provider": "openai-codex",
+    "base_url": "https://chatgpt.com/backend-api/codex",
+    "default": "gpt-5.6-sol",
+    "reasoning_effort": "medium"
+  },
+  "terminal": {
+    "backend": "local",
+    "cwd": "/home/vottak/Проекты"
+  },
+  "toolsets": [
+    "web",
+    "browser",
+    "terminal",
+    "file",
+    "code_execution",
+    "vision",
+    "image_gen",
+    "skills",
+    "todo",
+    "memory",
+    "clarify",
+    "computer_use"
+  ],
+  "mcp_servers": [],
+  "profile_skills_from_default": [
+    "creative/superdesign",
+    "creative/impeccable",
+    "creative/design-production-pipeline",
+    "creative/design-md",
+    "creative/popular-web-designs",
+    "creative/claude-design",
+    "creative/architecture-diagram",
+    "creative/baoyu-infographic",
+    "creative/p5js",
+    "productivity/powerpoint",
+    "productivity/pdf",
+    "creative/hyperframes",
+    "hyperframes-animation",
+    "hyperframes-audio",
+    "hyperframes-cli",
+    "hyperframes-core",
+    "hyperframes-creative",
+    "hyperframes-keyframes",
+    "hyperframes-registry",
+    "hyperframes-studio",
+    "media-use"
+  ],
+  "main_disabled_skills": [
+    "superdesign",
+    "impeccable",
+    "design-production-pipeline",
+    "design-md",
+    "popular-web-designs",
+    "claude-design",
+    "architecture-diagram",
+    "baoyu-infographic",
+    "p5js",
+    "powerpoint",
+    "creative/hyperframes",
+    "hyperframes-animation",
+    "hyperframes-audio",
+    "hyperframes-cli",
+    "hyperframes-core",
+    "hyperframes-creative",
+    "hyperframes-keyframes",
+    "hyperframes-registry",
+    "hyperframes-studio",
+    "media-use"
+  ],
+  "profile_local_skills": [
+    "engineering-portfolio"
+  ],
+  "memory_namespaces": [
+    "design/global",
+    "design/preferences",
+    "design/references",
+    "design/systems",
+    "design/projects",
+    "design/experience"
+  ],
+  "policies": {
+    "source": "runtime-config",
+    "plugin": "gumar-runtime-policy"
+  }
+}

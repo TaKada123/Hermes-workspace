@@ -1,9 +1,27 @@
 """Runtime policy bridge for the customized Hermes fork.
 
-SOUL.md and USER.md are loaded natively by Hermes. This plugin injects the
-minimum always-on policy context from HERMES_HOME/policies. MASTER_SPEC stays
-the human-readable source of truth; only its priority/source-of-truth clauses
-are injected. Large schemas/examples remain in their source files.
+SOUL.md and USER.md are loaded natively by Hermes. This plugin keeps the
+always-on runtime prompt to the minimum: it injects only the rule-bearing
+sections of `HERMES_HOME/policies`, verbatim (markdown structure stripped), and
+points at everything else as on-demand reading, so full policy text never costs
+prompt space on every request.
+
+Always-on:
+- `MASTER_SPEC.md` — only its instruction priority and source-of-truth core;
+- `PERMISSIONS.md`, `EXECUTION_POLICY.md`, `RESPONSE_POLICY.md` — only their
+  rule sections;
+- `MEMORY_POLICY.md` — only the memory mode plus the save/secret rules;
+- `SELF_IMPROVEMENT.md` — only the two runtime skill rules, because
+  `skill_manage` is deferred and its native prompt guidance is gated on the
+  tool being visible.
+- Main profile only — one short Design Agent routing hint. No design manual,
+  skill body or Design memory is injected.
+
+Never injected:
+- `ARCHITECTURE.md` and `ACTION_REGISTRY.md` (read on demand; the registry is
+  also exposed programmatically through `policies/action_registry.json`);
+- `CHANGELOG.md` (audit only);
+- `reference/HERMES_USER_PROFILE.md` (provenance, not installed).
 """
 
 from __future__ import annotations
@@ -13,20 +31,62 @@ from typing import Iterable
 
 from hermes_constants import get_hermes_home
 
-_GOVERNANCE = (
-    "PERMISSIONS.md",
-    "EXECUTION_POLICY.md",
-    "RESPONSE_POLICY.md",
-)
-_SYSTEM = (
-    "ARCHITECTURE.md",
-    "ACTION_REGISTRY.md",
-    "MEMORY_POLICY.md",
+SECTION_IDS = (
+    "gumar.runtime.01-governance",
+    "gumar.runtime.02-memory-and-skills",
+    "gumar.runtime.03-main-router",
 )
 
+# (policy file, H2 headings) whose rules stay in every request.
+GOVERNANCE_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "PERMISSIONS.md",
+        (
+            "LOW RISK — самостоятельно",
+            "MEDIUM RISK — при наличии защиты",
+            "HIGH RISK — подтверждение обязательно",
+        ),
+    ),
+    ("EXECUTION_POLICY.md", ("Главный принцип", "Рабочий порядок", "Интернет")),
+    (
+        "RESPONSE_POLICY.md",
+        ("Первые строки", "Глубина", "Незнакомая тема", "Практические задачи", "Рекомендации"),
+    ),
+)
+MEMORY_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("MEMORY_POLICY.md", ("Запись и обновление", "Не сохранять автоматически", "Секреты")),
+)
+# `skill_manage` is deferred (tools.tool_search.defer), and Hermes gates its native
+# skill guidance on that tool being visible — so the two rules it carried live here.
+SKILLS_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("SELF_IMPROVEMENT.md", ("Runtime-правила скиллов",)),
+)
+MASTER_SPEC_FILE = "MASTER_SPEC.md"
+MASTER_CORE_SECTIONS = ("Приоритет инструкций", "Source of truth")
+# Metadata key copied from the memory policy header (the line above its first H2).
+MEMORY_HEADER_KEYS = ("Mode:",)
+DESIGN_ROUTING_HINT = (
+    "Design routing: Main обязан передавать запросы о дизайне, сайтах, презентациях, портфолио, "
+    "визуальных системах, графике, layout, branding или visual editing в on-demand skill `design-router` "
+    "через action `design.route`; не выполнять их в Main."
+)
 
-def _compact_policy(text: str) -> str:
-    """Drop markdown structure/examples while preserving executable prose."""
+# On-demand pointers: (when it applies, policy file to read first).
+ON_DEMAND: tuple[tuple[str, str], ...] = (
+    ("архитектура, Profile, specialist, subagent, делегирование", "ARCHITECTURE.md"),
+    ("выбор, регистрация или изменение действия", "ACTION_REGISTRY.md"),
+    ("уровни памяти CORE/DOMAIN/EPISODIC и изоляция агентов", "MEMORY_POLICY.md"),
+    ("новый постоянный script или action", "EXECUTION_POLICY.md"),
+    ("финальный quality gate", "QUALITY_POLICY.md"),
+    ("перевод проверенного решения в reusable/stable", "SELF_IMPROVEMENT.md"),
+    ("временные задачи, планы и их статусы", "ACTIVE_TASKS_POLICY.md"),
+)
+REGISTRY_FILE = "action_registry.json"
+_METADATA_KEYS = ("Version:", "Updated:", "Mode:", "Status:")
+
+
+def compact(text: str) -> str:
+    """Drop markdown headings, metadata lines and fenced schemas/examples."""
     output: list[str] = []
     in_fence = False
 
@@ -39,74 +99,143 @@ def _compact_policy(text: str) -> str:
             continue
         if stripped.startswith("#"):
             continue
-        if stripped.startswith("**") and any(
-            key in stripped for key in ("Version:", "Updated:", "Mode:", "Status:")
-        ):
+        if stripped.startswith("**") and any(key in stripped for key in _METADATA_KEYS):
             continue
         output.append(stripped)
 
     return "\n".join(output).strip()
 
 
-def _render_group(names: Iterable[str], policy_dir: Path | None = None) -> str:
-    root = policy_dir or (get_hermes_home() / "policies")
-    blocks: list[str] = []
-    for name in names:
-        path = root / name
-        if not path.is_file():
-            continue
-        content = _compact_policy(path.read_text(encoding="utf-8-sig"))
-        if content:
-            blocks.append(f"[{name}]\n{content}")
-    return "\n\n".join(blocks)
+def _read(policy_dir: Path, name: str) -> str:
+    path = policy_dir / name
+    return path.read_text(encoding="utf-8-sig") if path.is_file() else ""
 
 
-def _extract_h2(text: str, heading: str) -> str:
-    """Return one H2 section body from MASTER_SPEC without loading the whole spec."""
-    lines = text.splitlines()
+def _section(text: str, heading: str, *, label: bool = True) -> str:
+    """Body of one H2 section, markdown structure stripped.
+
+    The heading is kept as a leading label: without it a rule list loses its
+    meaning (which risk tier, which memory rule) once markdown is stripped.
+    """
     marker = f"## {heading}"
-    try:
-        start = next(i for i, line in enumerate(lines) if line.strip() == marker)
-    except StopIteration:
+    lines = text.splitlines()
+    start = next((index for index, line in enumerate(lines) if line.strip() == marker), None)
+    if start is None:
         return ""
 
     body: list[str] = []
     for raw in lines[start + 1 :]:
         if raw.startswith("## "):
             break
-        stripped = raw.strip()
-        if stripped:
-            body.append(stripped)
-    return "\n".join(body)
+        if raw.strip():
+            body.append(raw)
+    compacted = compact("\n".join(body))
+    if not compacted:
+        return ""
+    return f"{heading}:\n{compacted}" if label else compacted
+
+
+def _header_value(text: str, key: str) -> str:
+    """A `**Key:** value` metadata line from the file header, above the first H2."""
+    for raw in text.splitlines():
+        if raw.startswith("## "):
+            return ""
+        line = raw.strip()
+        if line.startswith("**") and key in line:
+            return line.replace("**", "").strip()
+    return ""
+
+
+def extract_section(policy_dir: Path, name: str, heading: str) -> str:
+    """Resolve one declared always-on section (the verifier uses this seam)."""
+    return _section(_read(policy_dir, name), heading)
+
+
+def declared_sections() -> tuple[tuple[str, str], ...]:
+    """(file, heading) pairs that must resolve to non-empty always-on rules."""
+    pairs = [
+        (name, heading)
+        for name, headings in GOVERNANCE_SECTIONS + MEMORY_SECTIONS + SKILLS_SECTIONS
+        for heading in headings
+    ]
+    pairs += [(MASTER_SPEC_FILE, heading) for heading in MASTER_CORE_SECTIONS]
+    return tuple(pairs)
+
+
+def _render_files(policy_dir: Path, spec: Iterable[tuple[str, tuple[str, ...]]]) -> str:
+    blocks: list[str] = []
+    for name, headings in spec:
+        text = _read(policy_dir, name)
+        if not text:
+            continue
+        body = "\n".join(part for part in (_section(text, heading) for heading in headings) if part)
+        if body:
+            blocks.append(f"[{name}]\n{body}")
+    return "\n\n".join(blocks)
 
 
 def _render_governance() -> str:
-    root = get_hermes_home() / "policies"
-    master_path = root / "MASTER_SPEC.md"
-    master_blocks: list[str] = []
-    if master_path.is_file():
-        master = master_path.read_text(encoding="utf-8-sig")
-        priority = _extract_h2(master, "Приоритет инструкций")
-        source = _extract_h2(master, "Source of truth")
-        if priority:
-            master_blocks.append(f"[Priority]\n{priority}")
-        if source:
-            master_blocks.append(f"[Source of truth]\n{source}")
+    policy_dir = get_hermes_home() / "policies"
+    master = _read(policy_dir, MASTER_SPEC_FILE)
+    core = "\n".join(
+        part
+        for part in (_section(master, heading, label=False) for heading in MASTER_CORE_SECTIONS)
+        if part
+    )
+    parts = [
+        f"[{MASTER_SPEC_FILE} core]\n{core}" if core else "",
+        _render_files(policy_dir, GOVERNANCE_SECTIONS),
+    ]
+    return "\n\n".join(part for part in parts if part)
 
-    policy = _render_group(_GOVERNANCE, root)
-    return "\n\n".join(part for part in ("\n\n".join(master_blocks), policy) if part)
+
+def _render_main_router() -> str:
+    home = get_hermes_home()
+    return "" if home.name == "design" and home.parent.name == "profiles" else DESIGN_ROUTING_HINT
+
+
+def _on_demand_index() -> str:
+    items = "; ".join(f"{when}→{name}" for when, name in ON_DEMAND)
+    return (
+        "[On demand — прочитать названный файл перед такой работой]\n"
+        f"{items}.\n"
+        f"Действия выбираются только по зарегистрированному action_id из policies/{REGISTRY_FILE}; "
+        "произвольные shell-команды запрещены. CHANGELOG.md никогда не загружается в prompt."
+    )
+
+
+def _render_memory() -> str:
+    policy_dir = get_hermes_home() / "policies"
+    text = _read(policy_dir, "MEMORY_POLICY.md")
+    header = " ".join(value for value in (_header_value(text, key) for key in MEMORY_HEADER_KEYS) if value)
+    blocks = [
+        part
+        for part in (
+            header,
+            _render_files(policy_dir, MEMORY_SECTIONS),
+            _render_files(policy_dir, SKILLS_SECTIONS),
+        )
+        if part
+    ]
+    return "\n\n".join(blocks) + "\n\n" + _on_demand_index()
 
 
 def register(ctx) -> None:
     ctx.register_system_prompt_section(
-        "gumar.runtime.01-governance",
+        SECTION_IDS[0],
         lambda _session: _render_governance(),
         position="after_memory",
-        max_chars=4000,
+        max_chars=3900,
     )
     ctx.register_system_prompt_section(
-        "gumar.runtime.02-architecture",
-        lambda _session: _render_group(_SYSTEM) + "\n\n[On demand] quality→QUALITY_POLICY.md; reuse→SELF_IMPROVEMENT.md; tasks→ACTIVE_TASKS_POLICY.md.",
+        SECTION_IDS[1],
+        lambda _session: _render_memory(),
         position="after_memory",
-        max_chars=4000,
+        max_chars=3000,
+    )
+    ctx.register_system_prompt_section(
+        SECTION_IDS[2],
+        lambda _session: _render_main_router(),
+        position="after_memory",
+        max_chars=500,
     )

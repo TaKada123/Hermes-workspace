@@ -300,6 +300,25 @@ else
 fi
 
 # ============================================================================
+# Install the isolated Design Agent profile after launchers + skills exist
+# ============================================================================
+
+if [ -f "$SCRIPT_DIR/scripts/install_design_profile.py" ]; then
+    echo -e "${CYAN}→${NC} Installing isolated Design Agent profile..."
+    if ! "$boot_py" -X utf8 "$SCRIPT_DIR/scripts/install_design_profile.py"; then
+        echo -e "${RED}✗${NC} Design Agent profile install failed" >&2
+        exit 1
+    fi
+    if [ -f "$SCRIPT_DIR/scripts/verify_design_profile.py" ]; then
+        if ! "$boot_py" -X utf8 "$SCRIPT_DIR/scripts/verify_design_profile.py"; then
+            echo -e "${RED}✗${NC} Design Agent profile verification failed" >&2
+            exit 1
+        fi
+    fi
+    echo -e "${GREEN}✓${NC} Design Agent profile installed and verified"
+fi
+
+# ============================================================================
 # Done
 # ============================================================================
 

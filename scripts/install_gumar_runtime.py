@@ -13,6 +13,22 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE = REPO_ROOT / "runtime-config"
 PLUGIN_ID = "gumar-runtime-policy"
 
+# Tools pinned as deferred so the lean tool surface (18 tools instead of 25, ~9.4 KB
+# of schemas saved per request) survives a config rewrite or a fresh install. The
+# same set is asserted by scripts/verify_gumar_runtime.py::REQUIRED_DEFER.
+# NOTE: tools.tool_search.defer is an explicit list that REPLACES the shipped curated
+# default, so the curated cold built-ins are repeated here.
+REQUIRED_DEFER = (
+    # shipped curated cold built-ins
+    "computer_use", "session_search", "image_generate", "todo_list", "process_manage",
+    "cronjob_manage", "drive_preview", "gui_tour", "desktop_preview", "annotate_preview",
+    "show_tip", "desktop_project", "close_terminal", "apply_layout", "read_terminal",
+    "read_window_below", "focus_pane",
+    # fork additions: cold or login/voice-only tools, all reachable through Tool Search
+    "skill_manage", "text_to_speech", "browser_vault_list", "browser_vault_fill",
+    "browser_vault_save_login", "browser_vault_enter_code", "browser_vault_unlock",
+)
+
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -51,6 +67,7 @@ def _copy_tree() -> list[str]:
     ]
     mappings.append((SOURCE / "MASTER_SPEC.md", home / "policies" / "MASTER_SPEC.md"))
     mappings.append((SOURCE / "CHANGELOG.md", home / "policies" / "CHANGELOG.md"))
+    mappings.append((SOURCE / "action_registry.json", home / "policies" / "action_registry.json"))
 
     for src, dst in mappings:
         if not src.is_file():
@@ -63,7 +80,7 @@ def _copy_tree() -> list[str]:
     return installed
 
 
-def _enable_plugin() -> None:
+def _apply_config() -> int:
     from hermes_cli.config import read_raw_config, save_config
 
     config = read_raw_config() or {}
@@ -93,14 +110,32 @@ def _enable_plugin() -> None:
     if not isinstance(current_limit, int) or isinstance(current_limit, bool) or current_limit < 4000:
         memory["user_char_limit"] = 4000
 
+    # Pin the deferred tool set. `tools.tool_search.defer` is an explicit list that
+    # replaces the shipped curated default, so the curated names are repeated in
+    # REQUIRED_DEFER; names added by hand are preserved after ours.
+    tools = config.get("tools")
+    if not isinstance(tools, dict):
+        tools = {}
+        config["tools"] = tools
+    tool_search = tools.get("tool_search")
+    if not isinstance(tool_search, dict):
+        tool_search = {}
+        tools["tool_search"] = tool_search
+    existing = tool_search.get("defer")
+    existing = existing if isinstance(existing, list) else []
+    pinned = list(REQUIRED_DEFER) + [name for name in existing if name not in REQUIRED_DEFER]
+    tool_search["defer"] = pinned
+
     save_config(config, merge_existing=True)
+    return len(pinned)
 
 
 def main() -> int:
     installed = _copy_tree()
-    _enable_plugin()
+    deferred = _apply_config()
     print(f"Installed Gumar runtime config into {_hermes_home()}")
     print(f"Enabled plugin: {PLUGIN_ID}")
+    print(f"Pinned deferred tools: {deferred} (required {len(REQUIRED_DEFER)})")
     for path in installed:
         print(f"  - {path}")
     return 0

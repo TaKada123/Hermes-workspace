@@ -1,26 +1,125 @@
 #!/usr/bin/env python3
-"""Verify that the customized Hermes runtime configuration is actually wired."""
+"""Verify that the customized Hermes runtime configuration is actually wired.
+
+Checks that the always-on runtime prompt stays minimal: only the declared rule
+sections of the policies are injected, everything else stays connected as
+on-demand pointers, and the action registry is present in machine-readable form.
+"""
 
 from __future__ import annotations
 
 import importlib.util
+import json
+import sys
 from pathlib import Path
 from typing import Any
 
-from agent.prompt_builder import load_soul_md
-from hermes_cli.config import load_config, read_raw_config
-from hermes_cli.plugins_dispatch import (
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from agent.prompt_builder import load_soul_md  # noqa: E402
+from hermes_cli.config import load_config, read_raw_config  # noqa: E402
+from hermes_cli.plugins_dispatch import (  # noqa: E402
     MAX_SYSTEM_PROMPT_SECTION_CHARS,
     MAX_SYSTEM_PROMPT_SECTIONS_TOTAL_CHARS,
     RenderedPluginSystemPromptSection,
     format_system_prompt_sections,
 )
-from hermes_constants import get_hermes_home
-from tools.memory_tool_store import MemoryStore
+from hermes_constants import get_hermes_home  # noqa: E402
+from tools.memory_tool_store import MemoryStore  # noqa: E402
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-PLUGIN_PATH = REPO_ROOT / "plugins" / "gumar-runtime-policy" / "__init__.py"
+PLUGIN_DIR = REPO_ROOT / "plugins" / "gumar-runtime-policy"
+PLUGIN_PATH = PLUGIN_DIR / "__init__.py"
+REGISTRY_LOADER_PATH = PLUGIN_DIR / "registry.py"
 PLUGIN_ID = "gumar-runtime-policy"
+SECTION_IDS = (
+    "gumar.runtime.01-governance",
+    "gumar.runtime.02-memory-and-skills",
+    "gumar.runtime.03-main-router",
+)
+
+# Always-on ceilings. Hermes itself allows 4000/section and 8000 total; these
+# keep the runtime rules well below that so they cannot creep back up.
+MAX_SECTION_CHARS = 3900
+MAX_TOTAL_PROMPT_CHARS = 6800
+
+# Tools that must stay deferred (tools.tool_search.defer), so the fork's lean tool
+# surface cannot silently regress; scripts/install_gumar_runtime.py pins the same set.
+REQUIRED_DEFER = (
+    "computer_use",
+    "session_search",
+    "image_generate",
+    "todo_list",
+    "process_manage",
+    "cronjob_manage",
+    "skill_manage",
+    "text_to_speech",
+    "browser_vault_list",
+    "browser_vault_fill",
+    "browser_vault_save_login",
+    "browser_vault_enter_code",
+    "browser_vault_unlock",
+)
+
+INSTALLED_POLICIES = (
+    "MASTER_SPEC.md",
+    "PERMISSIONS.md",
+    "EXECUTION_POLICY.md",
+    "RESPONSE_POLICY.md",
+    "MEMORY_POLICY.md",
+    "ARCHITECTURE.md",
+    "ACTION_REGISTRY.md",
+    "QUALITY_POLICY.md",
+    "SELF_IMPROVEMENT.md",
+    "ACTIVE_TASKS_POLICY.md",
+    "CHANGELOG.md",
+)
+REGISTRY_FILE = "action_registry.json"
+REGISTRY_REQUIRED_ACTION = "main.reasoning_fallback"
+
+# Rule text the design keeps in every request.
+REQUIRED_MARKERS = {
+    "MASTER_SPEC priority": "явная текущая команда пользователя",
+    "MASTER_SPEC source of truth": "Актуальный исходный файл",
+    "PERMISSIONS push": "git push",
+    "PERMISSIONS production": "production changes",
+    "PERMISSIONS spend": "покупки и трата денег",
+    "EXECUTION principle": "Не использовать generative LLM",
+    "RESPONSE first lines": "Первые несколько строк должны быть самодостаточными",
+    "MEMORY mode B": "Mode: B",
+    "MEMORY secrets": "Никогда не хранить секреты",
+    "MEMORY skip list": "медицинские сведения",
+    "SKILLS write rule": "обязанность фиксировать знания не отменяется",
+    "SKILLS pruned-skill rule": "SKILL_PRUNED",
+    "Design profile routing": "Main обязан передавать запросы о дизайне",
+}
+# Full-text markers that must NOT reach the always-on prompt.
+FORBIDDEN_MARKERS = {
+    "ARCHITECTURE.md subagent": "Временный исполнитель конкретной подзадачи",
+    "ARCHITECTURE.md profile contract": "escalation_target",
+    "ARCHITECTURE.md JEV routing": "JEV ROUTER",
+    "ACTION_REGISTRY.md schema": "input_schema:",
+    "MEMORY_POLICY.md domains": "Profile получает только явно разрешённые разделы",
+    "MEMORY_POLICY.md isolation": "Специализированный агент не видит автоматически память",
+    "EXECUTION_POLICY.md new script": "Нельзя автоматически превращать непроверенное решение",
+    "QUALITY_POLICY.md": "решает исходную задачу, а не побочную",
+    "SELF_IMPROVEMENT.md": "Один успешный случай сам по себе не доказывает повторяемость",
+    "ACTIVE_TASKS_POLICY.md": "next_action:",
+    "CHANGELOG.md": "Исходный `HERMES_USER_PROFILE.md` разделён",
+}
+# Everything the on-demand index must point at.
+ON_DEMAND_POINTERS = (
+    "ARCHITECTURE.md",
+    "ACTION_REGISTRY.md",
+    "MEMORY_POLICY.md",
+    "EXECUTION_POLICY.md",
+    "QUALITY_POLICY.md",
+    "SELF_IMPROVEMENT.md",
+    "ACTIVE_TASKS_POLICY.md",
+    "action_registry.json",
+    "CHANGELOG.md",
+)
 
 
 class _PromptProbe:
@@ -42,9 +141,9 @@ def _require(condition: bool, message: str) -> None:
         raise RuntimeError(message)
 
 
-def _load_policy_plugin():
-    spec = importlib.util.spec_from_file_location("gumar_runtime_policy_verify", PLUGIN_PATH)
-    _require(spec is not None and spec.loader is not None, f"cannot load plugin module: {PLUGIN_PATH}")
+def _load_module(path: Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
+    _require(spec is not None and spec.loader is not None, f"cannot load module: {path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -88,9 +187,9 @@ def main() -> int:
         "memory mode B config is not active",
     )
 
-    # 3) MASTER_SPEC is installed as the human-readable source of truth.
-    master = home / "policies" / "MASTER_SPEC.md"
-    _require(master.is_file(), "MASTER_SPEC.md was not installed into HERMES_HOME/policies")
+    # 3) Every policy file is installed; MASTER_SPEC is the source of truth.
+    for name in INSTALLED_POLICIES:
+        _require((home / "policies" / name).is_file(), f"{name} is missing from HERMES_HOME/policies")
 
     # 4) Runtime policy plugin is enabled.
     raw = read_raw_config() or {}
@@ -98,15 +197,31 @@ def main() -> int:
     enabled = plugins.get("enabled", []) if isinstance(plugins, dict) else []
     _require(PLUGIN_ID in enabled, f"{PLUGIN_ID} is not enabled in config.yaml")
 
-    # 5) Plugin registers and renders both bounded native system-prompt sections.
-    module = _load_policy_plugin()
+    # 4b) The lean tool surface is pinned: required tools stay deferred.
+    tools_cfg = raw.get("tools") if isinstance(raw, dict) else {}
+    tool_search_cfg = tools_cfg.get("tool_search") if isinstance(tools_cfg, dict) else {}
+    defer = tool_search_cfg.get("defer") if isinstance(tool_search_cfg, dict) else []
+    defer = defer if isinstance(defer, list) else []
+    missing_defer = [name for name in REQUIRED_DEFER if name not in defer]
+    _require(not missing_defer, f"tools.tool_search.defer lost required tools: {missing_defer}")
+
+    # 5) Plugin registers both bounded native system-prompt sections.
+    module = _load_module(PLUGIN_PATH, "gumar_runtime_policy_verify")
     probe = _PromptProbe()
     module.register(probe)
-    expected_ids = {
-        "gumar.runtime.01-governance",
-        "gumar.runtime.02-architecture",
-    }
-    _require(set(probe.sections) == expected_ids, "runtime policy plugin did not register both prompt sections")
+    _require(
+        set(probe.sections) == set(SECTION_IDS),
+        "runtime policy plugin did not register both prompt sections",
+    )
+
+    # 6) Every declared always-on section resolves to real rule text.
+    policy_dir = home / "policies"
+    empty_sections = [
+        f"{name}#{heading}"
+        for name, heading in module.declared_sections()
+        if not module.extract_section(policy_dir, name, heading).strip()
+    ]
+    _require(not empty_sections, f"always-on policy sections resolved empty: {empty_sections}")
 
     rendered: list[RenderedPluginSystemPromptSection] = []
     texts: dict[str, str] = {}
@@ -117,6 +232,8 @@ def main() -> int:
         _require(bool(text.strip()), f"{section_id} rendered empty")
         _require(len(text) <= section["max_chars"], f"{section_id} exceeds declared max_chars")
         _require(len(text) <= MAX_SYSTEM_PROMPT_SECTION_CHARS, f"{section_id} exceeds Hermes section limit")
+        _require(len(text) <= MAX_SECTION_CHARS, f"{section_id} exceeds the always-on budget ({len(text)} chars)")
+        _require(section["position"] == "after_memory", f"{section_id} drifted from the after_memory position")
         texts[section_id] = text
         rendered.append(
             RenderedPluginSystemPromptSection(
@@ -132,62 +249,60 @@ def main() -> int:
         len(full_plugin_prompt) <= MAX_SYSTEM_PROMPT_SECTIONS_TOTAL_CHARS,
         "combined runtime policy sections exceed Hermes aggregate prompt budget",
     )
-
-    governance = texts["gumar.runtime.01-governance"]
-    system = texts["gumar.runtime.02-architecture"]
-
-    # Always-on governance.
     _require(
-        "git push" in governance
-        and "production changes" in governance
-        and "покупки и трата денег" in governance,
-        "PERMISSIONS policy is not present in runtime prompt",
-    )
-    _require(
-        "Не использовать generative LLM" in governance,
-        "EXECUTION_POLICY is not present in runtime prompt",
-    )
-    _require(
-        "Первые несколько строк должны быть самодостаточными" in governance,
-        "RESPONSE_POLICY is not present in runtime prompt",
-    )
-    _require(
-        "[Priority]" in governance and "явная текущая команда пользователя" in governance,
-        "MASTER_SPEC priority rules are not present in runtime prompt",
-    )
-    _require(
-        "[Source of truth]" in governance and "Актуальный исходный файл" in governance,
-        "MASTER_SPEC source-of-truth rules are not present in runtime prompt",
+        len(full_plugin_prompt) <= MAX_TOTAL_PROMPT_CHARS,
+        f"combined runtime policy sections exceed the budget ({len(full_plugin_prompt)} chars)",
     )
 
-    # Architecture, Action Registry and memory policy.
-    _require(
-        "JEV выбирает только зарегистрированный" in system,
-        "ARCHITECTURE/ACTION_REGISTRY rules are not present in runtime prompt",
-    )
-    _require(
-        "Временный исполнитель конкретной подзадачи" in system and "orchestrator" in system,
-        "ARCHITECTURE orchestration rules are not present in runtime prompt",
-    )
-    _require(
-        "медицинские сведения" in system and "Никогда не хранить секреты" in system,
-        "MEMORY_POLICY is not present in runtime prompt",
-    )
+    always_on = "\n".join(texts[section_id] for section_id in SECTION_IDS)
 
-    # Large policies remain connected on demand instead of consuming always-on prompt budget.
-    for policy_name in ("QUALITY_POLICY.md", "SELF_IMPROVEMENT.md", "ACTIVE_TASKS_POLICY.md"):
-        _require(policy_name in system, f"{policy_name} on-demand runtime link is missing")
+    # 7) The always-on prompt carries every rule the design keeps there.
+    missing = {label: marker for label, marker in REQUIRED_MARKERS.items() if marker not in always_on}
+    _require(not missing, f"always-on rules are missing from the runtime prompt: {missing}")
 
+    # 8) Full policy text stays out of the always-on prompt.
+    leaked = {label: marker for label, marker in FORBIDDEN_MARKERS.items() if marker in always_on}
+    _require(not leaked, f"full policy text leaked into the always-on prompt: {leaked}")
+
+    # 9) Everything else stays connected through the on-demand index.
+    missing_pointers = [name for name in ON_DEMAND_POINTERS if name not in always_on]
+    _require(not missing_pointers, f"on-demand pointers are missing: {missing_pointers}")
+
+    # 10) The action registry exists as data and validates.
+    registry_module = _load_module(REGISTRY_LOADER_PATH, "gumar_action_registry_verify")
+    try:
+        registry = registry_module.load_registry(home / "policies" / REGISTRY_FILE)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"action registry is not loadable: {exc}") from exc
+    problems = registry_module.validate_registry(registry)
+    _require(not problems, f"action registry is invalid: {problems}")
+    ids = registry_module.action_ids(registry)
+    _require(REGISTRY_REQUIRED_ACTION in ids, f"{REGISTRY_REQUIRED_ACTION} is missing from the action registry")
+    required_action = registry_module.get_action(registry, REGISTRY_REQUIRED_ACTION) or {}
+    _require(required_action.get("status") == "stable", f"{REGISTRY_REQUIRED_ACTION} must be stable")
+
+    governance = texts[SECTION_IDS[0]]
+    memory_rules = texts[SECTION_IDS[1]]
+    router_rules = texts[SECTION_IDS[2]]
     print("Gumar runtime verification: OK")
     print(f"  HERMES_HOME: {home}")
     print("  SOUL.md: native identity loader OK")
     print("  USER.md: native MemoryStore prompt snapshot OK")
     print("  MASTER_SPEC.md: installed source of truth OK")
-    print(f"  plugin: {PLUGIN_ID} enabled")
-    print(f"  governance prompt chars: {len(governance)}")
-    print(f"  architecture/memory prompt chars: {len(system)}")
-    print(f"  combined framed prompt chars: {len(full_plugin_prompt)}")
-    print("  permissions/execution/response/memory/master/architecture/on-demand links: OK")
+    print(f"  plugin: {PLUGIN_ID} enabled, sections {', '.join(SECTION_IDS)}")
+    print(f"  tools deferred: {len(defer)} (required {len(REQUIRED_DEFER)} pinned)")
+    print(f"  always-on governance: {len(governance)} chars (ceiling {MAX_SECTION_CHARS})")
+    print(f"  always-on memory rules + on-demand index: {len(memory_rules)} chars (ceiling {MAX_SECTION_CHARS})")
+    print(f"  always-on Main routing hint: {len(router_rules)} chars (Design profile renders it empty)")
+    print(
+        f"  combined framed prompt: {len(full_plugin_prompt)} chars "
+        f"(ceiling {MAX_TOTAL_PROMPT_CHARS}, Hermes {MAX_SYSTEM_PROMPT_SECTIONS_TOTAL_CHARS})"
+    )
+    print(f"  action registry: {REGISTRY_FILE} valid, actions={ids}")
+    print("  always-on: MASTER_SPEC core, PERMISSIONS, EXECUTION, RESPONSE, MEMORY rules,")
+    print("             skill write + pruned-skill rules")
+    print("  on-demand: ARCHITECTURE, ACTION_REGISTRY, MEMORY_POLICY levels, EXECUTION (new script),")
+    print("             QUALITY_POLICY, SELF_IMPROVEMENT, ACTIVE_TASKS_POLICY; CHANGELOG never injected")
     return 0
 
 

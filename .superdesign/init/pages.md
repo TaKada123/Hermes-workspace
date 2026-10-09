@@ -1,0 +1,1135 @@
+# Key Page Dependency Trees
+
+> Up to 10 key routes are traced recursively through relative imports, the `@/` alias (`web/src`), and the local `@hermes/shared` workspace package. Third-party/node_modules imports and test files are excluded. Repeated dependencies are marked “already expanded” to keep each tree complete without duplicating the same subtree.
+
+> `/` redirects to `/sessions`, so the landing-page tree is the `SessionsPage` tree.
+
+## `/` — Sessions / default landing
+
+Entry: `web/src/pages/SessionsPage.tsx`
+
+Dependencies:
+- `web/src/lib/api.ts`
+  - `apps/shared/src/index.ts`
+    - `apps/shared/src/ansi.ts`
+    - `apps/shared/src/backend-scope.ts`
+    - `apps/shared/src/billing-policy.ts`
+    - `apps/shared/src/billing-types.ts`
+    - `apps/shared/src/catalog-install.ts`
+    - `apps/shared/src/charge-settlement.ts`
+    - `apps/shared/src/color.ts`
+    - `apps/shared/src/cron-trigger-controller.ts`
+    - `apps/shared/src/data-url-read-max.ts`
+    - `apps/shared/src/format.ts`
+    - `apps/shared/src/fuzzy.ts`
+    - `apps/shared/src/gateway-events.ts`
+    - `apps/shared/src/i18n.ts`
+    - `apps/shared/src/json-rpc-channel.ts`
+    - `apps/shared/src/json-rpc-gateway.ts`
+    - `apps/shared/src/model-search-text.ts`
+    - `apps/shared/src/reasoning-effort.ts`
+    - `apps/shared/src/reconnect-backoff.ts`
+    - `apps/shared/src/skill-scaffold.ts`
+    - `apps/shared/src/skin.ts`
+    - `apps/shared/src/slash.ts`
+    - `apps/shared/src/theme-presets.ts`
+    - `apps/shared/src/translucency.ts`
+    - `apps/shared/src/websocket-url.ts`
+  - `web/src/lib/profile-bootstrap.ts`
+  - `web/src/themes/types.ts`
+  - `web/src/lib/dashboard-auth-reload.ts`
+  - `web/src/lib/api-error.ts`
+- `web/src/lib/session-prune.ts`
+- `web/src/lib/session-refresh.ts`
+- `web/src/lib/session-import.ts`
+  - `web/src/lib/api.ts` *(already expanded)*
+- `web/src/lib/utils.ts`
+- `web/src/components/Markdown.tsx`
+- `web/src/components/PlatformsCard.tsx`
+  - `web/src/lib/api.ts` *(already expanded)*
+  - `web/src/lib/utils.ts` *(already expanded)*
+  - `web/src/i18n/index.ts`
+    - `web/src/i18n/context.tsx`
+      - `apps/shared/src/i18n.ts` *(already expanded)*
+      - `web/src/i18n/types.ts`
+      - `web/src/i18n/en.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/zh.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/zh-hant.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ja.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/de.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/es.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/fr.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/tr.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/uk.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/af.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ko.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/it.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ga.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/pt.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ru.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/hu.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ar.ts`
+        - `web/src/i18n/define-locale.ts`
+          - `apps/shared/src/i18n.ts` *(already expanded)*
+          - `web/src/i18n/en.ts` *(already expanded)*
+          - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/types.ts` *(already expanded)*
+- `web/src/components/DeleteConfirmDialog.tsx`
+  - `web/src/i18n/index.ts` *(already expanded)*
+- `web/src/contexts/useSystemActions.ts`
+  - `web/src/contexts/system-actions-context.ts`
+    - `web/src/lib/api.ts` *(already expanded)*
+- `web/src/i18n/index.ts` *(already expanded)*
+- `web/src/contexts/usePageHeader.ts`
+  - `web/src/contexts/page-header-context.ts`
+- `web/src/plugins/index.ts`
+  - `web/src/plugins/registry.ts`
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/lib/utils.ts` *(already expanded)*
+    - `web/src/i18n/index.ts` *(already expanded)*
+    - `web/src/plugins/slots.ts`
+  - `web/src/plugins/PluginPage.tsx`
+    - `web/src/plugins/registry.ts` *(already expanded)*
+    - `web/src/i18n/index.ts` *(already expanded)*
+    - `web/src/lib/utils.ts` *(already expanded)*
+    - `web/src/i18n/types.ts` *(already expanded)*
+  - `web/src/plugins/usePlugins.ts`
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/plugins/types.ts`
+    - `web/src/plugins/registry.ts` *(already expanded)*
+  - `web/src/plugins/slots.ts` *(already expanded)*
+  - `web/src/plugins/types.ts` *(already expanded)*
+- `web/src/lib/dashboard-flags.ts`
+- `web/src/lib/api-error.ts` *(already expanded)*
+
+## `/chat` — Embedded PTY chat workspace
+
+Entry: `web/src/pages/ChatPage.tsx`
+
+Dependencies:
+- `web/src/lib/utils.ts`
+- `web/src/components/ChatSidebar.tsx`
+  - `web/src/components/ModelPickerDialog.tsx`
+    - `web/src/components/ConfirmDialog.tsx`
+      - `web/src/lib/utils.ts` *(already expanded)*
+    - `web/src/lib/gatewayClient.ts`
+      - `apps/shared/src/index.ts`
+        - `apps/shared/src/ansi.ts`
+        - `apps/shared/src/backend-scope.ts`
+        - `apps/shared/src/billing-policy.ts`
+        - `apps/shared/src/billing-types.ts`
+        - `apps/shared/src/catalog-install.ts`
+        - `apps/shared/src/charge-settlement.ts`
+        - `apps/shared/src/color.ts`
+        - `apps/shared/src/cron-trigger-controller.ts`
+        - `apps/shared/src/data-url-read-max.ts`
+        - `apps/shared/src/format.ts`
+        - `apps/shared/src/fuzzy.ts`
+        - `apps/shared/src/gateway-events.ts`
+        - `apps/shared/src/i18n.ts`
+        - `apps/shared/src/json-rpc-channel.ts`
+        - `apps/shared/src/json-rpc-gateway.ts`
+        - `apps/shared/src/model-search-text.ts`
+        - `apps/shared/src/reasoning-effort.ts`
+        - `apps/shared/src/reconnect-backoff.ts`
+        - `apps/shared/src/skill-scaffold.ts`
+        - `apps/shared/src/skin.ts`
+        - `apps/shared/src/slash.ts`
+        - `apps/shared/src/theme-presets.ts`
+        - `apps/shared/src/translucency.ts`
+        - `apps/shared/src/websocket-url.ts`
+      - `web/src/lib/api.ts`
+        - `apps/shared/src/index.ts` *(already expanded)*
+        - `web/src/lib/profile-bootstrap.ts`
+        - `web/src/themes/types.ts`
+        - `web/src/lib/dashboard-auth-reload.ts`
+        - `web/src/lib/api-error.ts`
+      - `web/src/lib/dashboard-auth-reload.ts` *(already expanded)*
+    - `apps/shared/src/index.ts` *(already expanded)*
+    - `web/src/lib/utils.ts` *(already expanded)*
+    - `web/src/lib/model-picker-filter.ts`
+      - `apps/shared/src/index.ts` *(already expanded)*
+    - `web/src/lib/api-error.ts` *(already expanded)*
+    - `web/src/lib/model-picker-current.ts`
+  - `web/src/components/ModelReloadConfirm.tsx`
+    - `web/src/components/ConfirmDialog.tsx` *(already expanded)*
+  - `web/src/components/ReasoningPicker.tsx`
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/lib/reasoning-effort.ts`
+      - `apps/shared/src/index.ts` *(already expanded)*
+  - `web/src/lib/gatewayClient.ts` *(already expanded)*
+  - `web/src/lib/eventsFeedClient.ts`
+    - `apps/shared/src/index.ts` *(already expanded)*
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/lib/dashboard-auth-reload.ts` *(already expanded)*
+    - `web/src/lib/events-reconnect.ts`
+      - `apps/shared/src/index.ts` *(already expanded)*
+  - `web/src/lib/api.ts` *(already expanded)*
+  - `web/src/lib/events-reconnect.ts` *(already expanded)*
+  - `web/src/lib/chat-sidebar-banner.ts`
+  - `web/src/lib/chat-title.ts`
+  - `web/src/lib/utils.ts` *(already expanded)*
+- `web/src/components/ChatSessionList.tsx`
+  - `web/src/components/ChatWorkspacePicker.tsx`
+    - `web/src/i18n/index.ts`
+      - `web/src/i18n/context.tsx`
+        - `apps/shared/src/i18n.ts` *(already expanded)*
+        - `web/src/i18n/types.ts`
+        - `web/src/i18n/en.ts`
+          - `web/src/i18n/types.ts` *(already expanded)*
+        - `web/src/i18n/zh.ts`
+          - `web/src/i18n/types.ts` *(already expanded)*
+        - `web/src/i18n/zh-hant.ts`
+          - `web/src/i18n/types.ts` *(already expanded)*
+        - `web/src/i18n/ja.ts`
+          - `web/src/i18n/types.ts` *(already expanded)*
+        - `web/src/i18n/de.ts`
+          - `web/src/i18n/types.ts` *(already expanded)*
+        - `web/src/i18n/es.ts`
+          - `web/src/i18n/types.ts` *(already expanded)*
+        - `web/src/i18n/fr.ts`
+          - `web/src/i18n/types.ts` *(already expanded)*
+        - `web/src/i18n/tr.ts`
+          - `web/src/i18n/types.ts` *(already expanded)*
+        - `web/src/i18n/uk.ts`
+          - `web/src/i18n/types.ts` *(already expanded)*
+        - `web/src/i18n/af.ts`
+          - `web/src/i18n/types.ts` *(already expanded)*
+        - `web/src/i18n/ko.ts`
+          - `web/src/i18n/types.ts` *(already expanded)*
+        - `web/src/i18n/it.ts`
+          - `web/src/i18n/types.ts` *(already expanded)*
+        - `web/src/i18n/ga.ts`
+          - `web/src/i18n/types.ts` *(already expanded)*
+        - `web/src/i18n/pt.ts`
+          - `web/src/i18n/types.ts` *(already expanded)*
+        - `web/src/i18n/ru.ts`
+          - `web/src/i18n/types.ts` *(already expanded)*
+        - `web/src/i18n/hu.ts`
+          - `web/src/i18n/types.ts` *(already expanded)*
+        - `web/src/i18n/ar.ts`
+          - `web/src/i18n/define-locale.ts`
+            - `apps/shared/src/i18n.ts` *(already expanded)*
+            - `web/src/i18n/en.ts` *(already expanded)*
+            - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/lib/chat-workspaces.ts`
+      - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/lib/utils.ts` *(already expanded)*
+  - `web/src/i18n/index.ts` *(already expanded)*
+  - `web/src/lib/api.ts` *(already expanded)*
+  - `web/src/lib/utils.ts` *(already expanded)*
+- `web/src/contexts/usePageHeader.ts`
+  - `web/src/contexts/page-header-context.ts`
+- `web/src/i18n/index.ts` *(already expanded)*
+- `web/src/lib/api.ts` *(already expanded)*
+- `web/src/lib/chat-workspaces.ts` *(already expanded)*
+- `web/src/lib/chat-activation.ts`
+- `web/src/lib/clipboard.ts`
+- `web/src/lib/chat-title.ts` *(already expanded)*
+- `web/src/lib/pty-composition.ts`
+- `web/src/lib/pty-focus.ts`
+- `web/src/lib/pty-resume-sanitizer.ts`
+- `web/src/lib/pty-reconnect.ts`
+  - `apps/shared/src/index.ts` *(already expanded)*
+- `web/src/lib/pty-resume-loading.ts`
+  - `web/src/lib/pty-reconnect.ts` *(already expanded)*
+- `web/src/lib/pty-mobile-input.ts`
+- `web/src/lib/keyboard-inset.ts`
+- `web/src/lib/pty-keyboard-shortcuts.ts`
+  - `web/src/lib/pty-reconnect.ts` *(already expanded)*
+- `web/src/lib/pty-scroll.ts`
+- `web/src/lib/chatImagePaste.ts`
+  - `web/src/lib/api.ts` *(already expanded)*
+- `web/src/lib/dashboard-auth-reload.ts` *(already expanded)*
+- `web/src/lib/pty-close-copy.ts`
+- `web/src/lib/pty-attach-token.ts`
+- `web/src/lib/terminal-font-refit.ts`
+- `web/src/lib/xterm-webgl-release.ts`
+- `web/src/plugins/index.ts`
+  - `web/src/plugins/registry.ts`
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/lib/utils.ts` *(already expanded)*
+    - `web/src/i18n/index.ts` *(already expanded)*
+    - `web/src/plugins/slots.ts`
+  - `web/src/plugins/PluginPage.tsx`
+    - `web/src/plugins/registry.ts` *(already expanded)*
+    - `web/src/i18n/index.ts` *(already expanded)*
+    - `web/src/lib/utils.ts` *(already expanded)*
+    - `web/src/i18n/types.ts` *(already expanded)*
+  - `web/src/plugins/usePlugins.ts`
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/plugins/types.ts`
+    - `web/src/plugins/registry.ts` *(already expanded)*
+  - `web/src/plugins/slots.ts` *(already expanded)*
+  - `web/src/plugins/types.ts` *(already expanded)*
+- `web/src/themes/index.ts`
+  - `web/src/themes/context.tsx`
+    - `web/src/themes/presets.ts`
+      - `apps/shared/src/index.ts` *(already expanded)*
+      - `web/src/themes/types.ts` *(already expanded)*
+    - `web/src/themes/fonts.ts`
+    - `web/src/themes/types.ts` *(already expanded)*
+    - `web/src/lib/api.ts` *(already expanded)*
+  - `web/src/themes/presets.ts` *(already expanded)*
+  - `web/src/themes/fonts.ts` *(already expanded)*
+  - `web/src/themes/types.ts` *(already expanded)*
+- `web/src/contexts/useProfileScope.ts`
+  - `web/src/contexts/profile-context.ts`
+- `web/src/lib/api-error.ts` *(already expanded)*
+
+## `/files` — Workspace files
+
+Entry: `web/src/pages/FilesPage.tsx`
+
+Dependencies:
+- `web/src/components/DeleteConfirmDialog.tsx`
+  - `web/src/i18n/index.ts`
+    - `web/src/i18n/context.tsx`
+      - `apps/shared/src/i18n.ts`
+      - `web/src/i18n/types.ts`
+      - `web/src/i18n/en.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/zh.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/zh-hant.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ja.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/de.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/es.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/fr.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/tr.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/uk.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/af.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ko.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/it.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ga.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/pt.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ru.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/hu.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ar.ts`
+        - `web/src/i18n/define-locale.ts`
+          - `apps/shared/src/i18n.ts` *(already expanded)*
+          - `web/src/i18n/en.ts` *(already expanded)*
+          - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/types.ts` *(already expanded)*
+- `web/src/contexts/usePageHeader.ts`
+  - `web/src/contexts/page-header-context.ts`
+- `web/src/lib/api.ts`
+  - `apps/shared/src/index.ts`
+    - `apps/shared/src/ansi.ts`
+    - `apps/shared/src/backend-scope.ts`
+    - `apps/shared/src/billing-policy.ts`
+    - `apps/shared/src/billing-types.ts`
+    - `apps/shared/src/catalog-install.ts`
+    - `apps/shared/src/charge-settlement.ts`
+    - `apps/shared/src/color.ts`
+    - `apps/shared/src/cron-trigger-controller.ts`
+    - `apps/shared/src/data-url-read-max.ts`
+    - `apps/shared/src/format.ts`
+    - `apps/shared/src/fuzzy.ts`
+    - `apps/shared/src/gateway-events.ts`
+    - `apps/shared/src/i18n.ts` *(already expanded)*
+    - `apps/shared/src/json-rpc-channel.ts`
+    - `apps/shared/src/json-rpc-gateway.ts`
+    - `apps/shared/src/model-search-text.ts`
+    - `apps/shared/src/reasoning-effort.ts`
+    - `apps/shared/src/reconnect-backoff.ts`
+    - `apps/shared/src/skill-scaffold.ts`
+    - `apps/shared/src/skin.ts`
+    - `apps/shared/src/slash.ts`
+    - `apps/shared/src/theme-presets.ts`
+    - `apps/shared/src/translucency.ts`
+    - `apps/shared/src/websocket-url.ts`
+  - `web/src/lib/profile-bootstrap.ts`
+  - `web/src/themes/types.ts`
+  - `web/src/lib/dashboard-auth-reload.ts`
+  - `web/src/lib/api-error.ts`
+- `web/src/plugins/index.ts`
+  - `web/src/plugins/registry.ts`
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/lib/utils.ts`
+    - `web/src/i18n/index.ts` *(already expanded)*
+    - `web/src/plugins/slots.ts`
+  - `web/src/plugins/PluginPage.tsx`
+    - `web/src/plugins/registry.ts` *(already expanded)*
+    - `web/src/i18n/index.ts` *(already expanded)*
+    - `web/src/lib/utils.ts` *(already expanded)*
+    - `web/src/i18n/types.ts` *(already expanded)*
+  - `web/src/plugins/usePlugins.ts`
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/plugins/types.ts`
+    - `web/src/plugins/registry.ts` *(already expanded)*
+  - `web/src/plugins/slots.ts` *(already expanded)*
+  - `web/src/plugins/types.ts` *(already expanded)*
+- `web/src/lib/api-error.ts` *(already expanded)*
+
+## `/analytics` — Usage analytics
+
+Entry: `web/src/pages/AnalyticsPage.tsx`
+
+Dependencies:
+- `web/src/lib/api.ts`
+  - `apps/shared/src/index.ts`
+    - `apps/shared/src/ansi.ts`
+    - `apps/shared/src/backend-scope.ts`
+    - `apps/shared/src/billing-policy.ts`
+    - `apps/shared/src/billing-types.ts`
+    - `apps/shared/src/catalog-install.ts`
+    - `apps/shared/src/charge-settlement.ts`
+    - `apps/shared/src/color.ts`
+    - `apps/shared/src/cron-trigger-controller.ts`
+    - `apps/shared/src/data-url-read-max.ts`
+    - `apps/shared/src/format.ts`
+    - `apps/shared/src/fuzzy.ts`
+    - `apps/shared/src/gateway-events.ts`
+    - `apps/shared/src/i18n.ts`
+    - `apps/shared/src/json-rpc-channel.ts`
+    - `apps/shared/src/json-rpc-gateway.ts`
+    - `apps/shared/src/model-search-text.ts`
+    - `apps/shared/src/reasoning-effort.ts`
+    - `apps/shared/src/reconnect-backoff.ts`
+    - `apps/shared/src/skill-scaffold.ts`
+    - `apps/shared/src/skin.ts`
+    - `apps/shared/src/slash.ts`
+    - `apps/shared/src/theme-presets.ts`
+    - `apps/shared/src/translucency.ts`
+    - `apps/shared/src/websocket-url.ts`
+  - `web/src/lib/profile-bootstrap.ts`
+  - `web/src/themes/types.ts`
+  - `web/src/lib/dashboard-auth-reload.ts`
+  - `web/src/lib/api-error.ts`
+- `web/src/lib/utils.ts`
+- `web/src/contexts/usePageHeader.ts`
+  - `web/src/contexts/page-header-context.ts`
+- `web/src/i18n/index.ts`
+  - `web/src/i18n/context.tsx`
+    - `apps/shared/src/i18n.ts` *(already expanded)*
+    - `web/src/i18n/types.ts`
+    - `web/src/i18n/en.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/zh.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/zh-hant.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/ja.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/de.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/es.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/fr.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/tr.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/uk.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/af.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/ko.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/it.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/ga.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/pt.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/ru.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/hu.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/ar.ts`
+      - `web/src/i18n/define-locale.ts`
+        - `apps/shared/src/i18n.ts` *(already expanded)*
+        - `web/src/i18n/en.ts` *(already expanded)*
+        - `web/src/i18n/types.ts` *(already expanded)*
+  - `web/src/i18n/types.ts` *(already expanded)*
+- `web/src/plugins/index.ts`
+  - `web/src/plugins/registry.ts`
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/lib/utils.ts` *(already expanded)*
+    - `web/src/i18n/index.ts` *(already expanded)*
+    - `web/src/plugins/slots.ts`
+  - `web/src/plugins/PluginPage.tsx`
+    - `web/src/plugins/registry.ts` *(already expanded)*
+    - `web/src/i18n/index.ts` *(already expanded)*
+    - `web/src/lib/utils.ts` *(already expanded)*
+    - `web/src/i18n/types.ts` *(already expanded)*
+  - `web/src/plugins/usePlugins.ts`
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/plugins/types.ts`
+    - `web/src/plugins/registry.ts` *(already expanded)*
+  - `web/src/plugins/slots.ts` *(already expanded)*
+  - `web/src/plugins/types.ts` *(already expanded)*
+- `web/src/lib/api-error.ts` *(already expanded)*
+
+## `/models` — Models and providers
+
+Entry: `web/src/pages/ModelsPage.tsx`
+
+Dependencies:
+- `web/src/lib/api.ts`
+  - `apps/shared/src/index.ts`
+    - `apps/shared/src/ansi.ts`
+    - `apps/shared/src/backend-scope.ts`
+    - `apps/shared/src/billing-policy.ts`
+    - `apps/shared/src/billing-types.ts`
+    - `apps/shared/src/catalog-install.ts`
+    - `apps/shared/src/charge-settlement.ts`
+    - `apps/shared/src/color.ts`
+    - `apps/shared/src/cron-trigger-controller.ts`
+    - `apps/shared/src/data-url-read-max.ts`
+    - `apps/shared/src/format.ts`
+    - `apps/shared/src/fuzzy.ts`
+    - `apps/shared/src/gateway-events.ts`
+    - `apps/shared/src/i18n.ts`
+    - `apps/shared/src/json-rpc-channel.ts`
+    - `apps/shared/src/json-rpc-gateway.ts`
+    - `apps/shared/src/model-search-text.ts`
+    - `apps/shared/src/reasoning-effort.ts`
+    - `apps/shared/src/reconnect-backoff.ts`
+    - `apps/shared/src/skill-scaffold.ts`
+    - `apps/shared/src/skin.ts`
+    - `apps/shared/src/slash.ts`
+    - `apps/shared/src/theme-presets.ts`
+    - `apps/shared/src/translucency.ts`
+    - `apps/shared/src/websocket-url.ts`
+  - `web/src/lib/profile-bootstrap.ts`
+  - `web/src/themes/types.ts`
+  - `web/src/lib/dashboard-auth-reload.ts`
+  - `web/src/lib/api-error.ts`
+- `web/src/lib/utils.ts`
+- `web/src/lib/dashboard-modal-shell.ts`
+- `apps/shared/src/index.ts` *(already expanded)*
+- `web/src/components/ConfirmDialog.tsx`
+  - `web/src/lib/utils.ts` *(already expanded)*
+- `web/src/hooks/useModalBehavior.ts`
+- `web/src/contexts/usePageHeader.ts`
+  - `web/src/contexts/page-header-context.ts`
+- `web/src/i18n/index.ts`
+  - `web/src/i18n/context.tsx`
+    - `apps/shared/src/i18n.ts` *(already expanded)*
+    - `web/src/i18n/types.ts`
+    - `web/src/i18n/en.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/zh.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/zh-hant.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/ja.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/de.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/es.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/fr.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/tr.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/uk.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/af.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/ko.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/it.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/ga.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/pt.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/ru.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/hu.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/ar.ts`
+      - `web/src/i18n/define-locale.ts`
+        - `apps/shared/src/i18n.ts` *(already expanded)*
+        - `web/src/i18n/en.ts` *(already expanded)*
+        - `web/src/i18n/types.ts` *(already expanded)*
+  - `web/src/i18n/types.ts` *(already expanded)*
+- `web/src/plugins/index.ts`
+  - `web/src/plugins/registry.ts`
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/lib/utils.ts` *(already expanded)*
+    - `web/src/i18n/index.ts` *(already expanded)*
+    - `web/src/plugins/slots.ts`
+  - `web/src/plugins/PluginPage.tsx`
+    - `web/src/plugins/registry.ts` *(already expanded)*
+    - `web/src/i18n/index.ts` *(already expanded)*
+    - `web/src/lib/utils.ts` *(already expanded)*
+    - `web/src/i18n/types.ts` *(already expanded)*
+  - `web/src/plugins/usePlugins.ts`
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/plugins/types.ts`
+    - `web/src/plugins/registry.ts` *(already expanded)*
+  - `web/src/plugins/slots.ts` *(already expanded)*
+  - `web/src/plugins/types.ts` *(already expanded)*
+- `web/src/components/ModelPickerDialog.tsx`
+  - `web/src/components/ConfirmDialog.tsx` *(already expanded)*
+  - `web/src/lib/gatewayClient.ts`
+    - `apps/shared/src/index.ts` *(already expanded)*
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/lib/dashboard-auth-reload.ts` *(already expanded)*
+  - `apps/shared/src/index.ts` *(already expanded)*
+  - `web/src/lib/utils.ts` *(already expanded)*
+  - `web/src/lib/model-picker-filter.ts`
+    - `apps/shared/src/index.ts` *(already expanded)*
+  - `web/src/lib/api-error.ts` *(already expanded)*
+  - `web/src/lib/model-picker-current.ts`
+- `web/src/components/ModelReloadConfirm.tsx`
+  - `web/src/components/ConfirmDialog.tsx` *(already expanded)*
+- `web/src/lib/api-error.ts` *(already expanded)*
+- `web/src/lib/model-picker-current.ts` *(already expanded)*
+
+## `/cron` — Scheduled jobs
+
+Entry: `web/src/pages/CronPage.tsx`
+
+Dependencies:
+- `apps/shared/src/index.ts`
+  - `apps/shared/src/ansi.ts`
+  - `apps/shared/src/backend-scope.ts`
+  - `apps/shared/src/billing-policy.ts`
+  - `apps/shared/src/billing-types.ts`
+  - `apps/shared/src/catalog-install.ts`
+  - `apps/shared/src/charge-settlement.ts`
+  - `apps/shared/src/color.ts`
+  - `apps/shared/src/cron-trigger-controller.ts`
+  - `apps/shared/src/data-url-read-max.ts`
+  - `apps/shared/src/format.ts`
+  - `apps/shared/src/fuzzy.ts`
+  - `apps/shared/src/gateway-events.ts`
+  - `apps/shared/src/i18n.ts`
+  - `apps/shared/src/json-rpc-channel.ts`
+  - `apps/shared/src/json-rpc-gateway.ts`
+  - `apps/shared/src/model-search-text.ts`
+  - `apps/shared/src/reasoning-effort.ts`
+  - `apps/shared/src/reconnect-backoff.ts`
+  - `apps/shared/src/skill-scaffold.ts`
+  - `apps/shared/src/skin.ts`
+  - `apps/shared/src/slash.ts`
+  - `apps/shared/src/theme-presets.ts`
+  - `apps/shared/src/translucency.ts`
+  - `apps/shared/src/websocket-url.ts`
+- `web/src/lib/api.ts`
+  - `apps/shared/src/index.ts` *(already expanded)*
+  - `web/src/lib/profile-bootstrap.ts`
+  - `web/src/themes/types.ts`
+  - `web/src/lib/dashboard-auth-reload.ts`
+  - `web/src/lib/api-error.ts`
+- `web/src/lib/cron-job.ts`
+  - `web/src/lib/api.ts` *(already expanded)*
+- `web/src/components/DeleteConfirmDialog.tsx`
+  - `web/src/i18n/index.ts`
+    - `web/src/i18n/context.tsx`
+      - `apps/shared/src/i18n.ts` *(already expanded)*
+      - `web/src/i18n/types.ts`
+      - `web/src/i18n/en.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/zh.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/zh-hant.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ja.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/de.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/es.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/fr.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/tr.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/uk.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/af.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ko.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/it.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ga.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/pt.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ru.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/hu.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ar.ts`
+        - `web/src/i18n/define-locale.ts`
+          - `apps/shared/src/i18n.ts` *(already expanded)*
+          - `web/src/i18n/en.ts` *(already expanded)*
+          - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/types.ts` *(already expanded)*
+- `web/src/components/ScheduleBuilder.tsx`
+  - `web/src/i18n/index.ts` *(already expanded)*
+  - `web/src/lib/schedule.ts`
+- `web/src/lib/schedule.ts` *(already expanded)*
+- `web/src/hooks/useModalBehavior.ts`
+- `web/src/i18n/index.ts` *(already expanded)*
+- `web/src/i18n/en.ts` *(already expanded)*
+- `web/src/contexts/usePageHeader.ts`
+  - `web/src/contexts/page-header-context.ts`
+- `web/src/plugins/index.ts`
+  - `web/src/plugins/registry.ts`
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/lib/utils.ts`
+    - `web/src/i18n/index.ts` *(already expanded)*
+    - `web/src/plugins/slots.ts`
+  - `web/src/plugins/PluginPage.tsx`
+    - `web/src/plugins/registry.ts` *(already expanded)*
+    - `web/src/i18n/index.ts` *(already expanded)*
+    - `web/src/lib/utils.ts` *(already expanded)*
+    - `web/src/i18n/types.ts` *(already expanded)*
+  - `web/src/plugins/usePlugins.ts`
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/plugins/types.ts`
+    - `web/src/plugins/registry.ts` *(already expanded)*
+  - `web/src/plugins/slots.ts` *(already expanded)*
+  - `web/src/plugins/types.ts` *(already expanded)*
+- `web/src/components/LoadErrorNotice.tsx`
+  - `web/src/i18n/index.ts` *(already expanded)*
+  - `web/src/lib/load-error-copy.ts`
+    - `web/src/i18n/en.ts` *(already expanded)*
+  - `web/src/lib/utils.ts` *(already expanded)*
+- `web/src/components/AutomationBlueprints.tsx`
+  - `web/src/lib/api.ts` *(already expanded)*
+  - `web/src/lib/utils.ts` *(already expanded)*
+  - `web/src/lib/api-error.ts` *(already expanded)*
+- `web/src/lib/utils.ts` *(already expanded)*
+- `web/src/lib/api-error.ts` *(already expanded)*
+
+## `/skills` — Skills
+
+Entry: `web/src/pages/SkillsPage.tsx`
+
+Dependencies:
+- `web/src/lib/api.ts`
+  - `apps/shared/src/index.ts`
+    - `apps/shared/src/ansi.ts`
+    - `apps/shared/src/backend-scope.ts`
+    - `apps/shared/src/billing-policy.ts`
+    - `apps/shared/src/billing-types.ts`
+    - `apps/shared/src/catalog-install.ts`
+    - `apps/shared/src/charge-settlement.ts`
+    - `apps/shared/src/color.ts`
+    - `apps/shared/src/cron-trigger-controller.ts`
+    - `apps/shared/src/data-url-read-max.ts`
+    - `apps/shared/src/format.ts`
+    - `apps/shared/src/fuzzy.ts`
+    - `apps/shared/src/gateway-events.ts`
+    - `apps/shared/src/i18n.ts`
+    - `apps/shared/src/json-rpc-channel.ts`
+    - `apps/shared/src/json-rpc-gateway.ts`
+    - `apps/shared/src/model-search-text.ts`
+    - `apps/shared/src/reasoning-effort.ts`
+    - `apps/shared/src/reconnect-backoff.ts`
+    - `apps/shared/src/skill-scaffold.ts`
+    - `apps/shared/src/skin.ts`
+    - `apps/shared/src/slash.ts`
+    - `apps/shared/src/theme-presets.ts`
+    - `apps/shared/src/translucency.ts`
+    - `apps/shared/src/websocket-url.ts`
+  - `web/src/lib/profile-bootstrap.ts`
+  - `web/src/themes/types.ts`
+  - `web/src/lib/dashboard-auth-reload.ts`
+  - `web/src/lib/api-error.ts`
+- `web/src/contexts/useProfileScope.ts`
+  - `web/src/contexts/profile-context.ts`
+- `web/src/components/ToolsetConfigDrawer.tsx`
+  - `web/src/lib/api.ts` *(already expanded)*
+  - `web/src/lib/utils.ts`
+- `web/src/components/SkillEditorDialog.tsx`
+  - `web/src/lib/api.ts` *(already expanded)*
+  - `web/src/lib/api-error.ts` *(already expanded)*
+- `web/src/components/LoadErrorNotice.tsx`
+  - `web/src/i18n/index.ts`
+    - `web/src/i18n/context.tsx`
+      - `apps/shared/src/i18n.ts` *(already expanded)*
+      - `web/src/i18n/types.ts`
+      - `web/src/i18n/en.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/zh.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/zh-hant.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ja.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/de.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/es.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/fr.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/tr.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/uk.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/af.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ko.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/it.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ga.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/pt.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ru.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/hu.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ar.ts`
+        - `web/src/i18n/define-locale.ts`
+          - `apps/shared/src/i18n.ts` *(already expanded)*
+          - `web/src/i18n/en.ts` *(already expanded)*
+          - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/types.ts` *(already expanded)*
+  - `web/src/lib/load-error-copy.ts`
+    - `web/src/i18n/en.ts` *(already expanded)*
+  - `web/src/lib/utils.ts` *(already expanded)*
+- `web/src/lib/utils.ts` *(already expanded)*
+- `web/src/i18n/index.ts` *(already expanded)*
+- `web/src/i18n/en.ts` *(already expanded)*
+- `web/src/contexts/usePageHeader.ts`
+  - `web/src/contexts/page-header-context.ts`
+- `web/src/plugins/index.ts`
+  - `web/src/plugins/registry.ts`
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/lib/utils.ts` *(already expanded)*
+    - `web/src/i18n/index.ts` *(already expanded)*
+    - `web/src/plugins/slots.ts`
+  - `web/src/plugins/PluginPage.tsx`
+    - `web/src/plugins/registry.ts` *(already expanded)*
+    - `web/src/i18n/index.ts` *(already expanded)*
+    - `web/src/lib/utils.ts` *(already expanded)*
+    - `web/src/i18n/types.ts` *(already expanded)*
+  - `web/src/plugins/usePlugins.ts`
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/plugins/types.ts`
+    - `web/src/plugins/registry.ts` *(already expanded)*
+  - `web/src/plugins/slots.ts` *(already expanded)*
+  - `web/src/plugins/types.ts` *(already expanded)*
+- `web/src/lib/api-error.ts` *(already expanded)*
+
+## `/plugins` — Plugins and memory providers
+
+Entry: `web/src/pages/PluginsPage.tsx`
+
+Dependencies:
+- `web/src/i18n/types.ts`
+- `web/src/lib/api.ts`
+  - `apps/shared/src/index.ts`
+    - `apps/shared/src/ansi.ts`
+    - `apps/shared/src/backend-scope.ts`
+    - `apps/shared/src/billing-policy.ts`
+    - `apps/shared/src/billing-types.ts`
+    - `apps/shared/src/catalog-install.ts`
+    - `apps/shared/src/charge-settlement.ts`
+    - `apps/shared/src/color.ts`
+    - `apps/shared/src/cron-trigger-controller.ts`
+    - `apps/shared/src/data-url-read-max.ts`
+    - `apps/shared/src/format.ts`
+    - `apps/shared/src/fuzzy.ts`
+    - `apps/shared/src/gateway-events.ts`
+    - `apps/shared/src/i18n.ts`
+    - `apps/shared/src/json-rpc-channel.ts`
+    - `apps/shared/src/json-rpc-gateway.ts`
+    - `apps/shared/src/model-search-text.ts`
+    - `apps/shared/src/reasoning-effort.ts`
+    - `apps/shared/src/reconnect-backoff.ts`
+    - `apps/shared/src/skill-scaffold.ts`
+    - `apps/shared/src/skin.ts`
+    - `apps/shared/src/slash.ts`
+    - `apps/shared/src/theme-presets.ts`
+    - `apps/shared/src/translucency.ts`
+    - `apps/shared/src/websocket-url.ts`
+  - `web/src/lib/profile-bootstrap.ts`
+  - `web/src/themes/types.ts`
+  - `web/src/lib/dashboard-auth-reload.ts`
+  - `web/src/lib/api-error.ts`
+- `web/src/lib/memory-provider-setup.ts`
+  - `web/src/lib/api.ts` *(already expanded)*
+- `web/src/i18n/index.ts`
+  - `web/src/i18n/context.tsx`
+    - `apps/shared/src/i18n.ts` *(already expanded)*
+    - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/en.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/zh.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/zh-hant.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/ja.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/de.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/es.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/fr.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/tr.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/uk.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/af.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/ko.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/it.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/ga.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/pt.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/ru.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/hu.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/ar.ts`
+      - `web/src/i18n/define-locale.ts`
+        - `apps/shared/src/i18n.ts` *(already expanded)*
+        - `web/src/i18n/en.ts` *(already expanded)*
+        - `web/src/i18n/types.ts` *(already expanded)*
+  - `web/src/i18n/types.ts` *(already expanded)*
+- `web/src/i18n/en.ts` *(already expanded)*
+- `web/src/plugins/index.ts`
+  - `web/src/plugins/registry.ts`
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/lib/utils.ts`
+    - `web/src/i18n/index.ts` *(already expanded)*
+    - `web/src/plugins/slots.ts`
+  - `web/src/plugins/PluginPage.tsx`
+    - `web/src/plugins/registry.ts` *(already expanded)*
+    - `web/src/i18n/index.ts` *(already expanded)*
+    - `web/src/lib/utils.ts` *(already expanded)*
+    - `web/src/i18n/types.ts` *(already expanded)*
+  - `web/src/plugins/usePlugins.ts`
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/plugins/types.ts`
+    - `web/src/plugins/registry.ts` *(already expanded)*
+  - `web/src/plugins/slots.ts` *(already expanded)*
+  - `web/src/plugins/types.ts` *(already expanded)*
+- `web/src/lib/utils.ts` *(already expanded)*
+- `web/src/contexts/usePageHeader.ts`
+  - `web/src/contexts/page-header-context.ts`
+
+## `/profiles` — Profiles
+
+Entry: `web/src/pages/ProfilesPage.tsx`
+
+Dependencies:
+- `web/src/contexts/useProfileScope.ts`
+  - `web/src/contexts/profile-context.ts`
+- `web/src/lib/api.ts`
+  - `apps/shared/src/index.ts`
+    - `apps/shared/src/ansi.ts`
+    - `apps/shared/src/backend-scope.ts`
+    - `apps/shared/src/billing-policy.ts`
+    - `apps/shared/src/billing-types.ts`
+    - `apps/shared/src/catalog-install.ts`
+    - `apps/shared/src/charge-settlement.ts`
+    - `apps/shared/src/color.ts`
+    - `apps/shared/src/cron-trigger-controller.ts`
+    - `apps/shared/src/data-url-read-max.ts`
+    - `apps/shared/src/format.ts`
+    - `apps/shared/src/fuzzy.ts`
+    - `apps/shared/src/gateway-events.ts`
+    - `apps/shared/src/i18n.ts`
+    - `apps/shared/src/json-rpc-channel.ts`
+    - `apps/shared/src/json-rpc-gateway.ts`
+    - `apps/shared/src/model-search-text.ts`
+    - `apps/shared/src/reasoning-effort.ts`
+    - `apps/shared/src/reconnect-backoff.ts`
+    - `apps/shared/src/skill-scaffold.ts`
+    - `apps/shared/src/skin.ts`
+    - `apps/shared/src/slash.ts`
+    - `apps/shared/src/theme-presets.ts`
+    - `apps/shared/src/translucency.ts`
+    - `apps/shared/src/websocket-url.ts`
+  - `web/src/lib/profile-bootstrap.ts`
+  - `web/src/themes/types.ts`
+  - `web/src/lib/dashboard-auth-reload.ts`
+  - `web/src/lib/api-error.ts`
+- `web/src/lib/clipboard.ts`
+- `web/src/components/DeleteConfirmDialog.tsx`
+  - `web/src/i18n/index.ts`
+    - `web/src/i18n/context.tsx`
+      - `apps/shared/src/i18n.ts` *(already expanded)*
+      - `web/src/i18n/types.ts`
+      - `web/src/i18n/en.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/zh.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/zh-hant.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ja.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/de.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/es.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/fr.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/tr.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/uk.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/af.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ko.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/it.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ga.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/pt.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ru.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/hu.ts`
+        - `web/src/i18n/types.ts` *(already expanded)*
+      - `web/src/i18n/ar.ts`
+        - `web/src/i18n/define-locale.ts`
+          - `apps/shared/src/i18n.ts` *(already expanded)*
+          - `web/src/i18n/en.ts` *(already expanded)*
+          - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/types.ts` *(already expanded)*
+- `web/src/hooks/useModalBehavior.ts`
+- `web/src/i18n/index.ts` *(already expanded)*
+- `web/src/contexts/usePageHeader.ts`
+  - `web/src/contexts/page-header-context.ts`
+- `web/src/lib/utils.ts`
+- `web/src/lib/api-error.ts` *(already expanded)*
+
+## `/config` — Configuration
+
+Entry: `web/src/pages/ConfigPage.tsx`
+
+Dependencies:
+- `web/src/lib/api.ts`
+  - `apps/shared/src/index.ts`
+    - `apps/shared/src/ansi.ts`
+    - `apps/shared/src/backend-scope.ts`
+    - `apps/shared/src/billing-policy.ts`
+    - `apps/shared/src/billing-types.ts`
+    - `apps/shared/src/catalog-install.ts`
+    - `apps/shared/src/charge-settlement.ts`
+    - `apps/shared/src/color.ts`
+    - `apps/shared/src/cron-trigger-controller.ts`
+    - `apps/shared/src/data-url-read-max.ts`
+    - `apps/shared/src/format.ts`
+    - `apps/shared/src/fuzzy.ts`
+    - `apps/shared/src/gateway-events.ts`
+    - `apps/shared/src/i18n.ts`
+    - `apps/shared/src/json-rpc-channel.ts`
+    - `apps/shared/src/json-rpc-gateway.ts`
+    - `apps/shared/src/model-search-text.ts`
+    - `apps/shared/src/reasoning-effort.ts`
+    - `apps/shared/src/reconnect-backoff.ts`
+    - `apps/shared/src/skill-scaffold.ts`
+    - `apps/shared/src/skin.ts`
+    - `apps/shared/src/slash.ts`
+    - `apps/shared/src/theme-presets.ts`
+    - `apps/shared/src/translucency.ts`
+    - `apps/shared/src/websocket-url.ts`
+  - `web/src/lib/profile-bootstrap.ts`
+  - `web/src/themes/types.ts`
+  - `web/src/lib/dashboard-auth-reload.ts`
+  - `web/src/lib/api-error.ts`
+- `web/src/lib/nested.ts`
+- `web/src/components/AutoField.tsx`
+- `web/src/i18n/index.ts`
+  - `web/src/i18n/context.tsx`
+    - `apps/shared/src/i18n.ts` *(already expanded)*
+    - `web/src/i18n/types.ts`
+    - `web/src/i18n/en.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/zh.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/zh-hant.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/ja.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/de.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/es.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/fr.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/tr.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/uk.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/af.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/ko.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/it.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/ga.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/pt.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/ru.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/hu.ts`
+      - `web/src/i18n/types.ts` *(already expanded)*
+    - `web/src/i18n/ar.ts`
+      - `web/src/i18n/define-locale.ts`
+        - `apps/shared/src/i18n.ts` *(already expanded)*
+        - `web/src/i18n/en.ts` *(already expanded)*
+        - `web/src/i18n/types.ts` *(already expanded)*
+  - `web/src/i18n/types.ts` *(already expanded)*
+- `web/src/contexts/usePageHeader.ts`
+  - `web/src/contexts/page-header-context.ts`
+- `web/src/plugins/index.ts`
+  - `web/src/plugins/registry.ts`
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/lib/utils.ts`
+    - `web/src/i18n/index.ts` *(already expanded)*
+    - `web/src/plugins/slots.ts`
+  - `web/src/plugins/PluginPage.tsx`
+    - `web/src/plugins/registry.ts` *(already expanded)*
+    - `web/src/i18n/index.ts` *(already expanded)*
+    - `web/src/lib/utils.ts` *(already expanded)*
+    - `web/src/i18n/types.ts` *(already expanded)*
+  - `web/src/plugins/usePlugins.ts`
+    - `web/src/lib/api.ts` *(already expanded)*
+    - `web/src/plugins/types.ts`
+    - `web/src/plugins/registry.ts` *(already expanded)*
+  - `web/src/plugins/slots.ts` *(already expanded)*
+  - `web/src/plugins/types.ts` *(already expanded)*
+- `web/src/lib/api-error.ts` *(already expanded)*
