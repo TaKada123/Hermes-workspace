@@ -1328,6 +1328,10 @@ DEFAULT_CONFIG = {
         # "mem0", "holographic", "retaindb", "byterover", or a catalog-installed one ("honcho",
         # "hindsight", "supermemory").
         "provider": "",
+        # Ticket #8: MemoryBus wiring for the PARENT agent (subagent briefings).
+        # enabled=false removes the bus handle AND disables the delegation
+        # briefing; children never get a bus regardless (structural isolation).
+        "bus": {"enabled": True},
     },
     # Subagent delegation — override the provider:model used by delegate_task so children run on a
     # cheaper/faster model. Uses the same runtime provider resolution as CLI/gateway startup, so
@@ -1397,6 +1401,10 @@ DEFAULT_CONFIG = {
         # notifications to the PARENT; false suppresses them (the child's result is the
         # deliverable). Async-delegation results are NEVER suppressed.
         "surface_child_process_notifications": False,
+        # Ticket #8: parent-recalled read-only memory briefing appended to each child's
+        # goal (one-time copy; only when the parent runs memory.backend: sqlite_v2 with
+        # memory.bus.enabled). false = never attach a briefing — the real kill switch.
+        "memory_briefing": True,
     },
     # Ephemeral prefill messages file — JSON list of {role, content} dicts injected at the start of
     # every API call for few-shot priming. Never saved to sessions/logs/trajectories.

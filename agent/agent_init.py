@@ -1332,6 +1332,12 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
     agent._memory_nudge_interval = 10
     agent._turns_since_memory = 0
     agent._iters_since_skill = 0
+    # Ticket #8: parent-only MemoryBus for subagent briefings. Reset FIRST so
+    # subagents (skip_memory) structurally never inherit a handle; only a
+    # sqlite_v2 parent with memory.bus.enabled gets one — see _init_memory_bus
+    # at the end of this function (separate helper so it coexists with #6's
+    # _init_memory_orchestrator, which has its own call site).
+    agent._memory_bus = None
     # skip_memory skips the external *provider*; enabled_toolsets=["memory"] still gets the
     # built-in store so the memory tool never sees store=None.
     # Flush/background agents can still pass enabled_toolsets=["memory"] so the built-in file store exists
@@ -1413,6 +1419,56 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
 
     from agent.memory_manager import inject_memory_provider_tools
     inject_memory_provider_tools(agent)
+
+    # Ticket #8 call site (clearly separated from #6's _init_memory_orchestrator,
+    # which edits its own region of this file): parent-only MemoryBus for
+    # subagent briefings. Subagents reach this line with store=None →
+    # _memory_bus stays None (structural isolation, AC of #8).
+    _init_memory_bus(agent, _agent_cfg, agent._memory_store, agent._memory_manager)
+
+
+def _init_memory_bus(agent, _agent_cfg, store, memory_manager=None):
+    """Ticket #8: wire the parent's MemoryBus (delegation briefings; NOT subagents).
+
+    Gates (all must pass, else ``agent._memory_bus`` stays None):
+    1. ``memory.backend == 'sqlite_v2'`` (the ONE resolver, same as the store);
+    2. the store duck-types the v2 retrieval surface (``recall_candidates``);
+    3. ``memory.bus.enabled`` (default True — the kill switch).
+
+    Children reach ``_init_memory`` with skip_memory=True and a blocked memory
+    toolset, so their store is None and this helper is a no-op for them: the
+    child never gets a bus handle, exactly like it never gets the memory tool
+    or a DB path. Any failure is non-fatal (memory must never break agent init).
+    """
+    # Always materialize the attribute: every non-v2 path leaves it None.
+    agent._memory_bus = None
+    try:
+        from tools.memory_tool import resolve_memory_backend
+        if resolve_memory_backend(_agent_cfg) != "sqlite_v2":
+            return
+        if store is None or not callable(getattr(store, "recall_candidates", None)):
+            return
+        _mem_cfg = (_agent_cfg or {}).get("memory") or {}
+        if isinstance(_mem_cfg, dict) and not bool((_mem_cfg.get("bus") or {}).get("enabled", True)):
+            return
+        from agent.memory_bus import MemoryBus
+        from agent.memory_orchestrator import ScoringWeights
+        _weights = ScoringWeights()
+        if isinstance(_mem_cfg, dict):
+            _orch = _mem_cfg.get("orchestrator") or {}
+            if isinstance(_orch, dict) and _orch.get("weights"):
+                _weights = ScoringWeights.from_config(_orch["weights"])
+        agent._memory_bus = MemoryBus(
+            store=store,
+            manager=memory_manager or None,
+            targets=("memory", "user"),
+            weights=_weights,
+            token_budget=2500,
+            max_entries=20,
+        )
+    except Exception:
+        logger.warning("memory bus: init failed (non-fatal)", exc_info=True)
+        agent._memory_bus = None
 
 
 def _apply_agent_section(agent, _agent_cfg):

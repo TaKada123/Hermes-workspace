@@ -700,6 +700,54 @@ def _build_child_goal_message(goal: str, images: List[str], child) -> Any:
         return goal
 
 
+def _memory_briefing_enabled() -> bool:
+    """``delegation.memory_briefing`` gate (default True) — the kill switch for the
+    subagent memory briefing (ticket #8). Read from the live ``delegation`` config
+    section (NOT a top-level key — the arch2 bug). Fail-open: an unreadable config
+    keeps the default-on behaviour."""
+    try:
+        from tools.delegate_tool_config import _load_config
+        return bool((_load_config() or {}).get("memory_briefing", True))
+    except Exception:
+        return True
+
+
+def _attach_delegation_briefing(parent_agent: Any, goal: str, subagent_id: Optional[str], user_message: Any) -> Any:
+    """Append the parent-recalled read-only memory briefing to the child's goal message.
+
+    Ticket #8: the PARENT recalls memory on the child's behalf; the briefing is a
+    ONE-TIME copy that rides the first user message — never persisted, never wrapped
+    in the ``<memory-context>`` fence, never attached again. The child itself stays
+    memoryless (no memory tool, no bus handle, no DB path — unchanged isolation).
+
+    ``user_message`` is either the goal string or (multimodal tasks) a list of
+    OpenAI-style content parts; the briefing is appended as text / a trailing text
+    part. Any failure returns the message untouched — a broken recall must never
+    break the spawn.
+    """
+    if not _memory_briefing_enabled():
+        return user_message
+    if getattr(parent_agent, "_memory_bus", None) is None:
+        return user_message
+    try:
+        from agent.memory_bus import build_delegation_briefing as _build_briefing
+        # project=None: the workspace has no subagent realm helper; realm scoping
+        # stays an explicit future opt-in.
+        briefing = _build_briefing(parent_agent, goal, subagent_id=subagent_id or "", project=None)
+    except Exception:
+        logger.warning("delegate_task: memory briefing failed (non-fatal)", exc_info=True)
+        briefing = ""
+    if not briefing:
+        return user_message
+    if isinstance(user_message, str):
+        return user_message + "\n\n" + briefing
+    if isinstance(user_message, list):
+        parts = [dict(p) for p in user_message]
+        parts.append({"type": "text", "text": briefing})
+        return parts
+    return user_message
+
+
 @dataclass
 class _ChildRun:
     """State of one child run, shared by every phase of ``_run_single_child``.
@@ -849,6 +897,12 @@ class _ChildRun:
         # Resolved after seed_workspace so a multimodal goal's text part carries the worktree note too.
         _images = list(getattr(child, "_delegate_images", None) or [])
         user_message: Any = _build_child_goal_message(self.goal, _images, child) if _images else self.goal
+        # Ticket #8: the parent recalls memory on the child's behalf — a one-time
+        # read-only briefing appended to the goal (gated by delegation.memory_briefing).
+        # Never persisted, never fenced; the child itself stays memoryless.
+        user_message = _attach_delegation_briefing(
+            self.parent_agent, self.goal, self.subagent_id, user_message,
+        )
 
         def _run_with_thread_capture():
             worker_thread_holder["t"] = threading.current_thread()
