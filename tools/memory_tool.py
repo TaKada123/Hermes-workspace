@@ -83,17 +83,20 @@ def load_on_disk_store() -> "MemoryStore":
 
 
 def _pin_matched_entries(store: "MemoryStore", payload: Dict[str, Any]) -> Optional[str]:
-    """Record on each staged replace/remove the FULL entry its old_text selects now. Approval
-    then applies to exactly the entry the approver reviewed and refuses if it changed:
-    re-running the old_text search at approve time could hit a newer entry that still
-    contains it. Returns the JSON error when the search fails now, as the direct write would."""
+    """Record on each staged replace/remove/deprecate the FULL entry its old_text
+    selects now. Approval then applies to exactly the entry the approver reviewed
+    and refuses if it changed: re-running the old_text search at approve time could
+    hit a newer entry that still contains it. ``supersede`` is pinned by its
+    ``old_id`` (an exact UUID needs no text resolution). Returns the JSON error when
+    the search fails now, as the direct write would."""
     target = payload.get("target", "memory")
     if payload.get("action") == "batch":
         result = store.resolve_batch_entries(target, payload["operations"])
         if result.get("success"):
             payload["operations"] = [op if entry is None else {**op, "matched_entry": entry}
                                      for op, entry in zip(payload["operations"], result["matched_entries"])]
-    elif payload.get("action") in _BG_DELETE_ACTIONS:
+    elif payload.get("action") in _PIN_BY_TEXT_ACTIONS and not (
+            payload.get("action") == "deprecate" and payload.get("old_id")):
         result = store.resolve_entry(target, payload.get("old_text") or "", payload["action"])
         if result.get("success"):
             payload["matched_entry"] = result["matched_entry"]
@@ -132,29 +135,68 @@ _STORE_ACTIONS = {
                lambda label, content, old_text: (f"remove from {label}", old_text or ""))}
 
 
+def _store_is_v2(store: "MemoryStore") -> bool:
+    """Duck-type switch: the typed action surface exists only on MemoryStoreV2."""
+    return hasattr(store, "supersede") and hasattr(store, "deprecate") and hasattr(store, "recall")
+
+
+_TYPED_MEMORY_REQUIRES_V2 = "Typed memory requires the v2 store (set memory.backend: sqlite_v2 in config)."
+
+
+def _write_gate_text(action: str, label: str, payload: Dict[str, Any]) -> Tuple[str, str]:
+    """(summary, detail) for the write-approval inline prompt / staged record."""
+    content = payload.get("content") or ""
+    old_text = payload.get("old_text") or ""
+    old_id = payload.get("old_id") or ""
+    if action == "add":
+        return f"add to {label}", content
+    if action == "replace":
+        return f"replace in {label}", f"entry matching: {old_text}\nwhole entry becomes: {content}"
+    if action == "remove":
+        return f"remove from {label}", old_text
+    if action == "supersede":
+        return f"supersede in {label}", f"old entry id: {old_id}\nnew entry becomes: {content}"
+    if action == "deprecate":
+        return f"deprecate in {label}", f"entry: {old_id or old_text}"
+    raise KeyError(action)
+
+
 def _batch_op_line(op: Dict[str, Any]) -> str:
     op = op or {}
     act, content, old = op.get("action", "?"), op.get("content") or op.get("new_text") or "", op.get("old_text", "")
+    old_id = op.get("old_id") or ""
     if act == "remove":
         return f"- remove: {old}"
+    if act == "deprecate":
+        return f"- deprecate: {old_id or old}"
+    if act == "supersede":
+        return f"- supersede entry {old_id} -> new entry: {content}"
     # Whole-entry contract (#117952): the approver must not read this as a span patch.
     return (f"- replace entry matching '{old}' -> whole entry becomes: {content}" if act == "replace"
             else f"- {act}: {content}")
 
 
 def _apply_write_gate(store: "MemoryStore", action: str, target: str, content: Optional[str],
-                      old_text: Optional[str], operations: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
-    """Gate one mutating op, or (``operations`` set) a whole batch as a single unit."""
+                      old_text: Optional[str], operations: Optional[List[Dict[str, Any]]] = None,
+                      **extra: Any) -> Optional[str]:
+    """Gate one mutating op, or (``operations`` set) a whole batch as a single unit.
+    ``extra`` carries the v2 fields (old_id, superseded_by_id, reason, entry_type,
+    importance, written_by) so a staged record replays the FULL write."""
     label = "user profile" if target == "user" else "memory"
     if operations is not None:
         return _gate_or_stage(store, f"apply {len(operations)} op(s) to {label}",
                               "\n".join(_batch_op_line(op) for op in operations),
                               {"action": "batch", "target": target, "operations": operations})
-    return _gate_or_stage(store, *_STORE_ACTIONS[action][1](label, content, old_text),
-                          {"action": action, "target": target, "content": content, "old_text": old_text})
+    payload = {"action": action, "target": target, "content": content, "old_text": old_text}
+    for key in ("old_id", "superseded_by_id", "reason", "entry_type", "importance", "written_by"):
+        if extra.get(key) is not None:
+            payload[key] = extra[key]
+    summary, detail = _write_gate_text(action, label, payload)
+    return _gate_or_stage(store, summary, detail, payload)
 
 
-def _validate_single_op(store, action, target, content, old_text) -> Optional[str]:
+def _validate_single_op(store, action, target, content, old_text,
+                        old_id: Optional[str] = None, query: Optional[str] = None) -> Optional[str]:
     """Validate BEFORE the gate so an invalid write is rejected now, not at approve time.
     Missing ``old_text`` is recoverable (it can't be schema-required — needs a combinator
     the Codex backend rejects): return the inventory plus a retry instruction."""
@@ -172,24 +214,41 @@ def _validate_single_op(store, action, target, content, old_text) -> Optional[st
             "current_entries": store._entries_for(target), "usage": store._usage(target)}, ensure_ascii=False)
     if action == "replace" and not content:
         return tool_error("content is required for 'replace' action.", success=False)
+    if action == "supersede":
+        if not old_id:
+            return tool_error(
+                "old_id is required for 'supersede' (the id of the entry being replaced; "
+                "read first if unknown).", success=False)
+        if not content:
+            return tool_error("content (the new decision) is required for 'supersede'.", success=False)
+    if action == "deprecate" and not old_id and not old_text:
+        return tool_error("old_id or old_text is required for 'deprecate' action.", success=False)
+    if action == "read" and not query and not content:
+        return tool_error("query is required for 'read' action.", success=False)
     return None
 
 
-_BG_DELETE_ACTIONS = ("replace", "remove")
+# Destructive actions for the background-review gate (add stays free).
+_BG_DELETE_ACTIONS = ("replace", "remove", "deprecate", "supersede")
+# Destructive actions whose staged payload is pinned by resolved entry TEXT
+# (supersede is pinned by its exact old_id instead).
+_PIN_BY_TEXT_ACTIONS = ("replace", "remove", "deprecate")
 
 
 def destructive_ops(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """The replace/remove ops of a staged memory payload, single-op or batch shape."""
+    """The destructive ops of a staged memory payload, single-op or batch shape:
+    replace/remove plus the v2 revocations deprecate/supersede."""
     ops = (payload.get("operations") or []) if payload.get("action") == "batch" else [payload]
     return [op for op in ops if (op or {}).get("action") in _BG_DELETE_ACTIONS]
 
 
 def _background_delete_gate(store, action, operations, target="memory", content=None,
-                            old_text=None) -> Optional[str]:
+                            old_text=None, **extra) -> Optional[str]:
     """Fail-closed operation gate for unattended background-review forks (#105921): ``add``
-    stays available (it is all any review prompt asks for), while ``replace``/``remove`` —
-    single or inside a batch — are never applied unattended. The op is staged in the pending
-    store instead of merely denied: the fork's own review summary is never published back, so
+    stays available (it is all any review prompt asks for), while destructive ops —
+    ``replace``/``remove`` and the v2 revocations ``deprecate``/``supersede`` — single or
+    inside a batch, are never applied unattended. The op is staged in the pending store
+    instead of merely denied: the fork's own review summary is never published back, so
     a plain denial would drop the consolidation request with no surfacing path at all. A
     staging failure fails closed to a plain denial."""
     from tools.skill_provenance import is_unattended_review
@@ -199,10 +258,13 @@ def _background_delete_gate(store, action, operations, target="memory", content=
     payload = ({"action": "batch", "target": target, "operations": operations}
                if operations is not None else
                {"action": action, "target": target, "content": content, "old_text": old_text})
+    for key in ("old_id", "superseded_by_id", "reason", "entry_type", "importance", "written_by"):
+        if extra.get(key) is not None:
+            payload[key] = extra[key]
     if not destructive_ops(payload):
         return None
     detail = ("; ".join(_batch_op_line(op) for op in operations) if operations is not None
-              else _batch_op_line({"action": action, "content": content, "old_text": old_text}))
+              else _batch_op_line(payload))
     try:
         if (unmatched := _pin_matched_entries(store, payload)) is not None:
             return unmatched
@@ -221,20 +283,29 @@ def _background_delete_gate(store, action, operations, target="memory", content=
     except Exception:
         logger.warning("Failed to stage background-review consolidation; denying", exc_info=True)
         return tool_error(
-            "Background review may not delete memory entries ('replace'/'remove', including in a "
-            "batch); 'add' is still available.", success=False)
+            "Background review may not delete memory entries ('replace'/'remove'/'deprecate'/'supersede', "
+            "including in a batch); 'add' is still available.", success=False)
 
 
 def memory_tool(action: str = None, target: str = "memory", content: str = None, old_text: str = None,
                 new_text: str = None, operations: Optional[List[Dict[str, Any]]] = None,
-                store: Optional[MemoryStore] = None) -> str:
+                store: Optional[MemoryStore] = None, entry_type: str = None, importance: float = None,
+                query: str = None, reason: str = None, written_by: str = None, old_id: str = None,
+                superseded_by_id: str = None) -> str:
     """Tool entry point; returns a JSON string. Single op (action + content/old_text)
     or batch (``operations``, atomic against the final budget). ``new_text``
     aliases ``content`` -- for 'replace' both mean the COMPLETE new entry (the
-    whole matched entry is overwritten; old_text only locates it)."""
+    whole matched entry is overwritten; old_text only locates it).
+
+    Typed actions (supersede/deprecate/read) and the type/importance params
+    require the v2 store; on the legacy flat-file store they degrade with a
+    clear error instead of silently misbehaving."""
     if store is None:
         return tool_error("Memory is not available. It may be disabled in config or this environment.", success=False)
-    outcome, result = _memory_tool(action, target, content, old_text, new_text, operations, store)
+    outcome, result = _memory_tool(action, target, content, old_text, new_text, operations, store,
+                                   entry_type=entry_type, importance=importance, query=query,
+                                   reason=reason, written_by=written_by, old_id=old_id,
+                                   superseded_by_id=superseded_by_id)
     from hermes_cli.observability.shared_metrics_loop import record_builtin_memory_call
     record_builtin_memory_call(action, operations, outcome=outcome)
     return result
@@ -244,7 +315,9 @@ def _applied(result: Dict[str, Any]) -> Tuple[str, str]:
     return ("success" if result.get("success") else "failed"), json.dumps(result, ensure_ascii=False)
 
 
-def _memory_tool(action, target, content, old_text, new_text, operations, store) -> Tuple[str, str]:
+def _memory_tool(action, target, content, old_text, new_text, operations, store,
+                 entry_type=None, importance=None, query=None, reason=None,
+                 written_by=None, old_id=None, superseded_by_id=None) -> Tuple[str, str]:
     """``(outcome, result_json)``: ``rejected`` when refused or held before touching the store."""
     if content is None and new_text is not None:
         content = new_text
@@ -270,18 +343,57 @@ def _memory_tool(action, target, content, old_text, new_text, operations, store)
     # *why* the call was malformed and can trigger repeated retries. (#64291)
     if not action and not operations:
         return "rejected", tool_error(
-            "Missing required parameter: provide 'action' (add/replace/remove) "
+            "Missing required parameter: provide 'action' (add/replace/remove/supersede/deprecate/read) "
             "or 'operations' (batch list). Got neither.",
             success=False,
         )
-    if action not in _STORE_ACTIONS:
-        return "rejected", tool_error(f"Unknown action '{action}'. Use: add, replace, remove", success=False)
-    invalid = (_validate_single_op(store, action, target, content, old_text)
-               or _background_delete_gate(store, action, None, target, content, old_text)
-               or _apply_write_gate(store, action, target, content, old_text))
-    if invalid is not None:
-        return "rejected", invalid
-    return _applied(_STORE_ACTIONS[action][0](store, target, content, old_text))
+    is_v2 = _store_is_v2(store)
+    if action == "read":
+        if not is_v2:
+            return "rejected", tool_error(_TYPED_MEMORY_REQUIRES_V2, success=False)
+        search_query = query or content or old_text
+        if not search_query:
+            return "rejected", tool_error("query is required for 'read' action.", success=False)
+        return _applied(store.recall(search_query, target=target))
+    if action in ("supersede", "deprecate"):
+        if not is_v2:
+            return "rejected", tool_error(_TYPED_MEMORY_REQUIRES_V2, success=False)
+        invalid = (_validate_single_op(store, action, target, content, old_text, old_id, query)
+                   or _background_delete_gate(store, action, None, target, content, old_text,
+                                              old_id=old_id, superseded_by_id=superseded_by_id,
+                                              reason=reason)
+                   or _apply_write_gate(store, action, target, content, old_text,
+                                        old_id=old_id, superseded_by_id=superseded_by_id,
+                                        reason=reason))
+        if invalid is not None:
+            return "rejected", invalid
+        if action == "supersede":
+            return _applied(store.supersede(
+                target, old_id=old_id, content=content, entry_type=entry_type,
+                importance=importance, reason=reason or "", written_by=written_by))
+        return _applied(store.deprecate(
+            target, old_text=old_text or "", reason=reason or "",
+            old_id=old_id, superseded_by_id=superseded_by_id))
+    if action in _STORE_ACTIONS:
+        if action in ("add", "replace") and not is_v2 and (entry_type or importance is not None):
+            return "rejected", tool_error(_TYPED_MEMORY_REQUIRES_V2, success=False)
+        invalid = (_validate_single_op(store, action, target, content, old_text)
+                   or _background_delete_gate(store, action, None, target, content, old_text)
+                   or _apply_write_gate(store, action, target, content, old_text,
+                                        entry_type=entry_type, importance=importance,
+                                        written_by=written_by))
+        if invalid is not None:
+            return "rejected", invalid
+        if action == "add" and is_v2:
+            return _applied(store.add(target, content, entry_type=entry_type,
+                                      importance=importance, written_by=written_by))
+        if action == "replace" and is_v2:
+            return _applied(store.replace(target, old_text, content,
+                                          entry_type=entry_type, importance=importance))
+        return _applied(_STORE_ACTIONS[action][0](store, target, content, old_text))
+    return "rejected", tool_error(
+        f"Unknown action '{action}'. Use: add, replace, remove, supersede, deprecate, read",
+        success=False)
 
 
 def get_builtin_memory_config(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -325,20 +437,66 @@ def _memory_target_error(store: "MemoryStore", target: str) -> Optional[Dict[str
     return {"success": False, "error": f"Built-in {label} writes are disabled in memory config.", "target": target}
 
 
+def _destructive_pin_error(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Error when a destructive staged op lacks the pin its approve-time replay
+    requires — ``matched_entry`` for text-addressed ops, ``old_id`` for the
+    id-addressed v2 revocations — or None when the payload is verifiable."""
+    for op in destructive_ops(payload):
+        act = op.get("action")
+        if act == "supersede":
+            if not op.get("old_id"):
+                return {"success": False, "error": (
+                    "This supersede pending write predates id pinning and cannot be "
+                    "verified; nothing was applied. Reject it and recreate the change.")}
+            continue
+        if act == "deprecate":
+            if op.get("old_id") or op.get("matched_entry"):
+                continue
+            return {"success": False, "error": (
+                "This deprecate pending write predates entry pinning and cannot be "
+                "verified; nothing was applied. Reject it and recreate the change.")}
+        if not op.get("matched_entry"):
+            return {"success": False, "error": (
+                "This destructive pending write predates entry pinning and cannot be "
+                "verified; nothing was applied. Reject it and recreate the change.")}
+    return None
+
+
 def apply_memory_pending(payload: Dict[str, Any], store: "MemoryStore") -> Dict[str, Any]:
     """Replay a staged write against the store, bypassing the gate (/memory approve). A
-    replace/remove applies to exactly its pinned ``matched_entry`` or is refused; a record
-    staged before pinning has no verifiable target, so it is refused rather than replayed by
-    old_text (which could hit a newer entry the approver never saw)."""
+    replace/remove/deprecate applies to exactly its pinned ``matched_entry`` (or ``old_id``)
+    or is refused; a record staged before pinning has no verifiable target, so it is refused
+    rather than replayed by old_text (which could hit a newer entry the approver never saw)."""
     action, target = payload.get("action"), payload.get("target", "memory")
     target_error = _memory_target_error(store, target)
     if target_error is not None:
         return target_error
-    if any(not op.get("matched_entry") for op in destructive_ops(payload)):
-        return {"success": False, "error": "This destructive pending write predates entry pinning and cannot be "
-                                           "verified; nothing was applied. Reject it and recreate the change."}
+    if pin_error := _destructive_pin_error(payload):
+        return pin_error
     if action == "batch":
         return store.apply_batch(target, payload.get("operations") or [])
+    is_v2 = _store_is_v2(store)
+    if action == "supersede":
+        if not is_v2:
+            return {"success": False, "error": _TYPED_MEMORY_REQUIRES_V2}
+        return store.supersede(
+            target, old_id=payload.get("old_id") or "", content=payload.get("content") or "",
+            entry_type=payload.get("entry_type"), importance=payload.get("importance"),
+            reason=payload.get("reason") or "", written_by=payload.get("written_by"))
+    if action == "deprecate":
+        if not is_v2:
+            return {"success": False, "error": _TYPED_MEMORY_REQUIRES_V2}
+        return store.deprecate(
+            target, old_text=payload.get("old_text") or "", reason=payload.get("reason") or "",
+            old_id=payload.get("old_id"), superseded_by_id=payload.get("superseded_by_id"),
+            matched_entry=payload.get("matched_entry"))
+    if action == "add" and is_v2:
+        return store.add(target, payload.get("content") or "", entry_type=payload.get("entry_type"),
+                         importance=payload.get("importance"), written_by=payload.get("written_by"))
+    if action == "replace" and is_v2:
+        return store.replace(target, payload.get("old_text") or "", payload.get("content") or "",
+                             payload.get("matched_entry"), entry_type=payload.get("entry_type"),
+                             importance=payload.get("importance"))
     if action not in _STORE_ACTIONS:
         return {"success": False, "error": f"Unknown staged action '{action}'."}
     return _STORE_ACTIONS[action][0](store, target, payload.get("content") or "", payload.get("old_text") or "",
@@ -369,14 +527,23 @@ MEMORY_SCHEMA = {
         "notes (environment, conventions, tool quirks, lessons).\n\n"
         "SKIP: trivial/obvious info, easily re-discovered facts, raw data dumps, task progress, "
         "completed-work logs, temporary TODO state (use session_search for those). Reusable "
-        "procedures belong in a skill, not memory."
+        "procedures belong in a skill, not memory. "
+        "TYPED ACTIONS (v2 store only — on the legacy store they return a clear error): "
+        "supersede (atomic decision change: old_id + content — adds the new entry, deprecates "
+        "the old one and writes the provenance link in one operation), "
+        "deprecate (retire an entry — old_id or old_text; optional superseded_by_id links an "
+        "already-added successor), "
+        "read (search memory by query before proposing ideas or making decisions). With the "
+        "v2 store, entries are never deleted to make room: the char limit bounds the PROMPT "
+        "snapshot only, and overflow entries stay in the database and remain searchable via "
+        "read."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["add", "replace", "remove"],
+                "enum": ["add", "replace", "remove", "supersede", "deprecate", "read"],
                 "description": "The action to perform (single-op shape). Omit when using 'operations'."
             },
             "target": {
@@ -390,11 +557,38 @@ MEMORY_SCHEMA = {
             },
             "old_text": {
                 "type": "string",
-                "description": "REQUIRED for 'replace' and 'remove' (single-op shape): a short unique substring IDENTIFYING the existing entry to modify -- it locates the entry, it is not spliced out. Omit only for 'add'."
+                "description": "REQUIRED for 'replace' and 'remove' (single-op shape): a short unique substring IDENTIFYING the existing entry to modify -- it locates the entry, it is not spliced out. Omit only for 'add'. Also accepted by 'deprecate' as an alternative to old_id."
             },
             "new_text": {
                 "type": "string",
                 "description": "Alias for 'content' (single-op shape): the COMPLETE new entry for 'replace', not a patch of old_text. If both are set, 'content' wins."
+            },
+            "old_id": {
+                "type": "string",
+                "description": "Entry id for 'supersede' (the entry being replaced) and 'deprecate'. Accepts the full UUID or an unambiguous 8+ char prefix — the short form shown in read results works directly."
+            },
+            "superseded_by_id": {
+                "type": "string",
+                "description": "Id of the successor entry for 'deprecate' — links the pair when the new entry was already added separately. Full UUID or unambiguous 8+ char prefix. Invalid, ambiguous or deprecated successor ids fail the whole call without changing anything."
+            },
+            "type": {
+                "type": "string",
+                "enum": ["fact", "decision", "constraint", "pattern", "preference"],
+                "description": "Entry type for 'add' (v2 store only). decision = a choice the user made (include the reason); constraint = a rule/limit to respect; preference = user taste; pattern = recurring behavior; fact = everything else."
+            },
+            "importance": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "Intrinsic long-term value 0..1 (v2 store only). Omit it and a type default applies (decision 0.85, constraint 0.9, preference 0.6, fact/pattern 0.5); an explicit value is stored as-is, never rewritten. Prompt eviction never changes importance."
+            },
+            "query": {
+                "type": "string",
+                "description": "Search query for the 'read' action."
+            },
+            "reason": {
+                "type": "string",
+                "description": "Why the entry changed (for 'supersede' and 'deprecate') — human-readable, becomes the deprecate_reason in the audit trail. Linking is done by ids, not by reason text."
             },
             "operations": {
                 "type": "array",
@@ -453,6 +647,9 @@ registry.register(
     schema=MEMORY_SCHEMA,
     handler=lambda args, **kw: memory_tool(
         action=args.get("action", ""), target=args.get("target", "memory"), store=kw.get("store"),
+        entry_type=args.get("type"), importance=args.get("importance"), query=args.get("query"),
+        reason=args.get("reason"), written_by=args.get("written_by"),
+        old_id=args.get("old_id"), superseded_by_id=args.get("superseded_by_id"),
         **{k: args.get(k) for k in ("content", "old_text", "new_text", "operations")}),
     check_fn=check_memory_requirements,
     emoji="🧠",
