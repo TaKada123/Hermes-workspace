@@ -24,6 +24,8 @@ import os
 import time
 from pathlib import Path
 
+import pytest
+
 from tests.fakes.fake_llm_provider import FakeLLMServer, Text, ToolCall, write_hermes_home
 
 ENTRY = "Правило E2E-BRIEF-MARKER: сервер гипервизор всегда под TLS"
@@ -95,6 +97,7 @@ def _run_delegation(extra_config: str) -> tuple[FakeLLMServer, dict]:
         return srv, result
 
 
+@pytest.mark.integration
 def test_subagent_payload_has_briefing_and_no_memory_tool(tmp_path):
     """AC: the child's payload contains the briefing; the child carries no
     memory tool, so it cannot write or roll back memory."""
@@ -131,6 +134,7 @@ def test_subagent_payload_has_briefing_and_no_memory_tool(tmp_path):
     assert "memory" in parent_tools, "the parent must keep its memory tool"
 
 
+@pytest.mark.integration
 def test_gate_off_removes_briefing_from_child_payload(tmp_path):
     """AC: delegation.memory_briefing=false really disables the feature."""
     srv, _ = _run_delegation(_EXTRA + "delegation:\n  memory_briefing: false\n")

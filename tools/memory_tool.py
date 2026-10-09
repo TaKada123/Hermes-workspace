@@ -140,6 +140,52 @@ def _store_is_v2(store: "MemoryStore") -> bool:
     return hasattr(store, "supersede") and hasattr(store, "deprecate") and hasattr(store, "recall")
 
 
+def _v2_apply_single_action(
+    store: "MemoryStore",
+    action: str,
+    target: str,
+    content: str,
+    old_text: str,
+    *,
+    old_id: Optional[str] = None,
+    superseded_by_id: Optional[str] = None,
+    reason: Optional[str] = None,
+    entry_type: Optional[str] = None,
+    importance: Optional[float] = None,
+    written_by: Optional[str] = None,
+    matched_entry: Optional[str] = None,
+) -> Dict[str, Any]:
+    """The v2 single-op store dispatch — ONE implementation shared by the
+    live tool path and the staged-write replay, so the two cannot drift.
+
+    Forwards only the kwargs each action accepts (``deprecate`` has no
+    ``entry_type``/``importance``; ``add``/``replace`` have no ``reason``).
+    Raises ``KeyError`` for a non-v2 action (callers gate on action first).
+    """
+    if action == "supersede":
+        return store.supersede(
+            target, old_id=old_id, content=content, entry_type=entry_type,
+            importance=importance, reason=reason or "", written_by=written_by,
+        )
+    if action == "deprecate":
+        return store.deprecate(
+            target, old_text=old_text or "", reason=reason or "",
+            old_id=old_id, superseded_by_id=superseded_by_id,
+            matched_entry=matched_entry,
+        )
+    if action == "add":
+        return store.add(
+            target, content, entry_type=entry_type,
+            importance=importance, written_by=written_by,
+        )
+    if action == "replace":
+        return store.replace(
+            target, old_text, content, matched_entry,
+            entry_type=entry_type, importance=importance,
+        )
+    raise KeyError(action)
+
+
 _TYPED_MEMORY_REQUIRES_V2 = "Typed memory requires the v2 store (set memory.backend: sqlite_v2 in config)."
 
 
@@ -367,13 +413,11 @@ def _memory_tool(action, target, content, old_text, new_text, operations, store,
                                         reason=reason))
         if invalid is not None:
             return "rejected", invalid
-        if action == "supersede":
-            return _applied(store.supersede(
-                target, old_id=old_id, content=content, entry_type=entry_type,
-                importance=importance, reason=reason or "", written_by=written_by))
-        return _applied(store.deprecate(
-            target, old_text=old_text or "", reason=reason or "",
-            old_id=old_id, superseded_by_id=superseded_by_id))
+        return _applied(_v2_apply_single_action(
+            store, action, target, content or "", old_text,
+            old_id=old_id, superseded_by_id=superseded_by_id, reason=reason,
+            entry_type=entry_type, importance=importance, written_by=written_by,
+        ))
     if action in _STORE_ACTIONS:
         if action in ("add", "replace") and not is_v2 and (entry_type or importance is not None):
             return "rejected", tool_error(_TYPED_MEMORY_REQUIRES_V2, success=False)
@@ -384,12 +428,11 @@ def _memory_tool(action, target, content, old_text, new_text, operations, store,
                                         written_by=written_by))
         if invalid is not None:
             return "rejected", invalid
-        if action == "add" and is_v2:
-            return _applied(store.add(target, content, entry_type=entry_type,
-                                      importance=importance, written_by=written_by))
-        if action == "replace" and is_v2:
-            return _applied(store.replace(target, old_text, content,
-                                          entry_type=entry_type, importance=importance))
+        if is_v2 and action in ("add", "replace"):
+            return _applied(_v2_apply_single_action(
+                store, action, target, content or "", old_text,
+                entry_type=entry_type, importance=importance, written_by=written_by,
+            ))
         return _applied(_STORE_ACTIONS[action][0](store, target, content, old_text))
     return "rejected", tool_error(
         f"Unknown action '{action}'. Use: add, replace, remove, supersede, deprecate, read",
@@ -476,27 +519,26 @@ def apply_memory_pending(payload: Dict[str, Any], store: "MemoryStore") -> Dict[
     if action == "batch":
         return store.apply_batch(target, payload.get("operations") or [])
     is_v2 = _store_is_v2(store)
-    if action == "supersede":
+    if action in ("supersede", "deprecate"):
         if not is_v2:
             return {"success": False, "error": _TYPED_MEMORY_REQUIRES_V2}
-        return store.supersede(
-            target, old_id=payload.get("old_id") or "", content=payload.get("content") or "",
-            entry_type=payload.get("entry_type"), importance=payload.get("importance"),
-            reason=payload.get("reason") or "", written_by=payload.get("written_by"))
-    if action == "deprecate":
-        if not is_v2:
-            return {"success": False, "error": _TYPED_MEMORY_REQUIRES_V2}
-        return store.deprecate(
-            target, old_text=payload.get("old_text") or "", reason=payload.get("reason") or "",
+        return _v2_apply_single_action(
+            store, action, target,
+            payload.get("content") or "", payload.get("old_text") or "",
             old_id=payload.get("old_id"), superseded_by_id=payload.get("superseded_by_id"),
-            matched_entry=payload.get("matched_entry"))
-    if action == "add" and is_v2:
-        return store.add(target, payload.get("content") or "", entry_type=payload.get("entry_type"),
-                         importance=payload.get("importance"), written_by=payload.get("written_by"))
-    if action == "replace" and is_v2:
-        return store.replace(target, payload.get("old_text") or "", payload.get("content") or "",
-                             payload.get("matched_entry"), entry_type=payload.get("entry_type"),
-                             importance=payload.get("importance"))
+            reason=payload.get("reason"), entry_type=payload.get("entry_type"),
+            importance=payload.get("importance"), written_by=payload.get("written_by"),
+            matched_entry=payload.get("matched_entry"),
+        )
+    if action in ("add", "replace") and is_v2:
+        return _v2_apply_single_action(
+            store, action, target,
+            payload.get("content") or "", payload.get("old_text") or "",
+            matched_entry=payload.get("matched_entry"),
+            entry_type=payload.get("entry_type"),
+            importance=payload.get("importance"),
+            written_by=payload.get("written_by"),
+        )
     if action not in _STORE_ACTIONS:
         return {"success": False, "error": f"Unknown staged action '{action}'."}
     return _STORE_ACTIONS[action][0](store, target, payload.get("content") or "", payload.get("old_text") or "",

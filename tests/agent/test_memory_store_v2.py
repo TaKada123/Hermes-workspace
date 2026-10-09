@@ -724,3 +724,172 @@ class TestAgentInitBackendSelection:
         assert isinstance(s_flat, MemoryStore)
         assert not isinstance(s_flat, MemoryStoreV2)
         assert not (home2 / "memories" / "memory.db").exists()
+
+
+class TestPublicStoreApi:
+    """Public surface for scripts (installer/verifier/downgrade) — code-review
+    fixes: scripts must never reach into store privates (_query/_db_path/...)."""
+
+    def test_db_path_property(self, store, mem_dir):
+        assert store.db_path == mem_dir / "memory.db"
+
+    def test_visible_rows_wrapper_matches_private(self, store):
+        store.add("memory", "публичная запись", written_by="main:test")
+        store.add("user", "публичный профиль", written_by="main:test")
+        visible = store.visible_rows("memory")
+        assert [r["content"] for r in visible] == [r["content"] for r in store._visible_rows("memory")]
+        assert isinstance(visible[0], dict)
+        assert visible[0]["written_by"] == "main:test"
+
+    def test_legacy_migrated_at_reflects_marker(self, store):
+        # The one-shot migration always writes the marker on first load.
+        marker = store._query("SELECT value FROM meta WHERE key = 'legacy_migrated'")
+        assert marker, "migration marker expected after load_from_disk"
+        assert store.legacy_migrated_at() == marker[0]["value"]
+        store._connect().execute("DELETE FROM meta WHERE key = 'legacy_migrated'")
+        assert store.legacy_migrated_at() is None
+
+    def test_managed_import_status_counts_and_markers(self, store):
+        status = store.managed_import_status()
+        assert status["markers"] == {}
+        assert set(status["visible_rows"]) == {"memory", "user"}
+        store.import_managed_entries(
+            ["Запись А", "Запись Б"], target="user", written_by="installer",
+            source_sha="sha-1",
+        )
+        status = store.managed_import_status()
+        assert status["markers"] == {"managed_import_sha:installer": "sha-1"}
+        assert status["visible_rows"]["user"] == 2
+
+
+class TestImportManagedEntries:
+    """Public managed-import API — the installer's idempotent import, moved
+    into the store (same semantics: sha marker, claim, re-activate,
+    deprecate-stale)."""
+
+    def test_first_import_creates_rows_and_marker(self, store):
+        report = store.import_managed_entries(
+            ["Запись А", "Запись Б"], target="user", written_by="installer",
+            source_sha="sha-1",
+        )
+        assert report == {
+            "status": "imported", "imported": 2, "claimed": 0,
+            "deprecated": 0, "sha": "sha-1",
+        }
+        rows = store._query(
+            "SELECT content, type, written_by, status FROM memories WHERE target='user'"
+        )
+        assert {(r["content"], r["type"], r["written_by"], r["status"]) for r in rows} == {
+            ("Запись А", "legacy", "installer", "active"),
+            ("Запись Б", "legacy", "installer", "active"),
+        }
+
+    def test_unchanged_sha_imports_nothing(self, store):
+        store.import_managed_entries(["Запись А"], target="user", written_by="installer", source_sha="sha-1")
+        report = store.import_managed_entries(["Запись А"], target="user", written_by="installer", source_sha="sha-1")
+        assert report["status"] == "unchanged" and report["imported"] == 0
+        assert len(store._query("SELECT id FROM memories WHERE target='user' AND status='active'")) == 1
+
+    def test_changed_sha_imports_new_and_deprecates_stale(self, store):
+        store.import_managed_entries(["Запись А", "Запись Б"], target="user", written_by="installer", source_sha="sha-1")
+        report = store.import_managed_entries(["Запись А", "Запись В"], target="user", written_by="installer", source_sha="sha-2")
+        assert report["imported"] == 1 and report["deprecated"] == 1
+        by_content = {
+            r["content"]: r
+            for r in store._query("SELECT content, status, written_by FROM memories WHERE target='user'")
+        }
+        assert len(by_content) == 3  # no duplicate rows ever
+        assert by_content["Запись Б"]["status"] == "deprecated"
+        assert by_content["Запись В"]["status"] == "active"
+
+    def test_migration_imported_duplicates_are_claimed(self, mem_dir):
+        # A pre-cutover flat USER.md migrates WITHOUT provenance; the managed
+        # import must CLAIM the matching row instead of adding a duplicate.
+        (mem_dir / "USER.md").write_text("Старая копия профиля", encoding="utf-8")
+        s = MemoryStoreV2()
+        s.load_from_disk()
+        try:
+            report = s.import_managed_entries(
+                ["Старая копия профиля", "Новая запись"],
+                target="user", written_by="installer", source_sha="sha-1",
+            )
+        finally:
+            s.close()
+        assert report["claimed"] == 1 and report["imported"] == 1
+
+    def test_deprecated_row_returning_to_source_reactivates(self, store):
+        store.import_managed_entries(["Запись А"], target="user", written_by="installer", source_sha="sha-1")
+        store.import_managed_entries([], target="user", written_by="installer", source_sha="sha-2")
+        assert store._query(
+            "SELECT status FROM memories WHERE target='user' AND content='Запись А'"
+        )[0]["status"] == "deprecated"
+        report = store.import_managed_entries(["Запись А"], target="user", written_by="installer", source_sha="sha-3")
+        assert report["imported"] == 1 and report["deprecated"] == 0
+        assert store._query(
+            "SELECT status FROM memories WHERE target='user' AND content='Запись А'"
+        )[0]["status"] == "active"
+
+    def test_rejects_bad_target_and_writer(self, store):
+        import pytest as _pytest
+        with _pytest.raises(ValueError):
+            store.import_managed_entries(["x"], target="disk", written_by="w", source_sha="s")
+        with _pytest.raises(ValueError):
+            store.import_managed_entries(["x"], target="user", written_by="  ", source_sha="s")
+
+    def test_requires_loaded_store(self, mem_dir):
+        s = MemoryStoreV2(db_path=mem_dir / "memory.db")
+        import pytest as _pytest
+        with _pytest.raises(RuntimeError):
+            s.import_managed_entries(["x"], target="user", written_by="w", source_sha="s")
+
+
+class TestAgentInitConfigWiring:
+    """agent_init threads config into the v2 store: aliases + recall log
+    (code-review fixes — the alias layer must not be dead, and the recall log
+    must not write a DB row per pack build by default)."""
+
+    @staticmethod
+    def _init(tmp_path, monkeypatch, memory_cfg):
+        from types import SimpleNamespace
+
+        from agent.agent_init import _init_memory
+
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+        parent = SimpleNamespace(enabled_toolsets=["memory"], disabled_toolsets=[])
+        _init_memory(parent, {"memory": memory_cfg}, skip_memory=False, platform="cli")
+        return parent
+
+    def test_aliases_from_config_reach_the_store(self, tmp_path, monkeypatch):
+        parent = self._init(tmp_path, monkeypatch, {
+            "backend": "sqlite_v2",
+            "aliases": {"ГПТ": ["chatgpt"], "модель": ["gpt", "chatgpt"]},
+        })
+        try:
+            assert parent._memory_store._alias_map == {
+                "гпт": ("chatgpt",), "модель": ("gpt", "chatgpt"),
+            }
+        finally:
+            parent._memory_store.close()
+
+    def test_recall_log_disabled_by_default_via_agent_init(self, tmp_path, monkeypatch):
+        parent = self._init(tmp_path, monkeypatch, {"backend": "sqlite_v2"})
+        try:
+            assert parent._memory_store._recall_log_enabled is False
+        finally:
+            parent._memory_store.close()
+
+    def test_recall_log_enabled_true_from_config(self, tmp_path, monkeypatch):
+        parent = self._init(tmp_path, monkeypatch, {
+            "backend": "sqlite_v2",
+            "recall_log": {"enabled": True},
+        })
+        try:
+            assert parent._memory_store._recall_log_enabled is True
+        finally:
+            parent._memory_store.close()
+
+    def test_config_defaults_register_aliases_and_recall_log(self):
+        from hermes_cli.config_defaults import DEFAULT_CONFIG
+        mem = DEFAULT_CONFIG["memory"]
+        assert mem["aliases"] == {}
+        assert mem["recall_log"] == {"enabled": False}

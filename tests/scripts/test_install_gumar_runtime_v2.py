@@ -11,10 +11,11 @@ home is never touched):
   home copy is still overwritten, and NO ``memory.db`` appears;
 - ``sqlite_v2`` backend (flag set in the home's config.yaml): the installer
   imports the managed ``runtime-config/memories/USER.md`` §-entries into the
-  canonical store with ``written_by='installer'``, records
-  ``meta['installer_user_md_sha']``, regenerates projections through the
-  store, re-runs import nothing (no duplicates, sha marker stable, and a
-  hand-edited projection is never overwritten);
+  canonical store via the store's PUBLIC ``import_managed_entries`` API with
+  ``written_by='installer'``, records ``meta['managed_import_sha:installer']``,
+  regenerates projections through the store, re-runs import nothing (no
+  duplicates, sha marker stable, and a hand-edited projection is never
+  overwritten);
 - changed-source semantics (function-level, stubbed source path — the real
   runtime-config files are never mutated): new entries imported, stale
   installer-written rows deprecated, provenance claimed on migration-imported
@@ -48,7 +49,9 @@ SOURCE_ENTRIES = [
     if seg.strip()
 ]
 SOURCE_SHA = hashlib.sha256(SOURCE_BYTES).hexdigest()
-INSTALLER_SHA_META_KEY = "installer_user_md_sha"
+# meta key the STORE owns (agent.memory_store_v2.import_managed_entries):
+# ``managed_import_sha:<written_by>``.
+INSTALLER_SHA_META_KEY = "managed_import_sha:installer"
 INSTALLER_WRITER = "installer"
 
 

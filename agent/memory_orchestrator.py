@@ -55,6 +55,12 @@ from datetime import datetime, timezone
 from typing import Any, ClassVar, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from agent.model_metadata import estimate_tokens_rough
+# е-fold (P7) and the normalized matcher are owned by the store module — one
+# definition, so the scorer folds EXACTLY like the store's search paths (a
+# candidate found via е/ё-tolerant search must not score zero on an
+# intolerant relevance pass). No import cycle: memory_store_v2 imports
+# neither this module nor the bus.
+from agent.memory_store_v2 import _fold_yo, match_normalized
 
 logger = logging.getLogger(__name__)
 
@@ -99,17 +105,6 @@ _INTENT_MARKERS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
 )
 
 _TOKEN_SPLIT_RE = re.compile(r"[^\w]+", re.UNICODE)
-
-
-def _fold_yo(text: str) -> str:
-    """е-fold for search-side scoring (P7) — twin of memory_store_v2._fold_yo.
-
-    Kept local so the orchestrator stays store-agnostic (it duck-types the
-    store and must not import the v2 module). The scorer must fold exactly
-    like the store's search paths, or a candidate found via е/ё-tolerant
-    search would be scored to zero by an intolerant relevance pass.
-    """
-    return (text or "").replace("ё", "е").replace("Ё", "Е")
 
 
 def _message_tokens(message: str) -> List[str]:
@@ -209,8 +204,6 @@ def rank_candidates(
     enters the pack — a zero-relevance candidate cannot ride in on
     importance or type bonuses.
     """
-    from agent.memory_store_v2 import match_normalized
-
     ranked: List[Tuple[Tuple, Dict[str, Any]]] = []
     for cand in candidates:
         match_class, ratio = match_normalized(nq, str(cand.get("content") or ""))
@@ -238,41 +231,7 @@ def rank_candidates(
         )
         ranked.append((key, cand))
     ranked.sort(key=lambda pair: pair[0])
-    return _collapse_awareness_duplicates([cand for _key, cand in ranked])
-
-
-def _awareness_signature(content: str) -> Optional[str]:
-    """Signature of an awareness episode record, for duplicate collapsing.
-
-    The RECORD path writes one ``Stuck pattern: <tool> — <trigger>`` per
-    episode with per-episode detail (counts, error snippets) — live data
-    carries 30+ near-identical rows per hot signature, and without collapsing
-    they occupy the whole top of a pack for any query that grazes them.
-    """
-    text = (content or "").strip()
-    if not text.startswith("Stuck pattern:"):
-        return None
-    # Collapse to the TOOL level: one stuck-episode representative per tool
-    # per pack — trigger variants of the same tool add noise, not coverage.
-    head = text.split("(", 1)[0]
-    parts = head.split("—", 1)
-    return " ".join(parts[0].split()) or None
-
-
-def _collapse_awareness_duplicates(
-    ranked: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    """Keep only the first (best-ranked) entry per awareness signature."""
-    seen: Set[str] = set()
-    out: List[Dict[str, Any]] = []
-    for cand in ranked:
-        sig = _awareness_signature(str(cand.get("content") or ""))
-        if sig is not None:
-            if sig in seen:
-                continue
-            seen.add(sig)
-        out.append(cand)
-    return out
+    return [cand for _key, cand in ranked]
 
 
 def _parse_ts(value: Optional[str]) -> Optional[datetime]:
@@ -457,6 +416,36 @@ def render_pack(
     return f"{_PACK_HEADER} ({tokens} tokens)\n\n{_PACK_NOTE}\n\n{body}"
 
 
+def fit_entries_within_budget(
+    scored: Sequence[Tuple[Mapping, Any]],
+    budget: int,
+    *,
+    max_entries: int,
+    used_start: int = 0,
+) -> Tuple[List[Tuple[Mapping, Any]], int]:
+    """Greedy token-budget cut over PRE-SORTED ``(entry, score)`` pairs.
+
+    The ONE shared cut loop for the context pack and the bus recall: each
+    entry costs ``estimate_tokens_rough(content) + 8`` (bullet + metadata).
+    An entry that would overflow the remaining budget is SKIPPED (smaller
+    ones further down may still fit — one huge entry must not eat the pack);
+    ``max_entries`` caps the count; ``used_start`` offsets the budget with
+    the caller's already-reserved overhead (pack header + note). Returns
+    ``(selected, used)`` — ``used`` is offset + cost of selected entries.
+    """
+    selected: List[Tuple[Mapping, Any]] = []
+    used = max(0, int(used_start))
+    for row, score in scored:
+        if len(selected) >= max(0, int(max_entries)):
+            break
+        line_cost = estimate_tokens_rough(str(row.get("content") or "")) + 8
+        if used + line_cost > int(budget):
+            continue
+        selected.append((row, score))
+        used += line_cost
+    return selected, used
+
+
 class MemoryOrchestrator:
     """Query-aware retrieval over the built-in typed store (Phase 2).
 
@@ -574,16 +563,13 @@ class MemoryOrchestrator:
         # The reserve covers section titles + the rendered header so the
         # *rendered* pack stays within budget, not just the raw entries.
         _RENDER_OVERHEAD_TOKENS = 80
-        used = estimate_tokens_rough(_PACK_HEADER) + estimate_tokens_rough(_PACK_NOTE) + _RENDER_OVERHEAD_TOKENS
-        selected: List[Tuple[Dict[str, Any], float]] = []
-        for row, score in scored:
-            if len(selected) >= self._max_entries:
-                break
-            line_cost = estimate_tokens_rough(str(row.get("content") or "")) + 8  # bullet + metadata
-            if used + line_cost > self._token_budget:
-                continue  # try smaller entries; a single huge one must not eat the pack
-            selected.append((row, score))
-            used += line_cost
+        used_start = estimate_tokens_rough(_PACK_HEADER) + estimate_tokens_rough(_PACK_NOTE) + _RENDER_OVERHEAD_TOKENS
+        selected, used = fit_entries_within_budget(
+            scored,
+            self._token_budget,
+            max_entries=self._max_entries,
+            used_start=used_start,
+        )
         if not selected:
             self._log_recall(intent=intent, query=query, before=len(candidates), after=0, nonempty=False)
             return ""

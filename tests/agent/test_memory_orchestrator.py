@@ -28,6 +28,7 @@ from agent.memory_orchestrator import (
     ScoringWeights,
     build_memory_orchestrator,
     classify_intent,
+    fit_entries_within_budget,
     recency_score,
     relevance_score,
     render_pack,
@@ -603,3 +604,50 @@ def test_factory_bad_config_values_fall_back(mem_dir):
     # int("много") raises → factory disables rather than misconfiguring
     assert orch is None
     s.close()
+
+
+# ============================================================================
+# Shared token-budget cut (used by the pack builder AND the bus recall)
+# ============================================================================
+
+def _fit_row(content: str, rid: str = "id") -> dict:
+    return {"id": rid, "content": content}
+
+
+class TestFitEntriesWithinBudget:
+    def test_caps_entries_and_respects_start_offset(self):
+        scored = [(_fit_row("слово " * 10), 0.9), (_fit_row("слово " * 10), 0.8)]
+        selected, used = fit_entries_within_budget(scored, 1000, max_entries=1)
+        assert [r["content"] for r, _ in selected] == ["слово " * 10]
+        assert len(selected) == 1
+        # used == offset(0) + cost of the one selected entry.
+        expected_used = estimate_tokens_rough("слово " * 10) + 8
+        assert used == expected_used
+
+    def test_skips_oversized_but_keeps_smaller(self):
+        # The first entry overflows the budget; the second must still fit
+        # (the cut loop continues, it never aborts on one big entry).
+        big = _fit_row("х" * 400)
+        small = _fit_row("мал")
+        cost_big = estimate_tokens_rough("х" * 400) + 8
+        cost_small = estimate_tokens_rough("мал") + 8
+        selected, used = fit_entries_within_budget(
+            [(big, 1.0), (small, 0.5)], budget=cost_small + 10, max_entries=10,
+        )
+        assert cost_big > cost_small + 10
+        assert [r["content"] for r, _ in selected] == ["мал"]
+        assert used == cost_small
+
+    def test_used_start_offsets_the_budget(self):
+        scored = [(_fit_row("слово"), 0.9)]
+        cost = estimate_tokens_rough("слово") + 8
+        # With the offset eating the whole budget nothing fits.
+        selected, used = fit_entries_within_budget(
+            scored, budget=cost, max_entries=10, used_start=cost,
+        )
+        assert selected == []
+        assert used == cost
+
+    def test_empty_input(self):
+        selected, used = fit_entries_within_budget([], 100, max_entries=10)
+        assert selected == [] and used == 0

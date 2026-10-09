@@ -151,14 +151,11 @@ def _require_v2_user_markers(store, home: Path) -> None:
     """Check #2 on sqlite_v2: markers must live in the CANONICAL store rows.
 
     The projection files are derived views that may lag behind the store, so
-    the verifier queries the canonical rows directly (the same source of truth
-    the agent reads) and additionally requires both projections to exist.
+    the verifier reads the canonical rows through the store's PUBLIC surface
+    (``visible_rows`` + ``managed_import_status`` — never ``_query``) and
+    additionally requires both projections to exist.
     """
-    rows = store._query(
-        "SELECT content FROM memories WHERE target='user'"
-        " AND status IN ('active','pinned')"
-    )
-    contents = [row["content"] for row in rows]
+    contents = [row["content"] for row in store.visible_rows("user")]
     _require(
         any("EndeavourOS" in content for content in contents),
         "USER.md marker 'EndeavourOS' is missing from the sqlite_v2 canonical store",
@@ -166,6 +163,11 @@ def _require_v2_user_markers(store, home: Path) -> None:
     _require(
         any("AI, агенты, обвязки и автоматизация" in content for content in contents),
         "USER.md goals are missing from the sqlite_v2 canonical store",
+    )
+    status = store.managed_import_status()
+    _require(
+        bool(status["markers"]),
+        "managed import sha marker is missing from the sqlite_v2 canonical store",
     )
     _require(
         (home / "memories" / "USER.md").is_file(), "USER.md projection is missing"

@@ -121,6 +121,43 @@ def test_rollback_consumer_rejects_empty_scope(mem_dir):
     s.close()
 
 
+def test_rollback_consumer_target_scoping(mem_dir):
+    """Store-level per-target revert: ``target`` filters by written_by AND
+    target; ``target=None`` keeps the cross-target revert."""
+    s = _fresh(mem_dir)
+    s.add("memory", "Память делегации", entry_type="fact", written_by="delegation:sa-1")
+    s.add("user", "Профиль делегации", entry_type="preference", written_by="delegation:sa-1")
+    s.add("memory", "Чужая память", entry_type="fact", written_by="main:sess-9")
+    s.close()
+
+    s2 = _fresh(mem_dir)
+    result = s2.rollback_consumer("delegation:sa-1", target="memory")
+    assert result["success"] and result["deprecated"] == 1
+    assert result["target"] == "memory"
+    # The writer's USER row is untouched — the revert is per-target.
+    user_rows = s2._query("SELECT status FROM memories WHERE written_by='delegation:sa-1' AND target='user'")
+    assert user_rows and user_rows[0]["status"] == "active"
+    # Other writers untouched.
+    assert s2._query("SELECT status FROM memories WHERE written_by='main:sess-9'")[0]["status"] == "active"
+
+    # Cross-target revert without a target: both of the writer's rows go.
+    result2 = s2.rollback_consumer("delegation:sa-1")
+    assert result2["success"] and result2["deprecated"] == 1
+    assert result2["target"] is None
+    left = s2._query(
+        "SELECT status FROM memories WHERE written_by='delegation:sa-1'"
+    )
+    assert all(r["status"] == "deprecated" for r in left)
+    s2.close()
+
+
+def test_rollback_consumer_rejects_unknown_target(mem_dir):
+    s = _fresh(mem_dir)
+    r = s.rollback_consumer("delegation:x", target="disk")
+    assert not r["success"] and "Unknown target" in r["error"]
+    s.close()
+
+
 # ============================================================================
 # Bus — coeffect subscriptions + capability derivation
 # ============================================================================
@@ -195,7 +232,7 @@ def test_readonly_is_structural_not_polite(mem_dir):
     assert sub is not None and sub.spec.read_only
     w = bus.remember("попытка записи", consumer_id="subagent:ro", entry_type="fact")
     assert not w["success"] and "read-only" in w["error"]
-    r = bus.rollback("subagent:ro")
+    r = bus.rollback("subagent:ro", target="memory")
     assert not r["success"] and "rollback refused" in r["error"]
     s.close()
 
@@ -284,11 +321,11 @@ def test_scoped_view_pins_spec_and_can_write_only_with_caps(mem_dir):
     ))
     assert view is not None
     assert view.remember("вывод")["success"]
-    assert view.rollback()["deprecated"] == 1
+    assert view.rollback(target="memory")["deprecated"] == 1
     ro = bus.scoped_view(ConsumerSpec("subagent:ro", needs=frozenset({READ_MEMORY})))
     assert ro is not None
     assert not ro.remember("нет прав")["success"]
-    assert not ro.rollback()["success"]
+    assert not ro.rollback(target="memory")["success"]
     s.close()
 
 
@@ -302,7 +339,7 @@ def test_write_capability_does_not_imply_rollback(mem_dir):
     bus = _bus(s)
     bus.subscribe(ConsumerSpec("w1", needs=frozenset({READ_MEMORY, WRITE_MEMORY})))
     assert bus.remember("запись", consumer_id="w1")["success"]
-    r = bus.rollback("w1")
+    r = bus.rollback("w1", target="memory")
     assert not r["success"] and "rollback refused" in r["error"]
     # Store-level scoping is untouched: the consumer's rows stay active.
     assert s.recent_entries(limit=5)[0]["status"] == "active"
@@ -318,7 +355,7 @@ def test_rollback_works_without_write_capability(mem_dir):
     s2 = _fresh(mem_dir)
     bus = _bus(s2)
     bus.subscribe(ConsumerSpec("rb-1", needs=frozenset({READ_MEMORY, ROLLBACK_MEMORY})))
-    r = bus.rollback("rb-1")
+    r = bus.rollback("rb-1", target="memory")
     assert r["success"] and r["deprecated"] == 1
     s2.close()
 
@@ -331,6 +368,77 @@ def test_rollback_target_consent_gate(mem_dir):
     assert bus.rollback("mixed", target="memory")["success"]
     r = bus.rollback("mixed", target="user")
     assert not r["success"] and "rollback refused" in r["error"]
+    s.close()
+
+
+def test_rollback_requires_explicit_target(mem_dir):
+    """The bus rollback must NAME the target — a bare call is refused
+    instead of silently reverting both stores."""
+    s = _fresh(mem_dir)
+    bus = _bus(s)
+    bus.subscribe(ConsumerSpec("all", needs=frozenset(ALL_CAPABILITIES)))
+    r = bus.rollback("all")
+    assert not r["success"] and "rollback refused" in r["error"]
+    assert "target" in r["error"]
+    # The store was never reached: the consumer's rows stay active.
+    s.add("memory", "запись", entry_type="fact", written_by="all")
+    assert s.recent_entries(limit=5)[0]["status"] == "active"
+    s.close()
+
+
+def test_rollback_memory_only_cannot_revert_user_rows(mem_dir):
+    """A rollback:memory-only consumer CANNOT revert user rows, and its
+    memory-target rollback never touches its own user rows."""
+    s = _fresh(mem_dir)
+    s.add("memory", "Память этого потребителя", entry_type="fact", written_by="part")
+    s.add("user", "Профиль этого потребителя", entry_type="preference", written_by="part")
+    s.close()
+    s2 = _fresh(mem_dir)
+    bus = _bus(s2)
+    bus.subscribe(ConsumerSpec("part", needs=frozenset({READ_MEMORY, ROLLBACK_MEMORY})))
+    r = bus.rollback("part", target="user")
+    assert not r["success"] and "rollback refused" in r["error"]
+    # The refusal is structural: nothing changed.
+    assert s2._query("SELECT status FROM memories WHERE written_by='part' AND target='user'")[0]["status"] == "active"
+    r = bus.rollback("part", target="memory")
+    assert r["success"] and r["deprecated"] == 1
+    assert s2._query("SELECT status FROM memories WHERE written_by='part' AND target='memory'")[0]["status"] == "deprecated"
+    # The consumer's USER rows are untouched by the memory-target revert.
+    assert s2._query("SELECT status FROM memories WHERE written_by='part' AND target='user'")[0]["status"] == "active"
+    s2.close()
+
+
+def test_rollback_both_caps_can_revert_each_target(mem_dir):
+    """A consumer holding both rollback caps can revert each target —
+    and each call only touches the named target."""
+    s = _fresh(mem_dir)
+    s.add("memory", "Память оба", entry_type="fact", written_by="both")
+    s.add("user", "Профиль оба", entry_type="preference", written_by="both")
+    s.add("memory", "Чужая запись", entry_type="fact", written_by="main:sess-9")
+    s.close()
+    s2 = _fresh(mem_dir)
+    bus = _bus(s2)
+    bus.subscribe(ConsumerSpec(
+        "both", needs=frozenset({READ_MEMORY, READ_USER, ROLLBACK_MEMORY, ROLLBACK_USER}),
+    ))
+    r = bus.rollback("both", target="memory")
+    assert r["success"] and r["deprecated"] == 1
+    assert s2._query("SELECT status FROM memories WHERE written_by='both' AND target='user'")[0]["status"] == "active"
+    r = bus.rollback("both", target="user")
+    assert r["success"] and r["deprecated"] == 1
+    # Other writers' rows untouched throughout.
+    assert s2._query("SELECT status FROM memories WHERE written_by='main:sess-9'")[0]["status"] == "active"
+    s2.close()
+
+
+def test_rollback_spec_with_rollback_cap_is_not_read_only(mem_dir):
+    """ConsumerSpec.read_only means NO write AND NO rollback caps: a spec
+    holding only ``rollback:memory`` is NOT read-only."""
+    spec = ConsumerSpec("rb", needs=frozenset({READ_MEMORY, ROLLBACK_MEMORY}))
+    assert not spec.read_only
+    assert ConsumerSpec("ro", needs=frozenset({READ_MEMORY})).read_only
+    assert ConsumerSpec("rw", needs=frozenset({READ_MEMORY, WRITE_MEMORY})).read_only is False
+    s = _fresh(mem_dir)
     s.close()
 
 
@@ -351,7 +459,7 @@ def test_bus_rollback_only_touches_own_consumer_rows(mem_dir):
     s.add("memory", "Запись MAIN", entry_type="fact", written_by="main:sess-9")
     s.add("memory", "Запись без провенанса", entry_type="fact")
 
-    r = bus.rollback("delegation:a", reason="scoped revert через bus")
+    r = bus.rollback("delegation:a", reason="scoped revert через bus", target="memory")
     assert r["success"] and r["deprecated"] == 2
 
     # Only A's rows are deprecated — never deleted, still auditable.
@@ -413,20 +521,20 @@ class TestCapabilityRefusalMatrix:
          {"target": "user", "content": "матрица запись"}, "write refused"),
         ("read-only-user-write", {READ_USER}, "remember",
          {"target": "user", "content": "матрица запись"}, "write refused"),
-        ("read-only-rollback-implicit", {READ_MEMORY}, "rollback",
+        ("read-only-rollback-no-target", {READ_MEMORY}, "rollback",
          {}, "rollback refused"),
-        ("read-only-rollback-implicit-user", {READ_USER}, "rollback",
+        ("read-only-rollback-no-target-user", {READ_USER}, "rollback",
          {}, "rollback refused"),
         ("read-only-rollback-explicit-memory", {READ_MEMORY}, "rollback",
          {"target": "memory"}, "rollback refused"),
         ("read-only-rollback-explicit-user", {READ_USER}, "rollback",
          {"target": "user"}, "rollback refused"),
         ("write-memory-without-rollback", {READ_MEMORY, WRITE_MEMORY}, "rollback",
-         {}, "rollback refused"),
-        ("write-user-without-rollback", {READ_USER, WRITE_USER}, "rollback",
-         {}, "rollback refused"),
-        ("write-memory-without-rollback-explicit", {READ_MEMORY, WRITE_MEMORY}, "rollback",
          {"target": "memory"}, "rollback refused"),
+        ("write-user-without-rollback", {READ_USER, WRITE_USER}, "rollback",
+         {"target": "user"}, "rollback refused"),
+        ("write-memory-without-rollback-implicit", {READ_MEMORY, WRITE_MEMORY}, "rollback",
+         {}, "rollback refused"),
         ("rollback-user-asking-memory", {READ_MEMORY, ROLLBACK_USER}, "rollback",
          {"target": "memory"}, "rollback refused"),
         ("rollback-memory-asking-user", {READ_USER, ROLLBACK_MEMORY}, "rollback",
@@ -472,9 +580,9 @@ class TestDeactivatedRefusalMatrix:
             ("recall", {"query": "любое"}, "no active read subscription"),
             ("remember", {"target": "memory", "content": "запись"}, "write refused"),
             ("rollback", {}, "rollback refused"),
-            ("rollback", {"target": "user"}, "rollback refused"),
+            ("rollback", {"target": "memory"}, "rollback refused"),
         ],
-        ids=["recall", "write", "rollback", "rollback-explicit"],
+        ids=["recall", "write", "rollback-no-target", "rollback-explicit"],
     )
     def test_deactivated_subscription_refused(self, mem_dir, action, kwargs, expected):
         s = _fresh(mem_dir)
@@ -501,11 +609,11 @@ class TestCapabilityGrantMatrix:
         ("write-user-granted", {READ_USER, WRITE_USER}, "remember",
          {"target": "user", "content": "грант запись"}),
         ("rollback-memory-granted", {READ_MEMORY, ROLLBACK_MEMORY}, "rollback",
-         {}),
+         {"target": "memory"}),
         ("rollback-user-granted", {READ_USER, ROLLBACK_USER}, "rollback",
          {"target": "user"}),
         ("rollback-full-granted", ALL_CAPABILITIES, "rollback",
-         {}),
+         {"target": "memory"}),
     ]
 
     @pytest.mark.parametrize(
@@ -521,6 +629,50 @@ class TestCapabilityGrantMatrix:
         result = getattr(bus, action)(consumer_id="g1", **kwargs)
         assert result["success"], name
         s.close()
+
+
+# ============================================================================
+# agent_init wiring (ticket #8) — bus budgets come from config, not hardcoded
+# ============================================================================
+
+def _init_bus_via_agent_init(mem_dir, memory_cfg: dict):
+    """Run the REAL ``agent_init._init_memory_bus`` against a stub agent."""
+    from agent.agent_init import _init_memory_bus
+
+    s = _fresh(mem_dir)
+    agent = type("A", (), {})()
+    _init_memory_bus(agent, {"memory": memory_cfg}, s, None)
+    return agent
+
+
+def test_agent_init_bus_reads_orchestrator_budget_from_config(mem_dir):
+    """memory.orchestrator.token_budget/max_entries drive the bus budget —
+    the hardcoded 2500/20 are replaced by config values."""
+    agent = _init_bus_via_agent_init(mem_dir, {
+        "backend": "sqlite_v2",
+        "bus": {"enabled": True},
+        "orchestrator": {"token_budget": 123, "max_entries": 4},
+    })
+    bus = getattr(agent, "_memory_bus", None)
+    assert bus is not None
+    assert bus.token_budget == 123
+    assert bus.max_entries == 4
+
+
+def test_agent_init_bus_budget_falls_back_to_defaults(mem_dir):
+    """No orchestrator block (or malformed values) → 2500/20 defaults."""
+    agent = _init_bus_via_agent_init(mem_dir, {
+        "backend": "sqlite_v2",
+        "bus": {"enabled": True},
+    })
+    bus = getattr(agent, "_memory_bus", None)
+    assert bus is not None
+    assert (bus.token_budget, bus.max_entries) == (2500, 20)
+
+
+def test_agent_init_bus_absent_on_legacy_backend(mem_dir):
+    agent = _init_bus_via_agent_init(mem_dir, {"backend": "file"})
+    assert getattr(agent, "_memory_bus", None) is None
 
 
 # ============================================================================

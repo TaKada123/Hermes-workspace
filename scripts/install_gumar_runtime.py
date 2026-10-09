@@ -8,12 +8,13 @@ are applied, replaced files land in ``backups/``.
 
 ``sqlite_v2`` backend: ``memories/USER.md`` is NOT copied. Instead the managed
 §-entries of ``runtime-config/memories/USER.md`` are imported IDEMPOTENTLY into
-the canonical SQLite store (``memories/memory.db``) with ``written_by`` =
+the canonical SQLite store (``memories/memory.db``) through the store's PUBLIC
+``MemoryStoreV2.import_managed_entries`` API with ``written_by`` =
 ``installer``:
 
 - a fresh load runs the one-shot legacy migration first (``load_from_disk``);
-- ``meta['installer_user_md_sha']`` = sha256 of the managed source file is the
-  idempotency marker: an unchanged sha imports NOTHING (no duplicate rows);
+- the store owns the sha marker (``meta['managed_import_sha:installer']``):
+  an unchanged sha imports NOTHING (no duplicate rows);
 - a CHANGED sha imports new entries, claims provenance on matching
   migration-imported rows, and deprecates stale installer-written user rows
   (status ``deprecated`` — hidden but kept for audit);
@@ -32,7 +33,6 @@ import hashlib
 import os
 import shutil
 import sys
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -40,11 +40,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE = REPO_ROOT / "runtime-config"
 PLUGIN_ID = "gumar-runtime-policy"
 
-# Provenance of rows imported from the managed runtime-config profile.
+# Provenance of rows imported from the managed runtime-config profile (the
+# store's meta marker key derives from this: ``managed_import_sha:installer``).
 INSTALLER_WRITER = "installer"
-# meta key holding the sha256 of the managed USER.md source at last import —
-# the idempotency marker (read by tickets #9/#11, never the agent).
-INSTALLER_USER_MD_SHA_KEY = "installer_user_md_sha"
 
 # Tools pinned as deferred so the lean tool surface (18 tools instead of 25, ~9.4 KB
 # of schemas saved per request) survives a config rewrite or a fresh install. The
@@ -189,139 +187,25 @@ def _split_managed_entries(source: Path) -> list[str]:
     return [seg.strip() for seg in raw.split(ENTRY_DELIMITER) if seg.strip()]
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def _projection_paths(store) -> dict[str, Path]:
-    """MEMORY.md/USER.md projection paths for the target home (store-owned paths)."""
-    return {"memory": store._path_for("memory"), "user": store._path_for("user")}
-
-
 def _import_managed_user_memory(home: Path, source: Path) -> dict:
     """Idempotently import the managed USER.md §-entries into the canonical store.
 
-    Runs the one-shot legacy migration if needed (``load_from_disk``), then:
-
-    - unchanged ``meta['installer_user_md_sha']`` → import NOTHING (only a
-      missing projection is regenerated through the store; existing projection
-      files are never touched);
-    - otherwise one transaction imports every source §-entry as a user-target
-      ``legacy`` row with ``written_by='installer'``, claims provenance on
-      matching migration-imported rows (``written_by`` NULL), re-activates
-      deprecated rows whose content returned to the managed source, and
-      deprecates stale installer-written user rows (hidden, kept for audit).
-
-    Projections are regenerated THROUGH the store after the import. Returns a
-    report dict; raises on any store error (fail-closed — see module docstring).
+    Thin wrapper over the store's PUBLIC ``import_managed_entries`` (the
+    idempotent transactional import — sha marker, claim/deprecate logic —
+    lives in the store, not here). Runs the one-shot legacy migration via
+    ``load_from_disk``, then delegates. Returns the store's report dict;
+    raises on any store error (fail-closed — see module docstring).
     """
     from agent.memory_store_v2 import MemoryStoreV2
 
     store = MemoryStoreV2(db_path=home / "memories" / "memory.db")
     try:
         store.load_from_disk()
-
         entries = _split_managed_entries(source)
         sha = hashlib.sha256(source.read_bytes()).hexdigest()
-
-        rows = store._query(
-            "SELECT value FROM meta WHERE key = ?", (INSTALLER_USER_MD_SHA_KEY,)
+        return store.import_managed_entries(
+            entries, target="user", written_by=INSTALLER_WRITER, source_sha=sha,
         )
-        previous_sha = rows[0][0] if rows else None
-
-        if previous_sha == sha:
-            # Idempotent no-op: never re-import, never overwrite projections.
-            # Regenerate only MISSING projection files (the store regenerates
-            # them; a missing derived view is not an overwrite).
-            for target, path in _projection_paths(store).items():
-                if not path.is_file():
-                    store._rewrite_projection(target)
-            return {
-                "status": "unchanged",
-                "imported": 0,
-                "claimed": 0,
-                "deprecated": 0,
-                "sha": sha,
-            }
-
-        def _txn(conn) -> tuple[int, int, int]:
-            imported = 0
-            claimed = 0
-            deprecated = 0
-            for entry in entries:
-                row = conn.execute(
-                    "SELECT id, written_by, status FROM memories"
-                    " WHERE target='user' AND content=? LIMIT 1",
-                    (entry,),
-                ).fetchone()
-                if row is None:
-                    conn.execute(
-                        "INSERT INTO memories(id, target, type, content, importance,"
-                        " confidence, status, project, written_by, created_at, updated_at)"
-                        " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                        (
-                            str(uuid.uuid4()), "user", "legacy", entry, 0.5, 0.7,
-                            "active", None, INSTALLER_WRITER, _now(), _now(),
-                        ),
-                    )
-                    imported += 1
-                elif row["status"] == "deprecated":
-                    # The entry returned to the managed source: re-activate it.
-                    conn.execute(
-                        "UPDATE memories SET status='active', updated_at=?"
-                        " WHERE id=?",
-                        (_now(), row["id"]),
-                    )
-                    if not row["written_by"]:
-                        conn.execute(
-                            "UPDATE memories SET written_by=? WHERE id=?",
-                            (INSTALLER_WRITER, row["id"]),
-                        )
-                        claimed += 1
-                    imported += 1
-                elif not row["written_by"]:
-                    # Migration-imported duplicate (flat files carry no
-                    # provenance): claim it instead of duplicating.
-                    conn.execute(
-                        "UPDATE memories SET written_by=? WHERE id=?",
-                        (INSTALLER_WRITER, row["id"]),
-                    )
-                    claimed += 1
-                # else: already installer-owned, or another writer owns this
-                # exact content — leave the row untouched.
-            stale = conn.execute(
-                "SELECT id, content FROM memories WHERE target='user'"
-                " AND written_by=? AND status IN ('active','pinned')",
-                (INSTALLER_WRITER,),
-            ).fetchall()
-            for row in stale:
-                if row["content"] not in entries:
-                    conn.execute(
-                        "UPDATE memories SET status='deprecated', updated_at=?"
-                        " WHERE id=?",
-                        (_now(), row["id"]),
-                    )
-                    deprecated += 1
-            conn.execute(
-                "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
-                (INSTALLER_USER_MD_SHA_KEY, sha),
-            )
-            return imported, claimed, deprecated
-
-        imported, claimed, deprecated = store._execute_write(_txn)
-
-        # Projections are derived views: regenerate them THROUGH the store
-        # (this script never writes the files directly).
-        for target in ("memory", "user"):
-            store._rewrite_projection(target)
-
-        return {
-            "status": "imported",
-            "imported": imported,
-            "claimed": claimed,
-            "deprecated": deprecated,
-            "sha": sha,
-        }
     finally:
         store.close()
 
