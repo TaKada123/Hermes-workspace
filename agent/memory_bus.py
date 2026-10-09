@@ -482,11 +482,29 @@ def build_delegation_briefing(
     unchanged isolation); the parent recalls on its behalf at spawn time and
     injects the block into the goal context. Read-only by construction:
     the spec carries only read capabilities (roadmap 3.2).
+
+    Store-only by construction (ticket #8 AC): the briefing is rendered from
+    a manager-free copy of the parent's bus, so the external provider's
+    fenced context (``<memory-context>``) can never ride into the subagent's
+    goal — the child is briefed from the canonical store, not the provider.
     """
     bus = getattr(parent_agent, "_memory_bus", None)
     if bus is None or not (goal or "").strip():
         return ""
     consumer = f"subagent:{subagent_id}" if subagent_id else "subagent:anonymous"
+    try:
+        # Provider-free copy: same store/targets/weights/budgets, no manager.
+        bus = MemoryBus(
+            store=bus.store,
+            manager=None,
+            targets=tuple(bus.targets),
+            weights=bus.weights,
+            token_budget=bus.token_budget,
+            max_entries=bus.max_entries,
+        )
+    except Exception as exc:
+        logger.warning("memory bus: delegation briefing bus copy failed (non-fatal): %s", exc)
+        return ""
     view = bus.scoped_view(ConsumerSpec(consumer, needs=frozenset({READ_MEMORY, READ_USER}), project=project))
     if view is None:
         return ""
