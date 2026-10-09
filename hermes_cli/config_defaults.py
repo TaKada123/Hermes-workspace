@@ -1328,6 +1328,24 @@ DEFAULT_CONFIG = {
         # "mem0", "holographic", "retaindb", "byterover", or a catalog-installed one ("honcho",
         # "hindsight", "supermemory").
         "provider": "",
+        # MEM-V2 (#6): context-pack orchestrator — deterministic intent routing + weighted scoring
+        # + token budget over the typed store. Active ONLY when backend == "sqlite_v2"; on the
+        # legacy "file" backend no pack is built and nothing changes. The pack rides the API copy
+        # of the current turn's user message (never the system prompt or persisted history).
+        "orchestrator": {
+            "enabled": True,
+            # Rendered-pack token budget (header + note + section titles are reserved on top).
+            "token_budget": 2500,
+            "max_entries": 20,
+            "weights": {
+                "relevance": 0.35,
+                "importance": 0.20,
+                "project_link": 0.15,
+                "decision_value": 0.15,
+                "recency": 0.10,
+                "confidence": 0.05,
+            },
+        },
     },
     # Subagent delegation — override the provider:model used by delegate_task so children run on a
     # cheaper/faster model. Uses the same runtime provider resolution as CLI/gateway startup, so
