@@ -1348,6 +1348,7 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
         with suppress(Exception):
             from tools.memory_tool import (
                 MemoryStore, get_builtin_memory_config, get_builtin_memory_store_flags,
+                resolve_memory_backend,
             )
             mem_config = get_builtin_memory_config(_agent_cfg)
             agent._memory_enabled, agent._user_profile_enabled = get_builtin_memory_store_flags(
@@ -1355,12 +1356,20 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
             )
             agent._memory_nudge_interval = int(mem_config.get("nudge_interval", 10))
             if agent._memory_enabled or agent._user_profile_enabled:
-                agent._memory_store = MemoryStore(
+                store_kwargs = dict(
                     memory_char_limit=mem_config.get("memory_char_limit", 2200),
                     user_char_limit=mem_config.get("user_char_limit", 1375),
                     memory_enabled=agent._memory_enabled,
                     user_profile_enabled=agent._user_profile_enabled,
                 )
+                if resolve_memory_backend(_agent_cfg) == "sqlite_v2":
+                    # Typed SQLite canonical store; MEMORY.md/USER.md become derived
+                    # projections. Same public surface (load_from_disk, add/replace/
+                    # remove, format_for_system_prompt) — consumers are duck-typed.
+                    from agent.memory_store_v2 import MemoryStoreV2
+                    agent._memory_store = MemoryStoreV2(**store_kwargs)
+                else:
+                    agent._memory_store = MemoryStore(**store_kwargs)
                 agent._memory_store.load_from_disk()
 
     # External memory provider plugin (one at a time, alongside built-in): memory.provider.

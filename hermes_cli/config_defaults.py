@@ -1310,6 +1310,10 @@ DEFAULT_CONFIG = {
         },
     },
     "memory": {  # Persistent memory — bounded curated memory injected into the system prompt
+        # Built-in store backend: "file" (legacy flat MEMORY.md/USER.md) or "sqlite_v2"
+        # (typed SQLite canonical store, MEMORY.md/USER.md become derived projections).
+        # Any other value behaves as "file" (fail-safe; unknown flags never activate v2).
+        "backend": "file",
         "memory_enabled": True,
         "user_profile_enabled": True,
         # Approval gate for memory writes on BOTH foreground turns and the background review fork.

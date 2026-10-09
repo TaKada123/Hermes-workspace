@@ -44,17 +44,38 @@ from tools.memory_tool_store import (  # noqa: E402,F401  (re-exports)
     ENTRY_DELIMITER, MEMORY_BLOCK_HEADERS, MemoryStore, _scan_memory_content)
 
 
+def resolve_memory_backend(config: Optional[Dict[str, Any]] = None) -> str:
+    """Resolve ``memory.backend`` to ``'file'`` or ``'sqlite_v2'``.
+
+    The values are matched EXACTLY (``backend == \"sqlite_v2\"``): any unknown,
+    malformed or missing value resolves to the legacy ``'file'`` backend, so a
+    bad flag can never activate the v2 store or break startup. This is the ONE
+    resolver both ``agent_init`` and ``load_on_disk_store`` must use, so the
+    live agent and agent-less contexts (gateway, Desktop, ``/memory`` CLI)
+    cannot diverge — the same invariant ``get_builtin_memory_store_flags``
+    documents for the enable flags.
+    """
+    section = get_builtin_memory_config(config)
+    return "sqlite_v2" if section.get("backend") == "sqlite_v2" else "file"
+
+
 def load_on_disk_store() -> "MemoryStore":
     """Fresh on-disk MemoryStore with configured limits/flags for contexts with no live
     agent (gateway, Desktop, ``/memory``) so approvals enforce the SAME caps as
-    ``agent_init``. Falls back to defaults if config can't load; never raises."""
+    ``agent_init``. Backend follows ``memory.backend`` (default legacy ``file``);
+    falls back to defaults if config can't load; never raises."""
     try:
         from hermes_cli.config import load_config
         config = load_config() or {}
         mem_cfg = get_builtin_memory_config(config)
         memory_enabled, user_profile_enabled = get_builtin_memory_store_flags(config)
-        store = MemoryStore(int(mem_cfg.get("memory_char_limit", 2200)), int(mem_cfg.get("user_char_limit", 1375)),
-                            memory_enabled=memory_enabled, user_profile_enabled=user_profile_enabled)
+        store_kwargs = dict(memory_enabled=memory_enabled, user_profile_enabled=user_profile_enabled)
+        limits = (int(mem_cfg.get("memory_char_limit", 2200)), int(mem_cfg.get("user_char_limit", 1375)))
+        if resolve_memory_backend(config) == "sqlite_v2":
+            from agent.memory_store_v2 import MemoryStoreV2
+            store = MemoryStoreV2(*limits, **store_kwargs)
+        else:
+            store = MemoryStore(*limits, **store_kwargs)
     except Exception:
         store = MemoryStore()  # config optional — fall back to defaults rather than break /memory
     store.load_from_disk()
