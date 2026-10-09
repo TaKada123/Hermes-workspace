@@ -6,7 +6,7 @@ Status: **validated on state-copies of both real profile homes; downgrade round-
 - Copy validation: DESIGN — flag-flip cutover, migration 7/7, recall + agent smoke green (verifier is Main-only by design — see §5).
 - Downgrade export + rollback to legacy: green on the MAIN copy; exported MEMORY.md byte-identical to the real pre-cutover file.
 - Real homes: 1208/1208 copied files re-hashed after the run — all unchanged.
-- Full `scripts/run_tests.sh` run: performed by the lead in parallel (this ticket ran a small targeted subset only — see §6).
+- Full `scripts/run_tests.sh` run: completed, but **not green** because the borrowed test interpreter and the repository baseline fail outside the MEM-V2 scope; exact classification and green MEM-V2 gates are recorded in §6. Ticket #12 must not be treated as fully accepted on the full-suite criterion.
 
 All commands ran with the repo's test venv python (`.../installs/7d27e89e058145aa/test-environment/gen-61e60788dcb64beeaab611091e631020/venv/bin/python`), `HERMES_HOME` pointing at the copies, `HOME=/tmp/hh-cutover/fakehome`, never `scripts/setup-hermes.sh`. Copies live under `/tmp/hh-cutover/` (`main-home`, `main-home-control`, `design-root/profiles/design` — the design copy mirrors the real profile layout `<root>/profiles/design`, which is how `hermes_cli/profiles.py::get_profile_dir` resolves the design HERMES_HOME).
 
@@ -118,12 +118,25 @@ Rollout порядок (по спецификации): **тестовая ко�
 
 ### Тесты
 
-Полный `scripts/run_tests.sh` гоняет lead параллельно (не дублировался). В рамках тикета запущен целевой поднабор (canonical runner, `HERMES_PYTHON` = test venv):
+Полный `scripts/run_tests.sh` был выполнен лидом с явно заданным `HERMES_PYTHON`, но **не прошёл**. Первоначальный pipeline ошибочно показывал shell exit 0 из-за `2>&1 | tail -40`; сама сводка runner содержала многочисленные падения вне MEM-V2 и collection errors. Три подтверждённых класса причин:
 
-```
+1. Test interpreter находился внутри реального `/home/vottak/.hermes`; `tests/home_io_guard.py` закономерно блокировал обращения к `sys.executable`/installation paths. После reflink-копии venv в `/var/tmp/hermes-memv2-test-venv` файл `tests/hermes_cli/test_update_target_identity.py` стал зелёным: **31/31 passed**.
+2. Baseline репозитория уже не самодостаточен для всей обнаруживаемой suite: например, `tests/ci/test_desktop_bundle_smoke.py` требует отсутствующий и в `main` файл `.github/workflows/desktop-bundled-release.yml` (22 падения); `tests/tools/test_fal_sdk.py` не коллекционируется без optional `fal-client`.
+3. Несвязанные с MEM-V2 baseline-тесты остаются красными и при вынесенном venv: `tests/hermes_cli/test_profiles.py` — **106 passed, 2 failed, 3 skipped**; `test_web_server_profile_unification.py` — **21 passed, 7 failed** из-за ссылки terminal environment на реальный managed install. Ни один из этих production/test файлов не изменён в `main...mem-v2-integration`.
+
+Поэтому критерий «полный scripts/run_tests.sh зелёный» **формально не выполнен**, и ticket #12 нельзя закрывать как полностью принятый без отдельного исправления baseline/test environment. Это не скрывается и не засчитывается как успех MEM-V2.
+
+MEM-V2 gates при этом зелёные:
+
+- full memory/delegate unit battery: **794 passed, 0 failed**;
+- MEM-V2 integration E2E: **9 passed, 0 failed**;
+- import smoke: **OK**;
+- финальный targeted installer/verifier + profile-isolation subset:
+
+```text
 scripts/run_tests.sh --include-integration -m integration \
   tests/scripts/test_install_gumar_runtime_v2.py \
   tests/e2e/core/memv2/test_memv2_profile_isolation_e2e.py
 ```
 
-Результат: **2 файла, 13 тестов, 0 failed (100%)** — `test_install_gumar_runtime_v2.py` (8 тестов, 2.3 s; контракт installer/verifier на обоих бэкендах, включая idempotent import и backend-aware verifier) + `test_memv2_profile_isolation_e2e.py` (5 тестов, 118.2 s; реальные процессы-профили против FakeLLMServer: канареечная изоляция snapshot+pack, SOUL/skills по профилям, persistence через перезапуск процесса, sanctioned design.route, per-profile backend flag).
+Результат targeted subset: **2 файла, 13 тестов, 0 failed (100%)** — `test_install_gumar_runtime_v2.py` (8 тестов; контракт installer/verifier на обоих бэкендах, включая idempotent import и backend-aware verifier) + `test_memv2_profile_isolation_e2e.py` (5 тестов; реальные процессы-профили против FakeLLMServer: канареечная изоляция snapshot+pack, SOUL/skills по профилям, persistence через перезапуск процесса, sanctioned design.route, per-profile backend flag).
