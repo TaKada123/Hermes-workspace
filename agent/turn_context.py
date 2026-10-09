@@ -607,6 +607,9 @@ _PER_TURN_RESET_STATE: Tuple[Tuple[str, Any], ...] = (
     ("_iteration_budget_warning_injected", False),
     ("_run_budget_wrapup_injected", False), ("_verification_stop_nudges", 0),
     ("_pre_verify_nudges", 0),
+    # MEM-V2 (#6): the per-turn context pack cache — a stale pack must never leak
+    # into a later turn (the prologue rebuilds it right after this reset).
+    ("_memory_pack_cache", ""),
 )
 
 
@@ -918,6 +921,24 @@ def _memory_turn_start_and_prefetch(
     return ext_prefetch_cache
 
 
+def _memory_pack_for_turn(agent: Any, original_user_message: Any) -> None:
+    """MEM-V2 (#6): build the per-turn context pack once and cache it on the agent.
+
+    The pack is derived from the ORIGINAL user message (before any injection) and stored
+    in ``agent._memory_pack_cache``; every request of this turn reuses it. Without an
+    orchestrator (legacy backend / disabled / not sqlite_v2) the cache is ``""`` and the
+    wire copy is built exactly as before — zero behavior change. ``build_pack`` swallows
+    its own failures by contract.
+    """
+    orchestrator = getattr(agent, "_memory_orchestrator", None)
+    if orchestrator is None:
+        agent._memory_pack_cache = ""
+        return
+    agent._memory_pack_cache = (
+        orchestrator.build_pack(_memory_query_text(original_user_message)) or ""
+    )
+
+
 def _stamp_api_content_sidecar(
     agent: Any, messages: List[Any], current_turn_user_idx: int, ext_prefetch_cache: str,
     plugin_user_context: str, *, preflight_compressed: bool,
@@ -1168,6 +1189,10 @@ def build_turn_context(
 
     _bind_interrupt_scope(agent, ra)
     ext_prefetch_cache = _memory_turn_start_and_prefetch(agent, original_user_message, turn_author)
+    # MEM-V2 (#6): build the per-turn context pack ONCE from the ORIGINAL user
+    # message and cache it on the agent (sqlite_v2 only; legacy → "" → nothing
+    # injected). Runs after prefetch so both channels coexist per turn.
+    _memory_pack_for_turn(agent, original_user_message)
 
     # Title the session now: titling depends only on the user's ask (before any injected
     # context lands on list content), so it runs concurrently with the turn. Daemon thread,
@@ -1280,6 +1305,17 @@ def build_api_messages(
                 )
                 if _composed is not None:
                     api_msg["content"] = _composed
+            # MEM-V2 (#6): the per-turn context pack rides the API copy of the
+            # CURRENT turn's user message only — never the api_content sidecar
+            # (stamped in the prologue WITHOUT the pack, so history replays
+            # clean), never persisted history, never the system prompt. Plain
+            # markdown, unfenced (<memory-context> is reserved for external
+            # prefetch). Idempotent: a content that already carries the pack
+            # is left alone.
+            _pack = getattr(agent, "_memory_pack_cache", "") or ""
+            _content = api_msg.get("content")
+            if _pack and isinstance(_content, str) and _pack not in _content:
+                api_msg["content"] = _content + "\n\n" + _pack
         elif (
             isinstance(_api_content, str) and _api_content
             and msg.get("role") in ("user", "assistant")

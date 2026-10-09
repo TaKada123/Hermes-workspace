@@ -1332,6 +1332,10 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
     agent._memory_nudge_interval = 10
     agent._turns_since_memory = 0
     agent._iters_since_skill = 0
+    # MEM-V2 (#6): context-pack orchestrator (sqlite_v2 only) + its per-turn cache.
+    # Defaults so the turn prologue can read them on every backend.
+    agent._memory_orchestrator = None
+    agent._memory_pack_cache = ""
     # skip_memory skips the external *provider*; enabled_toolsets=["memory"] still gets the
     # built-in store so the memory tool never sees store=None.
     # Flush/background agents can still pass enabled_toolsets=["memory"] so the built-in file store exists
@@ -1371,6 +1375,10 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
                 else:
                     agent._memory_store = MemoryStore(**store_kwargs)
                 agent._memory_store.load_from_disk()
+            # MEM-V2 (#6): context-pack orchestrator — None on the legacy backend.
+            # Separate named helper + clearly commented call site so the parallel
+            # bus wiring (#8) can coexist; see _init_memory_orchestrator below.
+            _init_memory_orchestrator(agent, _agent_cfg, agent._memory_store)
 
     # External memory provider plugin (one at a time, alongside built-in): memory.provider.
     agent._memory_manager = None
@@ -1413,6 +1421,34 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
 
     from agent.memory_manager import inject_memory_provider_tools
     inject_memory_provider_tools(agent)
+
+
+def _init_memory_orchestrator(agent, cfg, store):
+    """MEM-V2 (#6): wire the context-pack orchestrator when the typed backend is active.
+
+    ``agent._memory_orchestrator`` is set when ``memory.backend == "sqlite_v2"`` AND the
+    store duck-types the orchestrator API AND ``memory.orchestrator.enabled``; every other
+    case (legacy ``file`` backend, missing store, disabled flag, malformed config) yields
+    ``None`` and the turn loop never builds a pack. Separate named helper with a clearly
+    commented call site in ``_init_memory`` so the parallel bus wiring (#8) can coexist.
+    """
+    agent._memory_orchestrator = None
+    if store is None:
+        return
+    try:
+        from tools.memory_tool import get_builtin_memory_config, resolve_memory_backend
+        if resolve_memory_backend(cfg) != "sqlite_v2":
+            return
+        from agent.memory_orchestrator import build_memory_orchestrator
+        agent._memory_orchestrator = build_memory_orchestrator(
+            store,
+            get_builtin_memory_config(cfg),
+            memory_enabled=bool(agent._memory_enabled),
+            user_profile_enabled=bool(agent._user_profile_enabled),
+        )
+    except Exception as _moe:
+        _ra().logger.warning("Memory orchestrator init failed: %s", _moe)
+        agent._memory_orchestrator = None
 
 
 def _apply_agent_section(agent, _agent_cfg):

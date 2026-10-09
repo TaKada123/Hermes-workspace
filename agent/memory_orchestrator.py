@@ -1,22 +1,49 @@
 # Ported from the Architecture 2.0 Hermes fork (MIT License)
 # Copyright (c) 2025-2026 Dmitry Antipin (multi-agent orchestration fork)
 # Source: commit 0c76ec28, sha256 541efc1082faba3856e6e79207ed6cd129e65d09991fb8618de50f321c934b92
-"""PROVISIONAL module for ticket #6 (orchestrator + context pack) — ticket #7
-only provides the symbols the MemoryBus needs. Intent routing, rank_candidates,
-MemoryOrchestrator.build_pack and the factory are OWNED BY TICKET #6; do not
-add them here.
+"""Memory Orchestrator — Phase 2 of the memory roadmap.
 
-Port of the Phase-2 scorer/pack-renderer subset from the Architecture 2.0
-fork's agent/memory_orchestrator.py (commit 0c76ec28), kept verbatim so the
-bus's retrieval ranking is the same implementation the full orchestrator
-will use: one ranking, two presentations.
+Turns the built-in typed store (:class:`agent.memory_store_v2.MemoryStoreV2`)
+from a static frozen snapshot into query-aware retrieval:
 
-The weighted score:
+1. **Memory Router** — deterministic intent classification (project work /
+   debugging / user question / general) selects which supplement layers to
+   search and how the pack is laid out. No LLM on the retrieval path
+   ("LLM advises, code decides"; anti-pattern: retrieval that depends on
+   an LLM call — cost, latency, unstable scores).
+2. **Memory Scorer** — weighted score per candidate:
 
-``score = relevance*0.35 + importance*0.20 + project_link*0.15
-+ decision_value*0.15 + recency*0.10 + confidence*0.05``
+   ``score = relevance*0.35 + importance*0.20 + project_link*0.15
+   + decision_value*0.15 + recency*0.10 + confidence*0.05``
 
-Weights are configurable (``memory.orchestrator.weights`` in config.yaml).
+   Weights are configurable (``memory.orchestrator.weights`` in config.yaml).
+3. **Token budget** — the pack is cut at ``memory.orchestrator.token_budget``
+   (default 2500 tokens), most-scored entries first. Big memory must not
+   become a big prompt.
+4. **Context Pack Builder** — a structured markdown block (sections per
+   record type, each line citing status + record id + date) instead of a
+   raw concatenation. Record ids give the model provenance it can audit
+   via ``memory(action=read)``.
+
+Cache invariants (roadmap §1.4/§8):
+
+- The frozen system-prompt snapshot is untouched; the pack is injected into
+  the *API copy of the current turn's user message* only (same channel the
+  external-provider prefetch uses), never into stored messages.
+- Entries already present in the frozen snapshot are **excluded** from the
+  pack — the pack is a supplement (what the char-budget evicted but this
+  query needs), never a duplication. While memory fits the snapshot the
+  pack is empty and nothing is injected: zero overhead, zero behavior
+  change until memory outgrows the prompt budget.
+
+Provenance note: the scorer/renderer subset (``ScoringWeights``,
+``_message_tokens``, ``score_candidate``, ``render_pack``,
+``relevance_score``, ``recency_score`` and the shared helpers) first landed
+in this repository as a PROVISIONAL module provided by ticket #7 (the
+MemoryBus imports those names at module level); their names and signatures
+are kept verbatim. Ticket #6 completes the module with the deterministic
+intent router, ``rank_candidates`` and the ``MemoryOrchestrator``/factory.
+
 """
 
 from __future__ import annotations
@@ -25,15 +52,51 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, ClassVar, Dict, Mapping, Optional, Sequence, Tuple
+from typing import Any, ClassVar, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from agent.model_metadata import estimate_tokens_rough
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Query tokenization
+# Memory Router — intent classification (deterministic)
 # ---------------------------------------------------------------------------
+
+INTENTS = ("project_work", "debugging", "user_question", "general")
+
+# Token-prefix markers, matched case-insensitively against message tokens.
+# Cyrillic markers rely on prefix-matching to absorb morphology
+# ("ошибк" covers "ошибка/ошибки/ошибку"); latin markers of >=4 chars match
+# the same way ("debug" covers "debugging"), shorter ones match whole words
+# only (so "fix" never fires inside "prefix" — tokens are split, not
+# substring-scanned). Order of the dicts = priority: debugging markers are
+# the most specific, they win over project markers when both appear.
+_INTENT_MARKERS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    (
+        "debugging",
+        (
+            "ошибк", "падает", "упал", "упала", "сломал", "почини",
+            "трейсбек", "исключен", "баг", "дебаг",
+            "traceback", "exception", "crash", "debug", "broken", "failing",
+        ),
+    ),
+    (
+        "project_work",
+        (
+            "реализ", "рефактор", "фича", "деплой", "проект", "архитектур",
+            "скрипт", "миграц", "коммит", "код",
+            "implement", "refactor", "feature", "deploy", "migrate",
+            "schema", "build", "api",
+        ),
+    ),
+    (
+        "user_question",
+        (
+            "помнишь", "предпочитаю", "предпочтения", "привычк", "профиль",
+            "remember", "prefer", "preferences",
+        ),
+    ),
+)
 
 _TOKEN_SPLIT_RE = re.compile(r"[^\w]+", re.UNICODE)
 
@@ -49,9 +112,30 @@ def _fold_yo(text: str) -> str:
     return (text or "").replace("ё", "е").replace("Ё", "Е")
 
 
-def _message_tokens(message: str) -> list:
+def _message_tokens(message: str) -> List[str]:
     """Lowercased word tokens of the message (unicode-aware split)."""
     return [t.lower() for t in _TOKEN_SPLIT_RE.split(message or "") if t]
+
+
+def _matches_marker(tokens: Sequence[str], marker: str) -> bool:
+    """Token-prefix match; markers shorter than 4 chars must equal a token."""
+    if len(marker) < 4:
+        return marker in tokens
+    return any(t.startswith(marker) for t in tokens)
+
+
+def classify_intent(message: str) -> str:
+    """Classify the turn's intent for memory routing (deterministic, no LLM).
+
+    Returns one of :data:`INTENTS`; ``"general"`` when no marker fires.
+    """
+    tokens = _message_tokens(message)
+    if not tokens:
+        return "general"
+    for intent, markers in _INTENT_MARKERS:
+        if any(_matches_marker(tokens, m) for m in markers):
+            return intent
+    return "general"
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +190,89 @@ DECISION_VALUE_BY_TYPE: Dict[str, float] = {
 
 #: Recency half-life in days for the ``recency`` component.
 RECENCY_HALF_LIFE_DAYS = 14.0
+
+
+def rank_candidates(
+    candidates: List[Dict[str, Any]], nq: "NormalizedQuery",  # type: ignore[name-defined]
+) -> List[Dict[str, Any]]:
+    """Relevance-dominant ordering for the per-turn context pack (Gate 1 §4.2).
+
+    One lexicographic comparator — type/importance NEVER cross a relevance
+    class boundary, closing the displacement defect where an irrelevant
+    decision outranked a topically-exact fact by weight alone:
+
+    ``match_class DESC (3 phrase | 2 all-concepts | 1 any) →
+    matched_term_ratio DESC → bm25 ASC (neutral 0 when absent) →
+    type_tiebreak DESC → importance DESC → updated_at DESC → id ASC``
+
+    Admission: ``match_class == 0`` (no normalized concept matched) never
+    enters the pack — a zero-relevance candidate cannot ride in on
+    importance or type bonuses.
+    """
+    from agent.memory_store_v2 import match_normalized
+
+    ranked: List[Tuple[Tuple, Dict[str, Any]]] = []
+    for cand in candidates:
+        match_class, ratio = match_normalized(nq, str(cand.get("content") or ""))
+        if match_class <= 0:
+            continue
+        type_tiebreak = DECISION_VALUE_BY_TYPE.get(str(cand.get("type") or ""), 0.2)
+        try:
+            importance = max(0.0, min(1.0, float(cand.get("importance") or 0.0)))
+        except (TypeError, ValueError):
+            importance = 0.0
+        ts = _parse_ts(cand.get("updated_at"))
+        ts_ord = ts.timestamp() if ts is not None else 0.0
+        try:
+            bm25 = float(cand.get("_bm25") or 0.0)
+        except (TypeError, ValueError):
+            bm25 = 0.0
+        key = (
+            -match_class,
+            -ratio,
+            bm25,              # ASC inside a DESC tuple: lower bm25 sorts first
+            -type_tiebreak,
+            -importance,
+            -ts_ord,
+            str(cand.get("id") or ""),
+        )
+        ranked.append((key, cand))
+    ranked.sort(key=lambda pair: pair[0])
+    return _collapse_awareness_duplicates([cand for _key, cand in ranked])
+
+
+def _awareness_signature(content: str) -> Optional[str]:
+    """Signature of an awareness episode record, for duplicate collapsing.
+
+    The RECORD path writes one ``Stuck pattern: <tool> — <trigger>`` per
+    episode with per-episode detail (counts, error snippets) — live data
+    carries 30+ near-identical rows per hot signature, and without collapsing
+    they occupy the whole top of a pack for any query that grazes them.
+    """
+    text = (content or "").strip()
+    if not text.startswith("Stuck pattern:"):
+        return None
+    # Collapse to the TOOL level: one stuck-episode representative per tool
+    # per pack — trigger variants of the same tool add noise, not coverage.
+    head = text.split("(", 1)[0]
+    parts = head.split("—", 1)
+    return " ".join(parts[0].split()) or None
+
+
+def _collapse_awareness_duplicates(
+    ranked: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Keep only the first (best-ranked) entry per awareness signature."""
+    seen: Set[str] = set()
+    out: List[Dict[str, Any]] = []
+    for cand in ranked:
+        sig = _awareness_signature(str(cand.get("content") or ""))
+        if sig is not None:
+            if sig in seen:
+                continue
+            seen.add(sig)
+        out.append(cand)
+    return out
 
 
 def _parse_ts(value: Optional[str]) -> Optional[datetime]:
@@ -182,8 +349,28 @@ def _clamp01(value: Any) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Context Pack renderer (budget/selection logic lives in ticket #6's builder)
+# Route plans — what the Router fetches per intent
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RoutePlan:
+    """Per-intent retrieval plan (the Router's decision output)."""
+
+    #: Always include the most recent active decisions/constraints — these
+    #: are the "don't re-walk rejected ground" backbone. Off for casual
+    #: questions where recency of decisions rarely matters to the answer.
+    include_recent_standing: bool
+    search_limit: int
+    recent_limit: int
+
+
+ROUTE_PLANS: Dict[str, RoutePlan] = {
+    "project_work": RoutePlan(include_recent_standing=True, search_limit=30, recent_limit=8),
+    "debugging": RoutePlan(include_recent_standing=True, search_limit=30, recent_limit=6),
+    "user_question": RoutePlan(include_recent_standing=False, search_limit=20, recent_limit=0),
+    "general": RoutePlan(include_recent_standing=False, search_limit=25, recent_limit=0),
+}
 
 # Section order per intent — the pack reads as a brief structured for the
 # task at hand (decisions first when building, patterns first when debugging,
@@ -213,6 +400,11 @@ _PACK_NOTE = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Context Pack Builder + orchestrator
+# ---------------------------------------------------------------------------
+
+
 def render_pack(
     scored: Sequence[Tuple[Mapping, float]],
     intent: str,
@@ -227,7 +419,7 @@ def render_pack(
     if not scored:
         return ""
     order = _SECTION_ORDER.get(intent, _SECTION_ORDER["general"])
-    by_type: Dict[str, list] = {}
+    by_type: Dict[str, List[str]] = {}
     for row, _score in scored:
         rtype = str(row.get("type") or "fact")
         # Target label only for the non-default store: the pack crosses both
@@ -263,3 +455,197 @@ def render_pack(
     body = "\n\n".join(sections)
     tokens = estimate_tokens_rough(body) + estimate_tokens_rough(_PACK_NOTE)
     return f"{_PACK_HEADER} ({tokens} tokens)\n\n{_PACK_NOTE}\n\n{body}"
+
+
+class MemoryOrchestrator:
+    """Query-aware retrieval over the built-in typed store (Phase 2).
+
+    Built once at agent init (see :func:`build_memory_orchestrator`); each
+    turn the conversation prologue calls :meth:`build_pack` with the clean
+    user message and injects the result (when non-empty) into the API copy
+    of that message as a separate context slot.
+    """
+
+    def __init__(
+        self,
+        store: Any,
+        *,
+        targets: Sequence[str] = ("memory", "user"),
+        token_budget: int = 2500,
+        max_entries: int = 20,
+        weights: Optional[ScoringWeights] = None,
+    ):
+        self._store = store
+        self._targets: Tuple[str, ...] = tuple(t for t in targets if t in ("memory", "user")) or ("memory",)
+        self._token_budget = max(0, int(token_budget))
+        self._max_entries = max(1, int(max_entries))
+        self._weights = weights or ScoringWeights()
+
+    @property
+    def weights(self) -> ScoringWeights:
+        return self._weights
+
+    @property
+    def token_budget(self) -> int:
+        return self._token_budget
+
+    def build_pack(self, message: str) -> str:
+        """Route → retrieve → score → budget → render. ``""`` when nothing to add.
+
+        Failures are logged and swallowed: memory retrieval must never break
+        a conversation turn.
+        """
+        try:
+            return self._build_pack(message)
+        except Exception as exc:  # non-fatal by contract
+            logger.warning("memory orchestrator: pack build failed: %s", exc)
+            return ""
+
+    def _log_recall(self, *, intent: str, query: str, before: int, after: int, nonempty: bool) -> None:
+        """Recall-audit hook (P3). Duck-typed + best-effort: stores without
+        ``log_recall`` (legacy flat-file) and failures are silently fine."""
+        log = getattr(self._store, "log_recall", None)
+        if log is None:
+            return
+        try:
+            log("auto-pack", intent, _message_tokens(query)[:8], before, after, nonempty)
+        except Exception as exc:
+            logger.debug("memory orchestrator: recall log failed: %s", exc)
+
+    def _build_pack(self, message: str) -> str:
+        if not self._token_budget:
+            return ""
+        query = (message or "").strip()
+        if not query:
+            return ""
+        intent = classify_intent(query)
+        plan = ROUTE_PLANS.get(intent, ROUTE_PLANS["general"])
+        query_tokens = _message_tokens(query)
+
+        candidates: Dict[str, Dict[str, Any]] = {}
+
+        def _collect(rows: Iterable[Any]) -> None:
+            for row in rows:
+                row = dict(row)
+                if row.get("target") not in self._targets:
+                    continue
+                candidates.setdefault(str(row.get("id")), row)
+
+        # Layer 1: lexical search (FTS5 with LIKE fallback — store-internal).
+        # One NormalizedQuery feeds BOTH the candidate search and the
+        # relevance ranking — no second tokenization downstream (Gate 1 §4.2).
+        nq = self._store.normalized_query(query)
+        _collect(self._store.recall_candidates(query, limit=plan.search_limit, nq=nq))
+
+        # Layer 2 (Router): recent standing decisions/constraints for
+        # work/debugging intents — the anti-circular backbone.
+        if plan.include_recent_standing:
+            _collect(
+                self._store.recent_entries(
+                    types=("decision", "constraint"),
+                    limit=plan.recent_limit,
+                )
+            )
+
+        if not candidates:
+            # An empty funnel is itself the metric ("knew but stayed silent"
+            # candidates come from here) — log every exit, not just success.
+            self._log_recall(intent=intent, query=query, before=0, after=0, nonempty=False)
+            return ""
+
+        # The frozen snapshot already carries these entries in the system
+        # prompt — the pack is a supplement, never a duplication.
+        already_prompted: Set[str] = self._store.snapshot_contents()
+        deduped = [
+            row for row in candidates.values()
+            if row.get("content") not in already_prompted
+        ]
+        # Relevance-dominant ranking (Gate 1 §4.2): admission by normalized
+        # match, ordering by the lexicographic tuple — type/importance can
+        # only break ties INSIDE a relevance class, never cross it.
+        scored: List[Tuple[Dict[str, Any], float]] = [
+            (row, 0.0) for row in rank_candidates(deduped, nq)
+        ]
+        if not scored:
+            self._log_recall(intent=intent, query=query, before=len(candidates), after=0, nonempty=False)
+            return ""
+
+        # Token budget cut, best score first ("big memory ≠ big prompt").
+        # The reserve covers section titles + the rendered header so the
+        # *rendered* pack stays within budget, not just the raw entries.
+        _RENDER_OVERHEAD_TOKENS = 80
+        used = estimate_tokens_rough(_PACK_HEADER) + estimate_tokens_rough(_PACK_NOTE) + _RENDER_OVERHEAD_TOKENS
+        selected: List[Tuple[Dict[str, Any], float]] = []
+        for row, score in scored:
+            if len(selected) >= self._max_entries:
+                break
+            line_cost = estimate_tokens_rough(str(row.get("content") or "")) + 8  # bullet + metadata
+            if used + line_cost > self._token_budget:
+                continue  # try smaller entries; a single huge one must not eat the pack
+            selected.append((row, score))
+            used += line_cost
+        if not selected:
+            self._log_recall(intent=intent, query=query, before=len(candidates), after=0, nonempty=False)
+            return ""
+
+        # One INFO line per non-empty pack: the pack is injected into the
+        # API copy of the user message only (never persisted), so this log
+        # is the primary live-E2E evidence that the channel fired.
+        logger.info(
+            "memory orchestrator: context pack intent=%s entries=%d tokens~%d",
+            intent, len(selected), used,
+        )
+        self._log_recall(
+            intent=intent, query=query,
+            before=len(candidates), after=len(selected), nonempty=True,
+        )
+
+        # Usage signal for future scoring/consolidation (best-effort).
+        try:
+            self._store.bump_access([str(row.get("id")) for row, _ in selected])
+        except Exception as exc:
+            logger.debug("memory orchestrator: access bump failed: %s", exc)
+
+        # NOTE (2026-08-30 graph TZ): the per-turn pack deliberately does NOT
+        # inject a "choice tension" section. The lexical matcher is
+        # suggest-only until it proves precision on live data; explicit
+        # memory(action=read) results and `hermes memory report` carry the
+        # possible-tension evidence where a human or the model can inspect it.
+        return render_pack(selected, intent)
+
+
+def build_memory_orchestrator(
+    store: Any,
+    mem_config: Mapping,
+    *,
+    memory_enabled: bool,
+    user_profile_enabled: bool,
+) -> Optional[MemoryOrchestrator]:
+    """Factory used by agent init: ``None`` when disabled or not a v2 store.
+
+    Kept as a standalone function so wiring is unit-testable without
+    constructing a full ``AIAgent``. Duck-types the store (checks the
+    orchestrator-facing methods) instead of importing MemoryStoreV2 —
+    the legacy flat-file store simply yields ``None``.
+    """
+    if store is None or not all(
+        hasattr(store, m) for m in ("recall_candidates", "recent_entries", "snapshot_contents", "bump_access")
+    ):
+        return None
+    orch_cfg = (mem_config or {}).get("orchestrator", {}) if isinstance(mem_config, Mapping) else {}
+    if not isinstance(orch_cfg, Mapping) or not orch_cfg.get("enabled", True):
+        return None
+    targets = [t for t, on in (("memory", memory_enabled), ("user", user_profile_enabled)) if on]
+    if not targets:
+        return None
+    try:
+        return MemoryOrchestrator(
+            store,
+            targets=tuple(targets),
+            token_budget=int(orch_cfg.get("token_budget", 2500)),
+            max_entries=int(orch_cfg.get("max_entries", 20)),
+            weights=ScoringWeights.from_config(orch_cfg.get("weights")),
+        )
+    except (TypeError, ValueError) as exc:
+        logger.warning("memory orchestrator: invalid config, disabled: %s", exc)
+        return None
