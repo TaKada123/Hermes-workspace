@@ -13,9 +13,7 @@ the approval-gate pinning surface, and the minimal per-op batch delegation.
 from __future__ import annotations
 
 import json
-import sqlite3
 import threading
-from pathlib import Path
 
 import pytest
 
