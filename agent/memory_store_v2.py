@@ -34,6 +34,7 @@ background-review daemon thread and gateway threads alike.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import random
@@ -56,6 +57,7 @@ from tools.memory_tool_store import (
     _stale_entry_message,
 )
 from hermes_state import apply_wal_with_fallback
+from utils import atomic_write_text
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,9 @@ _VISIBLE_STATUSES = ("active", "pinned")
 _PREFIXED_TYPES = ("decision", "constraint")
 
 SCHEMA_VERSION = 4
+# Version of the migration-manifest JSON schema (meta['migration_manifest']
+# and <memories>/migration-manifest.json). Bump only when the shape changes.
+MIGRATION_MANIFEST_VERSION = 1
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS memories (
@@ -940,49 +945,152 @@ class MemoryStoreV2(MemoryStore):
             logger.debug("memory v2: alias cache rewrite failed: %s", exc)
 
     def _migrate_legacy_files(self) -> None:
-        """One-shot import of MEMORY.md/USER.md entries into SQLite."""
+        """One-shot import of MEMORY.md/USER.md ``§``-entries into SQLite.
+
+        On the first run builds a migration manifest that is committed in
+        the SAME transaction as the row imports, so any failure rolls back
+        atomically: no rows, no ``legacy_migrated`` marker, no manifest —
+        and the source files are never rewritten by migration itself. After
+        a successful commit a human-readable copy of the manifest is emitted
+        to ``<memories>/migration-manifest.json`` (best-effort; a write
+        failure there never fails the migration).
+
+        Manifest schema (``meta['migration_manifest']`` and the artifact
+        file are the same JSON; ``MIGRATION_MANIFEST_VERSION`` tracks the
+        shape — readers for tickets #9/#11 must check ``schema_version``)::
+
+            {
+              "schema_version": 1,
+              "outcome": "migrated",            # the only value ever written
+              "migrated_at": "<ISO-8601 UTC>",
+              "sources": {
+                "memory": {
+                  "path": "<abs path>",
+                  "exists": true,
+                  "sha256": "<hex digest> | null",   # null: absent/unreadable
+                  "read_error": "<reason> | null",   # unreadable/undecodable
+                  "recognized": N,    # §-segments of the raw split (incl. empty)
+                  "imported": N,      # rows actually inserted (type=legacy)
+                  "skipped": [        # recognized - imported, each with reason
+                    {"reason": "empty entry", "content": ""},
+                    {"reason": "duplicate: already present in store",
+                     "content": "<first 80 chars of the entry>"}
+                  ]
+                },
+                "user": { ... }
+              },
+              "totals": {"recognized": N, "imported": N, "skipped": N}
+            }
+
+        Idempotency: when ``meta['legacy_migrated']`` already exists the
+        original manifest is left untouched — it is the audit record of the
+        one migration event. Re-runs import nothing and never duplicate rows.
+        """
         migrated = self._query(
             "SELECT value FROM meta WHERE key = 'legacy_migrated'"
         )
         if migrated:
             return
 
-        imported = {"memory": 0, "user": 0}
+        manifest: Dict[str, Any] = {
+            "schema_version": MIGRATION_MANIFEST_VERSION,
+            "outcome": "migrated",
+            "migrated_at": _now(),
+            "sources": {},
+            "totals": {"recognized": 0, "imported": 0, "skipped": 0},
+        }
+
+        def _source_report(target: str, conn: sqlite3.Connection) -> Dict[str, Any]:
+            path = self._path_for(target)
+            report: Dict[str, Any] = {
+                "path": str(path),
+                "exists": path.exists(),
+                "sha256": None,
+                "read_error": None,
+                "recognized": 0,
+                "imported": 0,
+                "skipped": [],
+            }
+            if not report["exists"]:
+                return report
+            try:
+                report["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                report["sha256"] = None
+            raw, read_ok = self._read_raw_checked(path)
+            if not read_ok:
+                report["read_error"] = "unreadable or undecodable source file"
+                return report
+            if not raw.strip():
+                return report  # completely empty file: nothing recognized
+            for content in (seg.strip() for seg in raw.split(ENTRY_DELIMITER)):
+                report["recognized"] += 1
+                if not content:
+                    report["skipped"].append({"reason": "empty entry", "content": ""})
+                    continue
+                dup = conn.execute(
+                    "SELECT 1 FROM memories WHERE target=? AND content=? LIMIT 1",
+                    (target, content),
+                ).fetchone()
+                if dup:
+                    report["skipped"].append({
+                        "reason": "duplicate: already present in store",
+                        "content": content[:80],
+                    })
+                    continue
+                conn.execute(
+                    "INSERT INTO memories(id, target, type, content, importance,"
+                    " confidence, status, created_at, updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?)",
+                    (
+                        str(uuid.uuid4()), target, "legacy", content, 0.5, 0.7,
+                        "active", _now(), _now(),
+                    ),
+                )
+                report["imported"] += 1
+            return report
 
         def _import(conn: sqlite3.Connection) -> None:
             for target in ("memory", "user"):
-                path = self._path_for(target)
-                if not path.exists():
-                    continue
-                entries = self._read_file(path)
-                for content in entries:
-                    if not content.strip():
-                        continue
-                    dup = conn.execute(
-                        "SELECT 1 FROM memories WHERE target=? AND content=? LIMIT 1",
-                        (target, content),
-                    ).fetchone()
-                    if dup:
-                        continue
-                    conn.execute(
-                        "INSERT INTO memories(id, target, type, content, importance,"
-                        " confidence, status, created_at, updated_at)"
-                        " VALUES (?,?,?,?,?,?,?,?,?)",
-                        (
-                            str(uuid.uuid4()), target, "legacy", content, 0.5, 0.7,
-                            "active", _now(), _now(),
-                        ),
-                    )
-                    imported[target] += 1
+                report = _source_report(target, conn)
+                manifest["sources"][target] = report
+                manifest["totals"]["recognized"] += report["recognized"]
+                manifest["totals"]["imported"] += report["imported"]
+                manifest["totals"]["skipped"] += len(report["skipped"])
+            conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value)"
+                " VALUES ('migration_manifest', ?)",
+                (json.dumps(manifest, ensure_ascii=False),),
+            )
             conn.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('legacy_migrated', ?)",
                 (_now(),),
             )
 
         self._execute_write(_import)
-        total = imported["memory"] + imported["user"]
+        total = manifest["totals"]["imported"]
         if total:
             logger.info("memory.db: migrated %d legacy entries from flat files", total)
+        self._write_manifest_artifact(manifest)
+
+    def _write_manifest_artifact(self, manifest: Dict[str, Any]) -> None:
+        """Best-effort human-readable manifest copy next to memory.db.
+
+        Written only AFTER the transaction committed, derived from the
+        in-transaction data (see :meth:`_migrate_legacy_files` for the
+        schema). A failure here must never fail the migration — the
+        authoritative record is the ``meta`` row.
+        """
+        try:
+            atomic_write_text(
+                self._db_path.parent / "migration-manifest.json",
+                json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+                tmp_prefix=".mem_",
+            )
+        except Exception as exc:  # best-effort by contract
+            logger.warning(
+                "memory v2: migration manifest artifact write failed: %s", exc
+            )
 
     # ------------------------------------------------------------------
     # Live-state + snapshot
