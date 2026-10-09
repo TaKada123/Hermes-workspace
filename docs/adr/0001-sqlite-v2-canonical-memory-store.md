@@ -42,3 +42,11 @@ Fork-specific v2 fixes, включённые в порт (audit range `git log 4
 Коммиты 41–80 audit-диапазона предшествуют v1.1 и уже поглощены собственной линией workspace-форка (spot-check: `#42405` consolidation cap, `#48507` batch, `#26045` drift guard — все присутствуют в workspace-файлах); учтены как provenance, а не как задачи.
 
 Backend-флаг: `memory.backend: file|sqlite_v2` (default `file`, дефолт в `hermes_cli/config_defaults.py`); единственный резолвер `tools.memory_tool.resolve_memory_backend` используется `agent_init._init_memory` и `load_on_disk_store`; неизвестное значение = legacy `file`, без ошибок.
+
+## Downgrade
+
+Откат на legacy — двухуровневый, проверяемый:
+
+1. **Экспорт.** `python scripts/memv2_downgrade_export.py --home <HERMES_HOME>` (предпросмотр — `--dry-run`) выгружает видимые записи canonical store (status active/pinned, без awareness-телеметрии) в §-файлы MEMORY.md/USER.md с проверкой количества (expected == written в отчёте), бэкапом существующих файлов (`.bak.<ts>`) и аудиторным маркером `memories/downgrade-export-report.json`; memory.db не открывается на запись (sha256 до/после в отчёте).
+2. **Возврат флага.** В config.yaml профиля — `memory.backend: file` (или удалить ключ): агент стартует на flat MemoryStore и читает экспортированные §-файлы; записи, созданные в V2 после cutover, видны без потерь.
+3. **Проверка.** Скрипт печатает JSON-отчёт и возвращает exit 0 только при ok по всем целям; memory.db остаётся на диске — повторный cutover мигрирует по-прежнему идемпотентно (manifest) и видит экспортированные записи как дубли (пропуск с причиной в manifest).
