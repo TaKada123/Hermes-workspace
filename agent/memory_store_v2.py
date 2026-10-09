@@ -1567,103 +1567,204 @@ class MemoryStoreV2(MemoryStore):
         return {"success": True, "matched_entry": content}
 
     def resolve_batch_entries(self, target: str, operations: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Dry-run batch resolution against the visible rows: on success
-        ``{"success": True, "matched_entries": [...]}`` — per op, the FULL
-        entry its replace/remove selects now (None for add), in batch order —
-        the same contract the flat store exposes to the staging step."""
-        if not operations:
-            return _error("operations list is empty.")
-        matched: List[Optional[str]] = []
-        for i, op in enumerate(operations):
-            op = op or {}
-            act = op.get("action")
-            if act == "add":
-                matched.append(None)
-                continue
-            if act not in ("replace", "remove"):
-                return _error(
-                    f"Operation {i + 1} ({act or 'unknown'}): unknown action. Use add, replace, or remove.")
-            old_text = (op.get("old_text") or "").strip()
-            if not old_text:
-                return _error(f"Operation {i + 1} ({act}): old_text is required.")
-            content, err = self._locate_visible_row(target, old_text, act, op.get("matched_entry"))
-            if err is not None:
-                return err
-            matched.append(content)
-        return {"success": True, "matched_entries": matched}
-
-    def apply_batch(self, target: str, operations: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Apply add/replace/remove ops in order, each with its own threat scan.
-
-        TICKET #5 NOTE — this is the MINIMAL per-op delegation required by
-        ticket #3, NOT the flat store's atomic all-or-nothing batch. Every op
-        is validated up front (dry-run over the visible rows: unknown actions,
-        missing fields, ambiguity, stale pins, empty-store wipe) and every
-        add/replace content is threat-scanned BEFORE any write, so a
-        *validation* failure applies nothing; only a mid-execution DB error
-        can leave earlier ops applied (surfaced via ``batch_note``). Ticket #5
-        rebuilds this path as one SQLite transaction.
+        """Dry-run batch resolution against the visible rows: the SAME
+        validation ``apply_batch`` performs (threat scan, unknown actions,
+        missing fields, ambiguity, stale pins, empty-store refusal #103419).
+        On success ``{"success": True, "matched_entries": [...]}`` — per op,
+        the FULL entry its replace/remove selects now (None for add), in
+        batch order — the contract the flat store exposes to the staging step.
         """
         if not operations:
             return _error("operations list is empty.")
         ops = [op or {} for op in operations]
-        # Workspace guarantee: scan every add/replace BEFORE touching the DB —
-        # one poisoned op rejects the whole batch.
         for i, op in enumerate(ops):
             scan_error = (
                 op.get("action") in {"add", "replace"}
-                and op.get("content")
-                and _scan_memory_content(op["content"])
+                and (op.get("content") or op.get("new_text"))
+                and _scan_memory_content(op.get("content") or op.get("new_text"))
             )
             if scan_error:
                 return _error(f"Operation {i + 1}: {scan_error}")
-        # Dry-run validation (same matching semantics as the flat store) so a
-        # failing batch is rejected before any op executes.
         working = list(self._entries_for(target))
+        matched: List[Optional[str]] = []
         for i, op in enumerate(ops):
             act = op.get("action")
             content = (op.get("content") or op.get("new_text") or "").strip()
             old_text = (op.get("old_text") or "").strip()
-            msg, _previous = MemoryStore._apply_batch_op(
+            msg, prev = MemoryStore._apply_batch_op(
                 working, act, content, old_text,
                 f"Operation {i + 1} ({act or 'unknown'})",
                 op.get("matched_entry"),
             )
             if msg:
                 return self._batch_failure(target, msg)
+            matched.append(prev)
         if self._entries_for(target) and not working:
-            # Flat-store guarantee (#103419): a consolidation batch must not
-            # commit an empty store as a normal successful write.
             label = self._path_for(target).name
             return self._batch_failure(target, (
                 f"Refusing to empty {label}: this batch would remove every entry from a "
                 f"previously non-empty store. Keep at least one entry — merge overlapping "
                 f"entries into a shorter one instead of removing the last one. To delete the "
                 f"final entry deliberately, use single remove() calls."))
-        applied = 0
+        return {"success": True, "matched_entries": matched}
+
+    def _insert_row(
+        self,
+        conn: sqlite3.Connection,
+        target: str,
+        content: str,
+        entry_type: Optional[str] = None,
+        importance: Optional[float] = None,
+    ) -> Optional[str]:
+        """INSERT one typed row inside an OPEN transaction.
+
+        Mirrors :meth:`add`'s semantics (duplicate active content → no-op,
+        returns None) without opening a nested transaction.
+        """
+        dup = conn.execute(
+            "SELECT id FROM memories WHERE target=? AND content=? AND status!='deprecated' LIMIT 1",
+            (target, content),
+        ).fetchone()
+        if dup:
+            return None
+        entry_type = self._normalize_type(entry_type, target)
+        importance = self._normalize_importance(importance, entry_type)
+        new_id = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO memories(id, target, type, content, importance, confidence,"
+            " status, project, written_by, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?, 'active', NULL, NULL, ?, ?)",
+            (new_id, target, entry_type, content, importance, 0.7, _now(), _now()),
+        )
+        return new_id
+
+    def apply_batch(self, target: str, operations: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Apply add/replace/remove ops ATOMICALLY in ONE SQLite transaction.
+
+        All-or-nothing (workspace contract): every op is validated up front —
+        unknown actions, missing fields, ambiguity, stale pins, empty-store
+        wipe (#103419) — and every add/replace content is threat-scanned
+        BEFORE the transaction. A validation failure applies NOTHING; a
+        mid-execution DB error rolls the whole batch back (``_execute_write``
+        rolls back on any exception). ``replaced_entries``/``removed_entries``
+        report the 1-based op index → full previous text (#117952), the same
+        surface the flat store exposes to the external-provider mirroring
+        bridge. Char limits bound the PROMPT SNAPSHOT only — an oversized DB
+        never fails a batch.
+        """
+        if not operations:
+            return _error("operations list is empty.")
+        if target not in ("memory", "user"):
+            return {"success": False, "error": f"Unknown target '{target}'."}
+        ops = [op or {} for op in operations]
+        # Workspace guarantee: scan every add/replace BEFORE touching the DB —
+        # one poisoned op rejects the whole batch. The scan targets the
+        # EFFECTIVE content (``content`` or its ``new_text`` alias).
         for i, op in enumerate(ops):
-            act = op.get("action")
-            content = (op.get("content") or op.get("new_text") or "").strip()
-            old_text = (op.get("old_text") or "").strip()
-            entry = op.get("matched_entry")
-            if act == "add":
-                result = self.add(target, content)
-            elif act == "replace":
-                result = self.replace(target, old_text, content, entry)
-            elif act == "remove":
-                result = self.remove(target, old_text, entry)
-            else:  # pragma: no cover — rejected by the dry-run above
-                return _error(f"Operation {i + 1}: unknown action. Use add, replace, or remove.")
-            if not result.get("success"):
-                if applied:
-                    result["batch_note"] = (
-                        "V2 batch is not atomic yet (ticket #5): "
-                        f"{applied} earlier operation(s) were already applied.")
-                return result
-            applied += 1
-        return {"success": True, "done": True, "target": target,
-                "message": f"Applied {applied} operation(s).",
-                "entry_count": len(self._entries_for(target))}
+            scan_error = (
+                op.get("action") in {"add", "replace"}
+                and (op.get("content") or op.get("new_text"))
+                and _scan_memory_content(op.get("content") or op.get("new_text"))
+            )
+            if scan_error:
+                return _error(f"Operation {i + 1}: {scan_error}")
+
+        outcome: Dict[str, Any] = {}
+
+        def _apply_all(conn: sqlite3.Connection) -> None:
+            rows = conn.execute(
+                "SELECT * FROM memories WHERE target=? AND status IN ('active','pinned')"
+                " ORDER BY (status='pinned') DESC, importance DESC,"
+                " datetime(created_at) ASC",
+                (target,),
+            ).fetchall()
+            # Validation walk on a copy (same matching semantics as the flat
+            # store): nothing is written until the whole batch is proven valid.
+            working = [r["content"] for r in rows]
+            previous: List[Optional[str]] = []
+            for i, op in enumerate(ops):
+                act = op.get("action")
+                content = (op.get("content") or op.get("new_text") or "").strip()
+                old_text = (op.get("old_text") or "").strip()
+                msg, prev = MemoryStore._apply_batch_op(
+                    working, act, content, old_text,
+                    f"Operation {i + 1} ({act or 'unknown'})",
+                    op.get("matched_entry"),
+                )
+                if msg:
+                    outcome["error"] = self._batch_failure(target, msg)
+                    return
+                previous.append(prev)
+            if rows and not working:
+                # Flat-store guarantee (#103419): a consolidation batch must not
+                # commit an empty store as a normal successful write.
+                label = self._path_for(target).name
+                outcome["error"] = self._batch_failure(target, (
+                    f"Refusing to empty {label}: this batch would remove every entry from a "
+                    f"previously non-empty store. Keep at least one entry — merge overlapping "
+                    f"entries into a shorter one instead of removing the last one. To delete the "
+                    f"final entry deliberately, use single remove() calls."))
+                return
+            # Application walk — DB writes + the working/id lists advance in
+            # lockstep. The inputs are identical to the validation walk, so any
+            # divergence (row vanished, ambiguity slipped through) is a data
+            # error: raising rolls the whole transaction back.
+            working = [r["content"] for r in rows]
+            row_ids = [r["id"] for r in rows]
+            for i, op in enumerate(ops):
+                act = op.get("action")
+                content = (op.get("content") or op.get("new_text") or "").strip()
+                old_text = (op.get("old_text") or "").strip()
+                if act == "add":
+                    if content and content not in working:
+                        new_id = self._insert_row(
+                            conn, target, content,
+                            op.get("entry_type"), op.get("importance"),
+                        )
+                        working.append(content)
+                        row_ids.append(new_id or "")
+                    continue
+                if op.get("matched_entry") is not None:
+                    matched = op["matched_entry"]
+                    idx = working.index(matched) if matched in working else None
+                else:
+                    idx, _ambiguous = _find_unique_match(working, old_text)
+                if idx is None:
+                    raise sqlite3.OperationalError(
+                        f"memory.db batch op {i + 1}: entry vanished between validation and apply")
+                row_id = row_ids[idx]
+                if act == "replace":
+                    conn.execute(
+                        "UPDATE memories SET content=?, updated_at=? WHERE id=?",
+                        (content, _now(), row_id),
+                    )
+                    working[idx] = content
+                else:  # remove — hard delete + link cleanup (single-op parity)
+                    conn.execute("DELETE FROM memories WHERE id=?", (row_id,))
+                    conn.execute(
+                        "DELETE FROM memory_links WHERE source_id=? OR target_id=?",
+                        (row_id, row_id),
+                    )
+                    del working[idx]
+                    del row_ids[idx]
+            replaced: Dict[int, str] = {}
+            removed: Dict[int, str] = {}
+            for i, (op, prev) in enumerate(zip(ops, previous), 1):
+                if prev is not None:
+                    (replaced if op.get("action") == "replace" else removed)[i] = prev
+            outcome["replaced_entries"] = replaced
+            outcome["removed_entries"] = removed
+
+        self._execute_write(_apply_all)
+        if "error" in outcome:
+            return outcome["error"]
+        self._rewrite_projection(target)
+        resp = self._success_response(target, f"Applied {len(ops)} operation(s).")
+        if outcome["replaced_entries"]:
+            resp["replaced_entries"] = outcome["replaced_entries"]
+        if outcome["removed_entries"]:
+            resp["removed_entries"] = outcome["removed_entries"]
+        return resp
 
     # ------------------------------------------------------------------
     # v2 write telemetry + error feedback
@@ -1820,12 +1921,14 @@ class MemoryStoreV2(MemoryStore):
         reason: str = "",
         old_id: Optional[str] = None,
         superseded_by_id: Optional[str] = None,
+        matched_entry: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Mark an entry deprecated (hidden from retrieval/snapshot, kept for audit).
 
-        Resolution of the OLD entry: exact ``old_id`` (preferred — no
-        substring guessing) or the legacy ``old_text`` LIKE match. Successor
-        linking, in priority order:
+        Resolution of the OLD entry: a staged write's ``matched_entry`` pins
+        the exact content the approver reviewed (stale if gone), then exact
+        ``old_id`` (preferred — no substring guessing), then the legacy
+        ``old_text`` LIKE match. Successor linking, in priority order:
 
         1. ``superseded_by_id`` — exact id. Validated strictly (exists,
            same target, not the old entry itself, not deprecated); any
@@ -1840,13 +1943,22 @@ class MemoryStoreV2(MemoryStore):
             return {"success": False, "error": f"Unknown target '{target}'."}
         old_id = (old_id or "").strip()
         old_text = (old_text or "").strip()
-        if not old_id and not old_text:
+        if not old_id and not old_text and matched_entry is None:
             return {"success": False, "error": "old_id or old_text is required."}
 
         outcome: Dict[str, Any] = {}
 
         def _dep(conn: sqlite3.Connection) -> None:
-            if old_id:
+            if matched_entry is not None:
+                row = conn.execute(
+                    "SELECT id, content, status FROM memories WHERE target=? AND content=?"
+                    " AND status IN ('active','pinned','dormant')",
+                    (target, matched_entry),
+                ).fetchone()
+                if row is None:
+                    outcome["stale"] = True
+                    return
+            elif old_id:
                 # Full UUID or an unambiguous 8+ char prefix (the short form
                 # retrieval surfaces show) — resolved before any mutation.
                 # Resolution crosses targets: an id that belongs to the other
@@ -1962,6 +2074,8 @@ class MemoryStoreV2(MemoryStore):
                 )
 
         self._execute_write(_dep)
+        if outcome.get("stale"):
+            return _error(_stale_entry_message(matched_entry))
         if outcome.get("no_match"):
             return self._no_match_error("deprecate", target, old_text)
         if not outcome.get("success"):

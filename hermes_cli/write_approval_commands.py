@@ -112,11 +112,18 @@ def _changed_entries(result: dict, kind: str) -> List[str]:
 
 def _matched_entries(payload) -> List[str]:
     """The full entry each staged memory replace/remove is pinned to: the summary shows only
-    the old_text search string, and approval applies to this entry, not to that search."""
+    the old_text search string, and approval applies to this entry, not to that search.
+    ``supersede`` is pinned by its ``old_id`` instead of entry text."""
     from tools.memory_tool import destructive_ops
-    return [f"{op['action']}s entry: {op['matched_entry']}" if op.get("matched_entry")
-            else f"{op['action']}: unpinned legacy target \u2014 reject and recreate before approving"
-            for op in destructive_ops(payload)]
+    lines: List[str] = []
+    for op in destructive_ops(payload):
+        if op.get("action") == "supersede" and op.get("old_id"):
+            lines.append(f"supersede entry id: {op['old_id']}")
+        elif op.get("matched_entry"):
+            lines.append(f"{op['action']}s entry: {op['matched_entry']}")
+        else:
+            lines.append(f"{op['action']}: unpinned legacy target \u2014 reject and recreate before approving")
+    return lines
 
 
 def _apply_one(subsystem: str, rec, memory_store):
