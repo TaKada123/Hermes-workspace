@@ -621,6 +621,12 @@ class MemoryStoreV2(MemoryStore):
     # SQLite plumbing (SessionDB pattern)
     # ------------------------------------------------------------------
 
+    @property
+    def db_path(self) -> Path:
+        """Path of the canonical SQLite database (public — scripts and the
+        downgrade export read it instead of reaching for ``_db_path``)."""
+        return self._db_path
+
     def _connect(self) -> sqlite3.Connection:
         if self._conn is not None:
             return self._conn
@@ -1093,6 +1099,166 @@ class MemoryStoreV2(MemoryStore):
             )
 
     # ------------------------------------------------------------------
+    # Managed import (installer API — public, scripts never reach privates)
+    # ------------------------------------------------------------------
+
+    def import_managed_entries(
+        self,
+        entries: Sequence[str],
+        *,
+        target: str,
+        written_by: str,
+        source_sha: str,
+    ) -> Dict[str, Any]:
+        """Idempotently import a managed §-entry source into the store.
+
+        The installer's managed-profile import, MOVED into the store so
+        scripts never touch ``_query``/``_execute_write``. Requires a loaded
+        store (``load_from_disk`` — the one-shot legacy migration must have
+        run first; raises ``RuntimeError`` otherwise).
+
+        Idempotency: ``meta['managed_import_sha:<written_by>']`` = sha256 of
+        the managed source is the marker. An unchanged sha imports NOTHING
+        (only MISSING projection files are regenerated through the store —
+        existing projections are never touched). A changed sha runs ONE
+        transaction: every source entry becomes a ``legacy`` row of
+        ``target`` with ``written_by`` (new rows), provenance is claimed on
+        matching migration-imported rows (``written_by`` NULL), deprecated
+        rows whose content returned to the source are re-activated, and
+        stale written_by-owned rows are deprecated (hidden, kept for
+        audit). Projections are regenerated THROUGH the store after an
+        import. Returns the report dict; raises on any store error
+        (fail-closed — the installer aborts on it).
+        """
+        if self._conn is None:
+            raise RuntimeError(
+                "import_managed_entries requires a loaded store (load_from_disk first)"
+            )
+        if target not in ("memory", "user"):
+            raise ValueError(f"Unknown target '{target}'.")
+        written_by = (written_by or "").strip()
+        if not written_by:
+            raise ValueError("written_by cannot be empty.")
+        clean = [str(e).strip() for e in entries if str(e).strip()]
+
+        marker_key = f"managed_import_sha:{written_by}"
+        rows = self._query("SELECT value FROM meta WHERE key = ?", (marker_key,))
+        previous_sha = rows[0]["value"] if rows else None
+
+        if previous_sha == source_sha:
+            # Idempotent no-op: never re-import, never overwrite projections.
+            # Regenerate only MISSING projection files (a missing derived
+            # view is not an overwrite).
+            for t in ("memory", "user"):
+                if not self._path_for(t).is_file():
+                    self._rewrite_projection(t)
+            return {
+                "status": "unchanged",
+                "imported": 0,
+                "claimed": 0,
+                "deprecated": 0,
+                "sha": source_sha,
+            }
+
+        def _txn(conn: sqlite3.Connection) -> Tuple[int, int, int]:
+            imported = 0
+            claimed = 0
+            deprecated = 0
+            for entry in clean:
+                row = conn.execute(
+                    "SELECT id, written_by, status FROM memories"
+                    " WHERE target=? AND content=? LIMIT 1",
+                    (target, entry),
+                ).fetchone()
+                if row is None:
+                    conn.execute(
+                        "INSERT INTO memories(id, target, type, content, importance,"
+                        " confidence, status, project, written_by, created_at, updated_at)"
+                        " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            str(uuid.uuid4()), target, "legacy", entry, 0.5, 0.7,
+                            "active", None, written_by, _now(), _now(),
+                        ),
+                    )
+                    imported += 1
+                elif row["status"] == "deprecated":
+                    # The entry returned to the managed source: re-activate it.
+                    conn.execute(
+                        "UPDATE memories SET status='active', updated_at=?"
+                        " WHERE id=?",
+                        (_now(), row["id"]),
+                    )
+                    if not row["written_by"]:
+                        conn.execute(
+                            "UPDATE memories SET written_by=? WHERE id=?",
+                            (written_by, row["id"]),
+                        )
+                        claimed += 1
+                    imported += 1
+                elif not row["written_by"]:
+                    # Migration-imported duplicate (flat files carry no
+                    # provenance): claim it instead of duplicating.
+                    conn.execute(
+                        "UPDATE memories SET written_by=? WHERE id=?",
+                        (written_by, row["id"]),
+                    )
+                    claimed += 1
+                # else: already written_by-owned, or another writer owns this
+                # exact content — leave the row untouched.
+            stale = conn.execute(
+                "SELECT id, content FROM memories WHERE target=?"
+                " AND written_by=? AND status IN ('active','pinned')",
+                (target, written_by),
+            ).fetchall()
+            for row in stale:
+                if row["content"] not in clean:
+                    conn.execute(
+                        "UPDATE memories SET status='deprecated', updated_at=?"
+                        " WHERE id=?",
+                        (_now(), row["id"]),
+                    )
+                    deprecated += 1
+            conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                (marker_key, source_sha),
+            )
+            return imported, claimed, deprecated
+
+        imported, claimed, deprecated = self._execute_write(_txn)
+
+        # Projections are derived views: regenerate them THROUGH the store.
+        for t in ("memory", "user"):
+            self._rewrite_projection(t)
+
+        return {
+            "status": "imported",
+            "imported": imported,
+            "claimed": claimed,
+            "deprecated": deprecated,
+            "sha": source_sha,
+        }
+
+    def managed_import_status(self) -> Dict[str, Any]:
+        """Public digest of managed imports (marker + row counts) — verifier-facing.
+
+        Never mutates; ``scripts/verify_gumar_runtime.py`` checks the import
+        marker and visible-row counts through this instead of ``_query``.
+        """
+        markers: Dict[str, str] = {}
+        for row in self._query(
+            "SELECT key, value FROM meta WHERE key LIKE ?",
+            ("managed_import_sha:%",),
+        ):
+            markers[row["key"]] = row["value"]
+        return {
+            "markers": markers,
+            "visible_rows": {
+                target: len(self._visible_rows(target))
+                for target in ("memory", "user")
+            },
+        }
+
+    # ------------------------------------------------------------------
     # Live-state + snapshot
     # ------------------------------------------------------------------
 
@@ -1114,6 +1280,23 @@ class MemoryStoreV2(MemoryStore):
             (target,),
         )
         return rows
+
+    def visible_rows(self, target: str) -> List[Dict[str, Any]]:
+        """Public wrapper of :meth:`_visible_rows` (plain dicts, same order).
+
+        Scripts (downgrade export, verifier) read visible rows through this
+        instead of the private ``_query`` surface.
+        """
+        return [dict(r) for r in self._visible_rows(target)]
+
+    def legacy_migrated_at(self) -> Optional[str]:
+        """Timestamp of the one-shot flat-file migration, or ``None``.
+
+        Public accessor for the ``meta['legacy_migrated']`` marker — the
+        cutover point the downgrade export reports post-cutover rows against.
+        """
+        rows = self._query("SELECT value FROM meta WHERE key = 'legacy_migrated'")
+        return rows[0]["value"] if rows else None
 
     @staticmethod
     def _sanitize_entries_for_snapshot(entries: List[str], filename: str) -> List[str]:
@@ -1510,35 +1693,15 @@ class MemoryStoreV2(MemoryStore):
         outcome: Dict[str, Any] = {}
 
         def _update(conn: sqlite3.Connection) -> None:
-            if matched_entry:
-                row = conn.execute(
-                    "SELECT id, content FROM memories WHERE target=? AND content=?"
-                    " AND status!='deprecated'",
-                    (target, matched_entry),
-                ).fetchone()
-                if row is None:
-                    outcome["stale"] = True
-                    return
-                row_id = row["id"]
-            else:
-                rows = conn.execute(
-                    "SELECT id, content FROM memories WHERE target=? AND ulower(content) LIKE ?"
-                    " AND status!='deprecated'",
-                    (target, f"%{old_text.lower()}%"),
-                ).fetchall()
-                if not rows:
-                    outcome["no_match"] = True
-                    return
-                unique = {r["content"] for r in rows}
-                if len(unique) > 1:
-                    previews = [r["content"][:80] + ("..." if len(r["content"]) > 80 else "") for r in rows]
-                    outcome.update({
-                        "success": False,
-                        "error": f"Multiple entries matched '{old_text}'. Be more specific.",
-                        "matches": previews,
-                    })
-                    return
-                row_id = rows[0]["id"]
+            row, fail = self._resolve_old_text(
+                conn, target, old_text, matched_entry or None,
+                statuses=("active", "dormant", "archived", "pinned"),
+            )
+            if fail is not None:
+                outcome.update(fail)
+                return
+            assert row is not None
+            row_id = row["id"]
             sets = ["content=?", "updated_at=?"]
             params: List[Any] = [new_content, _now()]
             if new_type:
@@ -1588,35 +1751,15 @@ class MemoryStoreV2(MemoryStore):
         outcome: Dict[str, Any] = {}
 
         def _delete(conn: sqlite3.Connection) -> None:
-            if matched_entry:
-                row = conn.execute(
-                    "SELECT id, content FROM memories WHERE target=? AND content=?"
-                    " AND status!='deprecated'",
-                    (target, matched_entry),
-                ).fetchone()
-                if row is None:
-                    outcome["stale"] = True
-                    return
-                row_id = row["id"]
-            else:
-                rows = conn.execute(
-                    "SELECT id, content FROM memories WHERE target=? AND ulower(content) LIKE ?"
-                    " AND status!='deprecated'",
-                    (target, f"%{old_text.lower()}%"),
-                ).fetchall()
-                if not rows:
-                    outcome["no_match"] = True
-                    return
-                unique = {r["content"] for r in rows}
-                if len(unique) > 1:
-                    previews = [r["content"][:80] + ("..." if len(r["content"]) > 80 else "") for r in rows]
-                    outcome.update({
-                        "success": False,
-                        "error": f"Multiple entries matched '{old_text}'. Be more specific.",
-                        "matches": previews,
-                    })
-                    return
-                row_id = rows[0]["id"]
+            row, fail = self._resolve_old_text(
+                conn, target, old_text, matched_entry or None,
+                statuses=("active", "dormant", "archived", "pinned"),
+            )
+            if fail is not None:
+                outcome.update(fail)
+                return
+            assert row is not None
+            row_id = row["id"]
             conn.execute("DELETE FROM memories WHERE id=?", (row_id,))
             conn.execute("DELETE FROM memory_links WHERE source_id=? OR target_id=?", (row_id, row_id))
             outcome.update({"success": True})
@@ -2022,6 +2165,58 @@ class MemoryStoreV2(MemoryStore):
             return cross, None
         return None, err
 
+    @staticmethod
+    def _resolve_old_text(
+        conn: sqlite3.Connection,
+        target: str,
+        old_text: str,
+        matched_entry: Optional[str] = None,
+        *,
+        statuses: Tuple[str, ...] = ("active", "pinned", "dormant"),
+        hint: str = "",
+    ) -> Tuple[Optional[sqlite3.Row], Optional[Dict[str, Any]]]:
+        """Resolve the OLD row for replace/remove/deprecate — ONE implementation.
+
+        A staged write's ``matched_entry`` (write-approval pin) selects the
+        exact content the approver reviewed: exact-equality lookup, ``stale``
+        when gone (never re-matched by substring). Otherwise a case-folded
+        LIKE match over ``old_text``: ``no_match`` when nothing matches, an
+        ambiguity failure (``success: False`` + ``matches`` previews) when
+        several DISTINCT contents match, else the row. Returns
+        ``(row, failure_outcome)`` — exactly one is not None; the failure
+        dict is the standard ``outcome`` update (identical error shapes
+        across the three callers).
+        """
+        status_clause = ", ".join(f"'{s}'" for s in statuses)
+        if matched_entry is not None:
+            row = conn.execute(
+                f"SELECT id, content FROM memories WHERE target=? AND content=?"
+                f" AND status IN ({status_clause})",
+                (target, matched_entry),
+            ).fetchone()
+            if row is None:
+                return None, {"stale": True}
+            return row, None
+        rows = conn.execute(
+            f"SELECT id, content FROM memories WHERE target=? AND ulower(content) LIKE ?"
+            f" AND status IN ({status_clause})",
+            (target, f"%{old_text.lower()}%"),
+        ).fetchall()
+        if not rows:
+            return None, {"no_match": True}
+        unique = {r["content"] for r in rows}
+        if len(unique) > 1:
+            previews = [
+                r["content"][:80] + ("..." if len(r["content"]) > 80 else "")
+                for r in rows
+            ]
+            return None, {
+                "success": False,
+                "error": f"Multiple entries matched '{old_text}'. Be more specific{hint}.",
+                "matches": previews,
+            }
+        return rows[0], None
+
     def deprecate(
         self,
         target: str,
@@ -2057,16 +2252,7 @@ class MemoryStoreV2(MemoryStore):
         outcome: Dict[str, Any] = {}
 
         def _dep(conn: sqlite3.Connection) -> None:
-            if matched_entry is not None:
-                row = conn.execute(
-                    "SELECT id, content, status FROM memories WHERE target=? AND content=?"
-                    " AND status IN ('active','pinned','dormant')",
-                    (target, matched_entry),
-                ).fetchone()
-                if row is None:
-                    outcome["stale"] = True
-                    return
-            elif old_id:
+            if old_id and matched_entry is None:
                 # Full UUID or an unambiguous 8+ char prefix (the short form
                 # retrieval surfaces show) — resolved before any mutation.
                 # Resolution crosses targets: an id that belongs to the other
@@ -2091,24 +2277,14 @@ class MemoryStoreV2(MemoryStore):
                     })
                     return
             else:
-                rows = conn.execute(
-                    "SELECT id, content, status FROM memories WHERE target=? AND ulower(content) LIKE ?"
-                    " AND status IN ('active','pinned','dormant')",
-                    (target, f"%{old_text.lower()}%"),
-                ).fetchall()
-                if not rows:
-                    outcome["no_match"] = True
+                row, fail = self._resolve_old_text(
+                    conn, target, old_text, matched_entry,
+                    hint=" or pass old_id.",
+                )
+                if fail is not None:
+                    outcome.update(fail)
                     return
-                unique = {r["content"] for r in rows}
-                if len(unique) > 1:
-                    previews = [r["content"][:80] + ("..." if len(r["content"]) > 80 else "") for r in rows]
-                    outcome.update({
-                        "success": False,
-                        "error": f"Multiple entries matched '{old_text}'. Be more specific or pass old_id.",
-                        "matches": previews,
-                    })
-                    return
-                row = rows[0]
+                assert row is not None
 
             # Resolve the successor BEFORE mutating — explicit ids must fail
             # closed, and marker misses must be visible in the response.
@@ -2751,32 +2927,57 @@ class MemoryStoreV2(MemoryStore):
             "migration_issues": migration_issues,
         }
 
-    def rollback_consumer(self, written_by: str, reason: str = "") -> Dict[str, Any]:
+    def rollback_consumer(
+        self, written_by: str, reason: str = "", target: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Scoped revert (Phase 3): deprecate every active row from one consumer.
 
         The inverse in our semantics is a revision, never a deletion (roadmap
         §1.7-1.8): rows flip to ``deprecated`` with the reason recorded, stay
         auditable, and drop out of retrieval + snapshots on the next session.
+
+        Scoping: always by ``written_by``. With ``target`` set, the revert is
+        additionally filtered to that target (``written_by`` AND ``target``) —
+        the bus always passes a target (per-target rollback rights, story 11);
+        ``target=None`` keeps the cross-target revert (every active row of the
+        writer, both stores) for direct store callers that want the whole-group
+        inverse.
         """
         written_by = (written_by or "").strip()
         if not written_by:
             return {"success": False, "error": "written_by cannot be empty."}
+        if target is not None and target not in ("memory", "user"):
+            return {"success": False, "error": f"Unknown target '{target}'."}
         affected: Dict[str, Any] = {}
 
         def _dep(conn: sqlite3.Connection) -> None:
-            cur = conn.execute(
+            sql = (
                 "UPDATE memories SET status='deprecated', deprecate_reason=?, updated_at=?"
-                " WHERE written_by=? AND status IN ('active','pinned')",
-                ((reason or f"scoped revert for consumer {written_by}"), _now(), written_by),
+                " WHERE written_by=? AND status IN ('active','pinned')"
             )
+            params: List[Any] = [
+                (reason or f"scoped revert for consumer {written_by}"), _now(), written_by,
+            ]
+            if target is not None:
+                sql += " AND target=?"
+                params.append(target)
+            cur = conn.execute(sql, tuple(params))
             affected["count"] = cur.rowcount
 
         self._execute_write(_dep)
         count = int(affected.get("count") or 0)
         if count:
-            self._rewrite_projection("memory")
-            self._rewrite_projection("user")
-        return {"success": True, "deprecated": count, "written_by": written_by}
+            if target is not None:
+                self._rewrite_projection(target)
+            else:
+                self._rewrite_projection("memory")
+                self._rewrite_projection("user")
+        return {
+            "success": True,
+            "deprecated": count,
+            "written_by": written_by,
+            "target": target,
+        }
 
     def recent_entries(
         self,

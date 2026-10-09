@@ -7,7 +7,10 @@ The pack must ride the API copy of the CURRENT turn's user message ONLY:
 - legacy backend (no orchestrator / empty ``_memory_pack_cache``) → nothing
   changes, the wire bytes stay exactly as before;
 - the pack is plain markdown — never fenced with ``<memory-context>`` (that
-  tag is reserved for external-provider prefetch).
+  tag is reserved for external-provider prefetch);
+- multimodal (list) turns are NOT silently dropped: the pack rides the API
+  copy as an appended text part (never persisted, never in the system
+  prompt, idempotent).
 
 Tests drive the real ``agent.turn_context.build_api_messages`` composition
 function against a minimal agent stub, so they exercise the actual wire-copy
@@ -164,11 +167,15 @@ def test_pack_appends_after_prefetch_injection():
     assert "<memory-context>" not in PACK
 
 
-def test_multimodal_list_content_not_pack_appended():
-    """A list (multimodal) user message takes the text-part path; the string
-    append path must not corrupt list content."""
+def test_multimodal_list_content_gets_pack_as_text_part():
+    """A list (multimodal) user message carries the pack as an appended TEXT
+    PART on the API copy — the string append path must not corrupt list
+    content, and the pack must not be dropped silently."""
     messages = [
-        {"role": "user", "content": [{"type": "text", "text": "как на картинке?"}]},
+        {"role": "user", "content": [
+            {"type": "text", "text": "как на картинке?"},
+            {"type": "image_url", "image_url": {"url": "https://example.test/x.png"}},
+        ]},
     ]
     agent = _StubAgent(_memory_pack_cache=PACK)
     api_messages, _sys = build_api_messages(
@@ -176,5 +183,64 @@ def test_multimodal_list_content_not_pack_appended():
         ext_prefetch_cache="", plugin_user_context="", moa_config=None,
         active_system_prompt="SYSTEM",
     )
-    assert isinstance(api_messages[1]["content"], list)
-    assert all("Retrieved memory" not in str(p.get("text")) for p in api_messages[1]["content"])
+    content = api_messages[1]["content"]
+    assert isinstance(content, list)
+    assert content[0] == {"type": "text", "text": "как на картинке?"}
+    assert content[1]["type"] == "image_url"
+    assert content[-1] == {"type": "text", "text": PACK}, "pack must be the last text part"
+    # Never persisted: the original message list is untouched.
+    assert messages[0]["content"][-1]["type"] == "image_url"
+    assert all("Retrieved memory" not in str(p) for p in messages[0]["content"])
+
+
+def test_multimodal_pack_idempotent_when_text_part_already_present():
+    """Idempotent: a list that already carries the pack as a text part is
+    left alone (no second copy)."""
+    messages = [
+        {"role": "user", "content": [
+            {"type": "text", "text": "как на картинке?"},
+            {"type": "text", "text": PACK},
+        ]},
+    ]
+    agent = _StubAgent(_memory_pack_cache=PACK)
+    api_messages, _sys = build_api_messages(
+        agent, messages, current_turn_user_idx=0,
+        ext_prefetch_cache="", plugin_user_context="", moa_config=None,
+        active_system_prompt="SYSTEM",
+    )
+    content = api_messages[1]["content"]
+    assert isinstance(content, list)
+    texts = [p.get("text") for p in content if isinstance(p, dict) and p.get("type") == "text"]
+    assert texts.count(PACK) == 1
+    # The persisted list still holds exactly the two original parts.
+    assert len(messages[0]["content"]) == 2
+
+
+def test_multimodal_pack_never_reaches_system_prompt():
+    """The text part rides the user API copy only — never the system prompt."""
+    messages = [
+        {"role": "user", "content": [{"type": "text", "text": "как на картинке?"}]},
+    ]
+    agent = _StubAgent(_memory_pack_cache=PACK)
+    api_messages, effective_system = build_api_messages(
+        agent, messages, current_turn_user_idx=0,
+        ext_prefetch_cache="", plugin_user_context="", moa_config=None,
+        active_system_prompt="SYSTEM: frozen",
+    )
+    assert "Retrieved memory" not in effective_system
+    assert "Retrieved memory" not in api_messages[0]["content"]
+
+
+def test_multimodal_no_pack_on_legacy_backend():
+    """Empty pack (legacy backend / no orchestrator) → the list content is
+    byte-identical to the input (no text part appended)."""
+    messages = [
+        {"role": "user", "content": [{"type": "text", "text": "как на картинке?"}]},
+    ]
+    agent = _StubAgent(_memory_pack_cache="")
+    api_messages, _sys = build_api_messages(
+        agent, messages, current_turn_user_idx=0,
+        ext_prefetch_cache="", plugin_user_context="", moa_config=None,
+        active_system_prompt="SYSTEM",
+    )
+    assert api_messages[1]["content"] == [{"type": "text", "text": "как на картинке?"}]

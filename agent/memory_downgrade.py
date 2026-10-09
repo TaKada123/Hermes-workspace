@@ -9,22 +9,30 @@ verification the operator can check.
 Contract:
 
 - exports the canonical store's *visible* rows per target — status
-  ``active``/``pinned`` (``_visible_rows`` semantics), in snapshot priority
-  order, with awareness telemetry (``written_by`` starting with
-  ``awareness``) skipped: that channel never sat in the v2 prompt and must
-  not start doing so on legacy;
+  ``active``/``pinned`` (``store.visible_rows`` — the PUBLIC store API, never
+  the private ``_visible_rows``), in snapshot priority order, with awareness
+  telemetry (``written_by`` starting with ``awareness``) skipped: that
+  channel never sat in the v2 prompt and must not start doing so on legacy;
 - writes §-delimited files (``ENTRY_DELIMITER`` join, raw content — the same
   shape the v2 projections use) into ``HERMES_HOME/memories/`` or a
   caller-supplied directory;
 - verifies counts: each target reports ``expected`` (visible rows) vs
   ``written`` (entries parsed back from the file) with an ``ok`` flag;
+- additionally reports ``post_cutover`` per target — the number of exported
+  rows created AFTER ``meta['legacy_migrated']`` (the cutover point, read via
+  the public ``store.legacy_migrated_at()``). This is REPORT-ONLY
+  observability: the export itself stays FULL-STORE on purpose — the flat
+  store has no notion of cutover and must read every visible entry, and a
+  cutover-partial export would silently drop pre-cutover legacy data the
+  operator still expects in MEMORY.md/USER.md;
 - before overwriting a pre-existing file creates a timestamped
   ``<file>.bak.<ts>`` copy;
 - NEVER opens memory.db for writing: the file is preserved byte-identical
-  (sha256 before/after recorded in the report);
+  (sha256 before/after recorded in the report; path via ``store.db_path``);
 - writes an audit marker ``downgrade-export-report.json`` next to the
   exported files (timestamps + counts);
-- ``dry_run=True`` reports projected counts and writes nothing at all.
+- ``dry_run=True`` reports projected counts (incl. ``post_cutover``) and
+  writes nothing at all.
 
 Round-trip semantics: after a successful export, flipping
 ``memory.backend`` to ``file`` makes the agent read the exported §-files via
@@ -73,12 +81,22 @@ def _iso_now() -> str:
 
 
 def _export_rows(store, target: str) -> List[Any]:
-    """Visible export rows: ``_visible_rows`` minus awareness telemetry."""
-    rows = store._visible_rows(target)
+    """Visible export rows: ``store.visible_rows`` minus awareness telemetry."""
+    rows = store.visible_rows(target)
     return [
         r for r in rows
         if not str(r["written_by"] or "").startswith(_AWARENESS_PREFIX)
     ]
+
+
+def _post_cutover_count(rows: List[Any], migrated_at: Optional[str]) -> int:
+    """Rows created AFTER the cutover marker (report-only observability)."""
+    if not migrated_at:
+        return 0
+    return sum(
+        1 for r in rows
+        if str(r.get("created_at") or "") > migrated_at
+    )
 
 
 def _backup(path: Path) -> Optional[Path]:
@@ -98,16 +116,18 @@ def export_legacy(
 ) -> Dict[str, Any]:
     """Export the canonical store's visible rows to §-delimited legacy files.
 
-    ``store`` must be a loaded MemoryStoreV2 (duck-typed: needs
-    ``_visible_rows`` and ``_db_path``). Returns the verification report::
+    ``store`` must be a loaded MemoryStoreV2 (duck-typed: needs the PUBLIC
+    ``visible_rows`` and ``db_path``). Returns the verification report::
 
         {
           "schema_version": 1,
           "exported_at": "<ISO-8601 UTC>",
           "dry_run": false,
           "out_dir": "<abs path>",
+          "legacy_migrated_at": "<ISO-8601 UTC | null>",
           "targets": {
             "memory": {"path": ..., "expected": N, "written": N,
+                       "post_cutover": N,  # rows created after the cutover
                        "ok": true, "backup": "<path> | null"},
             ...
           },
@@ -120,11 +140,13 @@ def export_legacy(
     In dry-run mode ``written`` is 0 and ``ok`` is null (nothing on disk to
     verify), ``audit_file`` is null, and no file, backup or directory is
     created. memory.db is never opened for writing in either mode.
+    ``post_cutover`` is report-only observability — the export itself stays
+    full-store (see the module docstring for why).
     """
-    if not hasattr(store, "_visible_rows"):
+    if not hasattr(store, "visible_rows"):
         raise TypeError(
             "export_legacy requires the MemoryStoreV2 canonical store "
-            f"(got {type(store).__name__} without _visible_rows)"
+            f"(got {type(store).__name__} without visible_rows)"
         )
     if out_dir is not None:
         out_dir = Path(out_dir)
@@ -136,15 +158,17 @@ def export_legacy(
     if unknown:
         raise ValueError(f"Unknown export targets: {', '.join(unknown)}")
 
-    db_path = getattr(store, "_db_path", None)
+    db_path = getattr(store, "db_path", None)
     db_path = Path(db_path) if db_path else None
     sha_before = _sha256(db_path) if db_path else None
+    _migrated_at = store.legacy_migrated_at() if hasattr(store, "legacy_migrated_at") else None
 
     report: Dict[str, Any] = {
         "schema_version": EXPORT_REPORT_VERSION,
         "exported_at": _iso_now(),
         "dry_run": bool(dry_run),
         "out_dir": str(out_dir),
+        "legacy_migrated_at": _migrated_at,
         "targets": {},
         "memory_db": {
             "path": str(db_path) if db_path else None,
@@ -163,6 +187,7 @@ def export_legacy(
                 "path": str(out_dir / EXPORT_TARGETS[target]),
                 "expected": len(rows),
                 "written": 0,
+                "post_cutover": _post_cutover_count(rows, _migrated_at),
                 "ok": None,
                 "backup": None,
             }
@@ -184,6 +209,7 @@ def export_legacy(
             "path": str(path),
             "expected": len(contents),
             "written": written,
+            "post_cutover": _post_cutover_count(rows, _migrated_at),
             "ok": written == len(contents),
             "backup": str(backup) if backup else None,
         }

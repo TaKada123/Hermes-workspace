@@ -4,7 +4,7 @@
 """Cognitive Memory Bus — Phase 3 of the memory roadmap.
 
 One recall/remember surface for every memory consumer: the main agent's
-delegation/cron paths (and tests) talk to this module instead of reaching
+delegation paths (and tests) talk to this module instead of reaching
 into the store or the provider manager directly.
 
 Mechanisms adopted from the Cordis composability preprint:
@@ -51,10 +51,10 @@ from typing import Any, Dict, FrozenSet, List, Mapping, Optional
 from agent.memory_orchestrator import (
     ScoringWeights,
     _message_tokens,
+    fit_entries_within_budget,
     render_pack,
     score_candidate,
 )
-from agent.model_metadata import estimate_tokens_rough
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +87,8 @@ class ConsumerSpec:
 
     ``needs`` ⊆ :data:`ALL_CAPABILITIES`; ``project`` is the realm — when
     set, retrieval only sees rows bound to that project or global rows, and
-    writes are tagged with the project. A spec asking for a write capability
-    is by definition not read-only.
+    writes are tagged with the project. A spec asking for any mutating
+    capability (write OR rollback) is by definition not read-only.
     """
 
     consumer_id: str
@@ -97,7 +97,12 @@ class ConsumerSpec:
 
     @property
     def read_only(self) -> bool:
-        return not (WRITE_MEMORY in self.needs or WRITE_USER in self.needs)
+        """True only when the spec holds NO mutating right: no write caps AND
+        no rollback caps. A spec holding ``rollback:*`` (or ``write:*``) is by
+        definition not read-only."""
+        return not (self.needs & frozenset({
+            WRITE_MEMORY, WRITE_USER, ROLLBACK_MEMORY, ROLLBACK_USER,
+        }))
 
     def validated(self) -> Optional["ConsumerSpec"]:
         """Normalize; ``None`` if the spec is malformed (empty id / bad keys)."""
@@ -128,8 +133,8 @@ class MemoryBus:
     """Unified recall/remember facade over the built-in store (+ provider).
 
     The bus owns no storage; it gates, routes, and tags. Construction is
-    cheap (no I/O beyond the store's own connection), so cron and delegation
-    paths can build one per run.
+    cheap (no I/O beyond the store's own connection), so delegation paths
+    can build one per run.
     """
 
     store: Any
@@ -257,19 +262,12 @@ class MemoryBus:
             ((c, score_candidate(c, tokens, self.weights, now)) for c in candidates),
             key=lambda pair: pair[1], reverse=True,
         )
-        selected: List[Dict[str, Any]] = []
-        used = 0
-        for row, _score in scored:
-            if len(selected) >= self.max_entries or used >= budget:
-                break
-            cost = estimate_tokens_rough(str(row.get("content") or "")) + 8
-            if used + cost > budget:
-                continue
-            selected.append(row)
-            used += cost
+        selected, used = fit_entries_within_budget(
+            scored, budget, max_entries=self.max_entries,
+        )
         if selected:
             try:
-                self.store.bump_access([str(r.get("id")) for r in selected])
+                self.store.bump_access([str(r.get("id")) for r, _ in selected])
             except Exception as exc:
                 logger.debug("memory bus: access bump failed: %s", exc)
 
@@ -293,7 +291,7 @@ class MemoryBus:
                     "project": r.get("project"),
                     "content": r.get("content"),
                 }
-                for r in selected
+                for r, _ in selected
             ],
             "count": len(selected),
             "provider_context": provider_context,
@@ -388,18 +386,19 @@ class MemoryBus:
     ) -> Dict[str, Any]:
         """Deprecate every active record written by one consumer (its inverse).
 
-        Rollback is a SEPARATE right (spec story 11): the subscription must
-        carry the rollback capability for the relevant target. With no
-        explicit ``target`` the consumer must hold at least one rollback
-        cap; with an explicit target it must hold that target's cap.
-        Read-only and write-only consumers are refused structurally, and an
-        unknown target is refused outright.
+        Rollback is a SEPARATE right (spec story 11) and per-target: the
+        ``target`` argument is REQUIRED and the subscription must carry the
+        EXACT rollback capability for it (``rollback:memory`` for
+        ``target='memory'``, ``rollback:user`` for ``target='user'``). A
+        consumer that writes to several targets holds the rollback cap for
+        each and reverts each target with its own call. Read-only and
+        write-only consumers are refused structurally; a missing or unknown
+        target is refused outright.
 
-        Store-side scoping stays: ``rollback_consumer(written_by)`` flips
-        only the calling consumer's rows to ``deprecated`` (never deletes,
-        never touches other consumers' or MAIN's rows). Consumers that
-        write to several targets should hold the rollback cap for each —
-        the store's revert is per-consumer, not per-target.
+        Store-side scoping stays: ``rollback_consumer(written_by, target=…)``
+        flips only the calling consumer's rows of THAT target to
+        ``deprecated`` (never deletes, never touches other consumers' or
+        MAIN's rows, and never crosses into the other target's rows).
         """
         sub = self._subscriptions.get(consumer_id)
         if sub is None or not sub.active:
@@ -407,23 +406,23 @@ class MemoryBus:
                 "success": False,
                 "error": f"consumer '{consumer_id}' has no active rollback subscription — rollback refused",
             }
-        if target is None:
-            roll_caps = {_TARGET_CAPS[t][2] for t in _TARGETS}
-            if not (sub.spec.needs & roll_caps):
+        if target not in _TARGETS:
+            if not target:
                 return {
                     "success": False,
-                    "error": f"consumer '{consumer_id}' lacks a rollback capability — rollback refused",
+                    "error": (
+                        f"consumer '{consumer_id}' must name the rollback target "
+                        "(memory|user) — rollback refused"
+                    ),
                 }
-        else:
-            roll_cap = _TARGET_CAPS.get(target, ("", "", ""))[2]
-            if not roll_cap:
-                return {"success": False, "error": f"Unknown target '{target}'."}
-            if roll_cap not in sub.spec.needs:
-                return {
-                    "success": False,
-                    "error": f"consumer '{consumer_id}' lacks '{roll_cap}' — rollback refused",
-                }
-        return self.store.rollback_consumer(consumer_id, reason=reason)
+            return {"success": False, "error": f"Unknown target '{target}'."}
+        roll_cap = _TARGET_CAPS[target][2]
+        if roll_cap not in sub.spec.needs:
+            return {
+                "success": False,
+                "error": f"consumer '{consumer_id}' lacks '{roll_cap}' — rollback refused",
+            }
+        return self.store.rollback_consumer(consumer_id, reason=reason, target=target)
 
     # -- realms ---------------------------------------------------------------
 
@@ -521,23 +520,3 @@ def build_delegation_briefing(
     except Exception as exc:
         logger.warning("memory bus: delegation briefing failed (non-fatal): %s", exc)
         return ""
-
-
-def build_cron_bus(*, targets: tuple = ("memory",)) -> Optional[MemoryBus]:
-    """Fresh read-only bus for a cron run (scheduler builds one per tick).
-
-    Reads share the same SQLite file via WAL; no prompt snapshot is built,
-    no writers exist on this path — the cron agent keeps ``skip_memory=True``
-    (the historic "cron prompts corrupt user memory" concern was about the
-    system-prompt snapshot; per-run briefings never touch it). Paths resolve
-    through HERMES_HOME, so the active profile just works.
-    """
-    try:
-        from agent.memory_store_v2 import MemoryStoreV2
-
-        store = MemoryStoreV2()
-        store.load_from_disk()
-        return MemoryBus(store=store, targets=targets)
-    except Exception as exc:
-        logger.warning("memory bus: cron bus unavailable: %s", exc)
-        return None

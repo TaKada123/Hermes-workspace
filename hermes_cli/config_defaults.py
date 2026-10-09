@@ -1346,6 +1346,15 @@ DEFAULT_CONFIG = {
                 "confidence": 0.05,
             },
         },
+        # Query-expansion aliases (Phase-4 P2): {term: [aliases]}. The store's
+        # in-memory alias cache is populated from here at agent init
+        # (set_alias_cache) — empty by default, so the layer is wired but inert.
+        "aliases": {},
+        # Recall-audit log (Phase-4 P3): every pack build writes one DB row
+        # per enabled recall. Default OFF — observability opt-in, not a
+        # per-turn write tax. Store-level callers keep the method; agent init
+        # threads this flag through.
+        "recall_log": {"enabled": False},
         # Ticket #8: MemoryBus wiring for the PARENT agent (subagent briefings).
         # enabled=false removes the bus handle AND disables the delegation
         # briefing; children never get a bus regardless (structural isolation).

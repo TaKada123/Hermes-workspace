@@ -115,6 +115,25 @@ def compose_multimodal_context_part(
     return "\n\n".join(injections) if injections else None
 
 
+def _append_pack_text_part(content: list, pack: str) -> list:
+    """Return a NEW part list with the context pack as the last text part.
+
+    The API-copy-only channel for multimodal (list) turns (MEM-V2 #6): the
+    input list lives on the cloned api message, so the persisted transcript
+    parts are never touched. Idempotent: a text part carrying exactly the
+    pack text is already present → the list is returned unchanged (no
+    second copy).
+    """
+    parts = [dict(p) if isinstance(p, dict) else p for p in content]
+    if any(
+        isinstance(p, dict) and p.get("type") == "text" and p.get("text") == pack
+        for p in parts
+    ):
+        return parts
+    parts.append({"type": "text", "text": pack})
+    return parts
+
+
 def compose_user_api_content(
     content: Any, ext_prefetch_cache: str, plugin_user_context: str
 ) -> Optional[str]:
@@ -1311,11 +1330,17 @@ def build_api_messages(
             # clean), never persisted history, never the system prompt. Plain
             # markdown, unfenced (<memory-context> is reserved for external
             # prefetch). Idempotent: a content that already carries the pack
-            # is left alone.
+            # is left alone. A multimodal (list) turn carries the pack as an
+            # appended TEXT PART on the API copy (the input list is a clone —
+            # the persisted parts are untouched).
             _pack = getattr(agent, "_memory_pack_cache", "") or ""
             _content = api_msg.get("content")
-            if _pack and isinstance(_content, str) and _pack not in _content:
-                api_msg["content"] = _content + "\n\n" + _pack
+            if _pack:
+                if isinstance(_content, str):
+                    if _pack not in _content:
+                        api_msg["content"] = _content + "\n\n" + _pack
+                elif isinstance(_content, list):
+                    api_msg["content"] = _append_pack_text_part(_content, _pack)
         elif (
             isinstance(_api_content, str) and _api_content
             and msg.get("role") in ("user", "assistant")

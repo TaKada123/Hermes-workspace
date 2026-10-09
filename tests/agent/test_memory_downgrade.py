@@ -31,6 +31,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -122,6 +123,56 @@ class TestPostCutover:
         assert "Старая §-запись" in raw
         assert "Запись после cutover" in raw
         assert _report_target(report, "memory")["expected"] == 2
+
+
+class TestPostCutoverCount:
+    """Export report carries a per-target ``post_cutover`` count — rows
+    created AFTER ``meta['legacy_migrated']`` — without changing the export
+    itself (it stays full-store)."""
+
+    def test_post_cutover_reported_per_target(self, mem_dir, tmp_path):
+        (mem_dir / "MEMORY.md").write_text("До cutover", encoding="utf-8")
+        s = MemoryStoreV2()
+        s.load_from_disk()  # migration = cutover point
+        try:
+            # Timestamps are second-granular: move past the marker's second.
+            time.sleep(1.1)
+            s.add("memory", "После cutover", written_by="main:test")
+            s.add("user", "Юзер после cutover", written_by="main:test")
+            report = export_legacy(s, out_dir=tmp_path / "export")
+        finally:
+            s.close()
+
+        assert report["legacy_migrated_at"] is not None
+        assert _report_target(report, "memory")["post_cutover"] == 1
+        assert _report_target(report, "user")["post_cutover"] == 1
+        # Export semantics unchanged: the legacy file still carries EVERY
+        # visible row (pre- and post-cutover alike).
+        raw = (tmp_path / "export" / "MEMORY.md").read_text(encoding="utf-8")
+        assert "До cutover" in raw and "После cutover" in raw
+
+    def test_post_cutover_zero_when_no_migration_marker(self, store, tmp_path):
+        # Without the marker there is no cutover point: legacy_migrated_at is
+        # null and post_cutover counts 0.
+        store.add("memory", "запись", written_by="main:test")
+        store._connect().execute("DELETE FROM meta WHERE key='legacy_migrated'")
+        report = export_legacy(store, out_dir=tmp_path / "export")
+        assert report["legacy_migrated_at"] is None
+        assert _report_target(report, "memory")["post_cutover"] == 0
+
+    def test_dry_run_reports_post_cutover_too(self, mem_dir, tmp_path):
+        (mem_dir / "MEMORY.md").write_text("До cutover", encoding="utf-8")
+        s = MemoryStoreV2()
+        s.load_from_disk()
+        try:
+            time.sleep(1.1)
+            s.add("memory", "После cutover", written_by="main:test")
+            report = export_legacy(s, out_dir=tmp_path / "export", dry_run=True)
+        finally:
+            s.close()
+        assert report["dry_run"] is True
+        assert _report_target(report, "memory")["post_cutover"] == 1
+        assert not (tmp_path / "export").exists()
 
 
 class TestMemoryDbPreserved:

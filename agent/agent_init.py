@@ -1377,10 +1377,26 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
                     # projections. Same public surface (load_from_disk, add/replace/
                     # remove, format_for_system_prompt) — consumers are duck-typed.
                     from agent.memory_store_v2 import MemoryStoreV2
+                    # Recall-audit log: default OFF (memory.recall_log.enabled) —
+                    # a per-pack DB row is an opt-in observability tax, not a
+                    # silent default write.
+                    _recall_log_cfg = mem_config.get("recall_log") or {}
+                    store_kwargs["recall_log_enabled"] = bool(
+                        _recall_log_cfg.get("enabled", False)
+                    ) if isinstance(_recall_log_cfg, dict) else False
                     agent._memory_store = MemoryStoreV2(**store_kwargs)
                 else:
                     agent._memory_store = MemoryStore(**store_kwargs)
                 agent._memory_store.load_from_disk()
+                # Query-expansion aliases (memory.aliases) — the store's
+                # in-memory cache is config-driven, wired here so the layer
+                # is not dead code. AFTER load_from_disk: the rewrite of the
+                # memory_aliases table needs the schema, and load_from_disk
+                # reloads the cache from that table. Duck-typed: the legacy
+                # flat store simply has no alias cache.
+                _set_aliases = getattr(agent._memory_store, "set_alias_cache", None)
+                if callable(_set_aliases):
+                    _set_aliases(mem_config.get("aliases", {}))
             # MEM-V2 (#6): context-pack orchestrator — None on the legacy backend.
             # Separate named helper + clearly commented call site so the parallel
             # bus wiring (#8) can coexist; see _init_memory_orchestrator below.
@@ -1462,17 +1478,27 @@ def _init_memory_bus(agent, _agent_cfg, store, memory_manager=None):
         from agent.memory_bus import MemoryBus
         from agent.memory_orchestrator import ScoringWeights
         _weights = ScoringWeights()
+        _token_budget, _max_entries = 2500, 20  # defaults; config overrides
         if isinstance(_mem_cfg, dict):
             _orch = _mem_cfg.get("orchestrator") or {}
-            if isinstance(_orch, dict) and _orch.get("weights"):
-                _weights = ScoringWeights.from_config(_orch["weights"])
+            if isinstance(_orch, dict):
+                if _orch.get("weights"):
+                    _weights = ScoringWeights.from_config(_orch["weights"])
+                try:
+                    _token_budget = int(_orch.get("token_budget", 2500))
+                except (TypeError, ValueError):
+                    _token_budget = 2500
+                try:
+                    _max_entries = int(_orch.get("max_entries", 20))
+                except (TypeError, ValueError):
+                    _max_entries = 20
         agent._memory_bus = MemoryBus(
             store=store,
             manager=memory_manager or None,
             targets=("memory", "user"),
             weights=_weights,
-            token_budget=2500,
-            max_entries=20,
+            token_budget=_token_budget,
+            max_entries=_max_entries,
         )
     except Exception:
         logger.warning("memory bus: init failed (non-fatal)", exc_info=True)
