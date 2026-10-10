@@ -1397,10 +1397,8 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
                 _set_aliases = getattr(agent._memory_store, "set_alias_cache", None)
                 if callable(_set_aliases):
                     _set_aliases(mem_config.get("aliases", {}))
-            # MEM-V2 (#6): context-pack orchestrator — None on the legacy backend.
-            # Separate named helper + clearly commented call site so the parallel
-            # bus wiring (#8) can coexist; see _init_memory_orchestrator below.
-            _init_memory_orchestrator(agent, _agent_cfg, agent._memory_store)
+        # Optional storage failures remain non-fatal; supplied config errors do not.
+        _init_memory_orchestrator(agent, _agent_cfg, agent._memory_store)
 
     # External memory provider plugin (one at a time, alongside built-in): memory.provider.
     agent._memory_manager = None
@@ -1462,8 +1460,10 @@ def _init_memory_bus(agent, _agent_cfg, store, memory_manager=None):
     Children reach ``_init_memory`` with skip_memory=True and a blocked memory
     toolset, so their store is None and this helper is a no-op for them: the
     child never gets a bus handle, exactly like it never gets the memory tool
-    or a DB path. Any failure is non-fatal (memory must never break agent init).
+    or a DB path. Runtime failures are non-fatal; unusable supplied config
+    is rejected at startup with its key and remediation.
     """
+    from agent.memory_orchestrator import MemoryOrchestratorConfigError
     # Always materialize the attribute: every non-v2 path leaves it None.
     agent._memory_bus = None
     try:
@@ -1476,22 +1476,8 @@ def _init_memory_bus(agent, _agent_cfg, store, memory_manager=None):
         if isinstance(_mem_cfg, dict) and not bool((_mem_cfg.get("bus") or {}).get("enabled", True)):
             return
         from agent.memory_bus import MemoryBus
-        from agent.memory_orchestrator import ScoringWeights
-        _weights = ScoringWeights()
-        _token_budget, _max_entries = 2500, 20  # defaults; config overrides
-        if isinstance(_mem_cfg, dict):
-            _orch = _mem_cfg.get("orchestrator") or {}
-            if isinstance(_orch, dict):
-                if _orch.get("weights"):
-                    _weights = ScoringWeights.from_config(_orch["weights"])
-                try:
-                    _token_budget = int(_orch.get("token_budget", 2500))
-                except (TypeError, ValueError):
-                    _token_budget = 2500
-                try:
-                    _max_entries = int(_orch.get("max_entries", 20))
-                except (TypeError, ValueError):
-                    _max_entries = 20
+        from agent.memory_orchestrator import read_orchestrator_config
+        _token_budget, _max_entries, _weights = read_orchestrator_config(_mem_cfg)
         agent._memory_bus = MemoryBus(
             store=store,
             manager=memory_manager or None,
@@ -1500,6 +1486,8 @@ def _init_memory_bus(agent, _agent_cfg, store, memory_manager=None):
             token_budget=_token_budget,
             max_entries=_max_entries,
         )
+    except MemoryOrchestratorConfigError:
+        raise
     except Exception:
         logger.warning("memory bus: init failed (non-fatal)", exc_info=True)
         agent._memory_bus = None
@@ -1510,10 +1498,11 @@ def _init_memory_orchestrator(agent, cfg, store):
 
     ``agent._memory_orchestrator`` is set when ``memory.backend == "sqlite_v2"`` AND the
     store duck-types the orchestrator API AND ``memory.orchestrator.enabled``; every other
-    case (legacy ``file`` backend, missing store, disabled flag, malformed config) yields
-    ``None`` and the turn loop never builds a pack. Separate named helper with a clearly
+    case (legacy ``file`` backend, missing store, disabled flag) yields
+    ``None``; unusable supplied config raises. Separate named helper with a clearly
     commented call site in ``_init_memory`` so the parallel bus wiring (#8) can coexist.
     """
+    from agent.memory_orchestrator import MemoryOrchestratorConfigError
     agent._memory_orchestrator = None
     if store is None:
         return
@@ -1528,6 +1517,8 @@ def _init_memory_orchestrator(agent, cfg, store):
             memory_enabled=bool(agent._memory_enabled),
             user_profile_enabled=bool(agent._user_profile_enabled),
         )
+    except MemoryOrchestratorConfigError:
+        raise
     except Exception as _moe:
         _ra().logger.warning("Memory orchestrator init failed: %s", _moe)
         agent._memory_orchestrator = None

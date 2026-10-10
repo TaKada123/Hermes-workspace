@@ -632,12 +632,11 @@ def test_factory_wires_config_values(mem_dir):
     s.close()
 
 
-def test_factory_bad_config_values_fall_back(mem_dir):
+def test_factory_bad_config_values_are_rejected(mem_dir):
     s = _crowd(mem_dir)
     cfg = {"orchestrator": {"token_budget": "много", "max_entries": None}}
-    orch = build_memory_orchestrator(s, cfg, memory_enabled=True, user_profile_enabled=True)
-    # int("много") raises → factory disables rather than misconfiguring
-    assert orch is None
+    with pytest.raises(ValueError, match=r"memory\.orchestrator\.token_budget"):
+        build_memory_orchestrator(s, cfg, memory_enabled=True, user_profile_enabled=True)
     s.close()
 
 
