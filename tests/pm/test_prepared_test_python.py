@@ -1,8 +1,8 @@
 """The PM worker fixture is prepared locally from the locked test runtime."""
+from importlib.metadata import version
 import json
 from pathlib import Path
 import subprocess
-import sys
 
 import pytest
 
@@ -13,6 +13,11 @@ def test_prepared_worker_python_uses_locked_pm_deps_without_stage_runtime(tmp_pa
     def no_uv_stage(*args, **kwargs):
         pytest.fail("worker preparation must not resolve or download PM runtime wheels")
 
+    # The runner selects the locked test install; staging must preserve its versions.
+    expected_versions = {
+        name: version(name)
+        for name in ("packaging", "tomli-w", "truststore", "ruamel.yaml")
+    }
     monkeypatch.setattr("pm.runtime_stage.stage_runtime", no_uv_stage)
     python = _fixtures.prepare_test_python(tmp_path / "python")
     probe = subprocess.run(
@@ -24,10 +29,5 @@ def test_prepared_worker_python_uses_locked_pm_deps_without_stage_runtime(tmp_pa
         capture_output=True, text=True, timeout=30,
     )
     assert probe.returncode == 0, probe.stderr
-    assert json.loads(probe.stdout) == {
-        "packaging": "26.0",
-        "tomli-w": "1.2.0",
-        "truststore": "0.10.4",
-        "ruamel.yaml": "0.18.16",
-    }
+    assert json.loads(probe.stdout) == expected_versions
     assert Path(python).is_file()
