@@ -54,29 +54,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _build_store():
-    """MemoryStoreV2 with the configured limits/flags (load_on_disk_store shape)."""
-    limits = (2200, 1375)
-    memory_enabled = user_profile_enabled = True
+    """Validate profile config, then open only the existing canonical store."""
     from hermes_cli.config import load_config
-    from tools.memory_tool import (
-        get_builtin_memory_config,
-        get_builtin_memory_store_flags,
-    )
+    from tools.memory_tool import get_builtin_memory_config
 
     config = load_config() or {}
     mem_cfg = get_builtin_memory_config(config)
-    memory_enabled, user_profile_enabled = get_builtin_memory_store_flags(config)
-    limits = (
-        int(mem_cfg.get("memory_char_limit", 2200)),
-        int(mem_cfg.get("user_char_limit", 1375)),
-    )
-    from agent.memory_store_v2 import MemoryStoreV2
+    # Retain malformed-config diagnostics without constructing a writable store.
+    for key, default in (("memory_char_limit", 2200), ("user_char_limit", 1375)):
+        int(mem_cfg.get(key, default))
+    from agent.memory_downgrade import ReadOnlyExportStore
+    from tools.memory_tool import get_memory_dir
 
-    return MemoryStoreV2(
-        *limits,
-        memory_enabled=memory_enabled,
-        user_profile_enabled=user_profile_enabled,
-    )
+    return ReadOnlyExportStore(get_memory_dir() / "memory.db")
 
 
 def main(argv=None) -> int:
@@ -97,7 +87,6 @@ def main(argv=None) -> int:
 
     try:
         store = _build_store()
-        store.load_from_disk()
         try:
             report = export_legacy(store, targets=targets, dry_run=args.dry_run)
         finally:

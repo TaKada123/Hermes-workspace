@@ -111,20 +111,41 @@ class TestMigrationManifest:
         assert user_src["skipped"] == []
         s.close()
 
-    def test_unreadable_source_file_skipped_with_read_error(self, mem_dir):
-        (mem_dir / "MEMORY.md").mkdir()  # a directory where the file should be
-        (mem_dir / "USER.md").write_text("Юзер ок", encoding="utf-8")
+    @pytest.mark.parametrize("failed_source", ["directory", "invalid_utf8"])
+    def test_failed_source_rolls_back_and_restored_source_retries(self, mem_dir, failed_source):
+        # Fail the SECOND source so importing the first cannot partially commit.
+        memory_bytes = "Запись один\n§\nЗапись два".encode("utf-8")
+        (mem_dir / "MEMORY.md").write_bytes(memory_bytes)
+        source = mem_dir / "USER.md"
+        if failed_source == "directory":
+            source.mkdir()
+        else:
+            source.write_bytes(b"\xff\xfe")
         s = MemoryStoreV2()
-        s.load_from_disk()  # must not raise
-        manifest = _manifest(s)
-        mem_src = manifest["sources"]["memory"]
-        assert mem_src["exists"] is True
-        assert mem_src["sha256"] is None
-        assert mem_src["read_error"] is not None
-        assert mem_src["recognized"] == mem_src["imported"] == 0
-        assert manifest["sources"]["user"]["imported"] == 1
-        assert _db_rows(s, "SELECT COUNT(*) AS c FROM memories")[0]["c"] == 1
-        s.close()
+        try:
+            with pytest.raises(OSError, match="legacy.*USER.md"):
+                s.load_from_disk()
+            assert s.visible_rows("memory") == s.visible_rows("user") == []
+            assert s.legacy_migrated_at() is None
+            assert not (mem_dir / "migration-manifest.json").exists()
+            assert (mem_dir / "MEMORY.md").read_bytes() == memory_bytes
+            if failed_source == "directory":
+                assert source.is_dir()
+                source.rmdir()
+            else:
+                assert source.read_bytes() == b"\xff\xfe"
+            user_bytes = "Юзер восстановлен".encode("utf-8")
+            source.write_bytes(user_bytes)
+            s.load_from_disk()
+            assert [r["content"] for r in s.visible_rows("memory")] == ["Запись один", "Запись два"]
+            assert [r["content"] for r in s.visible_rows("user")] == ["Юзер восстановлен"]
+            assert s.legacy_migrated_at() is not None
+            manifest = json.loads((mem_dir / "migration-manifest.json").read_text(encoding="utf-8"))
+            assert manifest["totals"]["imported"] == 3
+            assert (mem_dir / "MEMORY.md").read_bytes() == memory_bytes
+            assert source.read_bytes() == user_bytes
+        finally:
+            s.close()
 
 
 class TestMigrationNothingDeleted:
