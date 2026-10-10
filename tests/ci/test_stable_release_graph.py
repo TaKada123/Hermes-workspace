@@ -6,12 +6,13 @@ from pathlib import Path
 from ruamel.yaml import YAML
 
 from tests.ci.desktop_release_roles import gate
+from tests.ci.workflow_fixtures import workflow_path
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def workflow(name):
-    return YAML(typ="base").load((ROOT / ".github/workflows" / name).read_text(encoding="utf-8"))
+    return YAML(typ="base").load(workflow_path(name).read_text(encoding="utf-8"))
 
 
 def direct_needs(jobs, name):

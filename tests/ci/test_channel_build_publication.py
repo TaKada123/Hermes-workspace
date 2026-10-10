@@ -24,6 +24,7 @@ from tests.ci.desktop_release_roles import (
     universal_assembler,
 )
 from tests.ci.test_desktop_release_tag_admission import _seed_repo, _git, _workflow
+from tests.ci.workflow_fixtures import workflow_path
 from tests.scripts.test_release_r2 import r2_server  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -168,7 +169,7 @@ def test_scoped_receiver_publication_preserves_existing_head_and_requires_smoke(
 
 
 def workflow_step(workflow, job, name):
-    doc = hermes_yaml.safe_load((ROOT / ".github/workflows" / workflow).read_text(encoding="utf-8"))
+    doc = hermes_yaml.safe_load(workflow_path(workflow).read_text(encoding="utf-8"))
     return next(step["run"] for step in doc["jobs"][job]["steps"] if step.get("name") == name)
 
 

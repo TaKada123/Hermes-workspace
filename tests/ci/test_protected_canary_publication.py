@@ -23,13 +23,14 @@ from scripts.releases import channel_releases, handoff
 from tests.ci.desktop_release_roles import canary_publisher, native_builds, stage_step
 from tests.ci.test_desktop_release_tag_admission import _git, _seed_repo
 from tests.scripts.test_release_r2 import r2_server  # noqa: F401
+from tests.ci.workflow_fixtures import workflow_path
 
 ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.platforms("posix")
 
 
 def workflow_jobs():
-    return hermes_yaml.safe_load((ROOT / ".github/workflows/desktop-bundled-release.yml").read_text())["jobs"]
+    return hermes_yaml.safe_load(workflow_path("desktop-bundled-release.yml").read_text())["jobs"]
 
 
 def canary_job():
