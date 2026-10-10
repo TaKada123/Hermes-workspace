@@ -49,10 +49,11 @@ intent router, ``rank_candidates`` and the ``MemoryOrchestrator``/factory.
 from __future__ import annotations
 
 import logging
+import math
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, ClassVar, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, ClassVar, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from agent.model_metadata import estimate_tokens_rough
 # е-fold (P7) and the normalized matcher are owned by the store module — one
@@ -138,6 +139,10 @@ def classify_intent(message: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+class MemoryOrchestratorConfigError(ValueError):
+    """Unusable supplied retrieval configuration, fatal only at startup."""
+
+
 @dataclass(frozen=True)
 class ScoringWeights:
     """Scoring weights (roadmap §3 step 2.2 defaults; configurable)."""
@@ -159,15 +164,26 @@ class ScoringWeights:
     def from_config(cls, cfg: Optional[Mapping]) -> "ScoringWeights":
         """Build from a ``memory.orchestrator.weights`` mapping; unknown keys ignored."""
         base = cls()
-        if not isinstance(cfg, Mapping):
+        if cfg is None:
             return base
+        if not isinstance(cfg, Mapping):
+            raise MemoryOrchestratorConfigError(
+                "memory.orchestrator.weights must be a mapping; set weights to a mapping "
+                "of numeric scoring weights or omit it for defaults"
+            )
         kwargs: Dict[str, float] = {}
         for key in cls._FIELDS:
             if key in cfg:
                 try:
-                    kwargs[key] = float(cfg[key])
-                except (TypeError, ValueError):
-                    logger.debug("orchestrator: bad weight %r=%r ignored", key, cfg[key])
+                    value = float(cfg[key])
+                    if isinstance(cfg[key], bool) or not math.isfinite(value) or value < 0:
+                        raise ValueError("not a finite nonnegative weight")
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise MemoryOrchestratorConfigError(
+                        f"memory.orchestrator.weights.{key} must be a finite nonnegative number; "
+                        f"set {key} to a finite number >= 0 or omit it for the default"
+                    ) from exc
+                kwargs[key] = value
         return cls(**kwargs) if kwargs else base
 
 
@@ -422,27 +438,33 @@ def fit_entries_within_budget(
     *,
     max_entries: int,
     used_start: int = 0,
+    measure: Optional[Callable[[Sequence[Tuple[Mapping, Any]]], int]] = None,
 ) -> Tuple[List[Tuple[Mapping, Any]], int]:
     """Greedy token-budget cut over PRE-SORTED ``(entry, score)`` pairs.
 
-    The ONE shared cut loop for the context pack and the bus recall: each
-    entry costs ``estimate_tokens_rough(content) + 8`` (bullet + metadata).
+    The bus keeps its content + 8 estimate. Rendered callers supply
+    ``measure`` to count the entire trial selection, including its envelope,
+    section headers and provenance; records are admitted whole, never truncated.
     An entry that would overflow the remaining budget is SKIPPED (smaller
     ones further down may still fit — one huge entry must not eat the pack);
     ``max_entries`` caps the count; ``used_start`` offsets the budget with
-    the caller's already-reserved overhead (pack header + note). Returns
-    ``(selected, used)`` — ``used`` is offset + cost of selected entries.
+    the caller's already-reserved overhead. Returns ``(selected, used)`` —
+    ``used`` is the offset plus the measured selection or estimated entry costs.
     """
     selected: List[Tuple[Mapping, Any]] = []
     used = max(0, int(used_start))
     for row, score in scored:
         if len(selected) >= max(0, int(max_entries)):
             break
-        line_cost = estimate_tokens_rough(str(row.get("content") or "")) + 8
-        if used + line_cost > int(budget):
+        trial = selected + [(row, score)]
+        trial_used = (
+            max(0, int(used_start)) + measure(trial) if measure is not None
+            else used + estimate_tokens_rough(str(row.get("content") or "")) + 8
+        )
+        if trial_used > int(budget):
             continue
         selected.append((row, score))
-        used += line_cost
+        used = trial_used
     return selected, used
 
 
@@ -571,20 +593,19 @@ class MemoryOrchestrator:
             self._log_recall(intent=intent, query=query, before=len(candidates), after=0, nonempty=False)
             return ""
 
-        # Token budget cut, best score first ("big memory ≠ big prompt").
-        # The reserve covers section titles + the rendered header so the
-        # *rendered* pack stays within budget, not just the raw entries.
-        _RENDER_OVERHEAD_TOKENS = 80
-        used_start = estimate_tokens_rough(_PACK_HEADER) + estimate_tokens_rough(_PACK_NOTE) + _RENDER_OVERHEAD_TOKENS
+        # Measure complete trial packs: metadata/provenance and the envelope
+        # cannot be represented by a fixed per-record overhead.
         selected, used = fit_entries_within_budget(
             scored,
             self._token_budget,
             max_entries=self._max_entries,
-            used_start=used_start,
+            measure=lambda entries: estimate_tokens_rough(render_pack(entries, intent)),
         )
         if not selected:
             self._log_recall(intent=intent, query=query, before=len(candidates), after=0, nonempty=False)
             return ""
+
+        pack = render_pack(selected, intent)
 
         # One INFO line per non-empty pack: the pack is injected into the
         # API copy of the user message only (never persisted), so this log
@@ -609,7 +630,40 @@ class MemoryOrchestrator:
         # suggest-only until it proves precision on live data; explicit
         # memory(action=read) results and `hermes memory report` carry the
         # possible-tension evidence where a human or the model can inspect it.
-        return render_pack(selected, intent)
+        return pack
+
+
+def read_orchestrator_config(mem_config: Mapping) -> Tuple[int, int, ScoringWeights]:
+    """Read the retrieval settings shared by the pack and delegation bus.
+
+    Absent keys retain defaults; explicitly supplied unusable values do not.
+    Numeric strings remain accepted, and weights need not sum to one.
+    """
+    cfg = mem_config.get("orchestrator", {})
+    if not isinstance(cfg, Mapping):
+        raise MemoryOrchestratorConfigError(
+            "memory.orchestrator must be a mapping; set orchestrator to a mapping or omit it"
+        )
+    limits = []
+    for key, default, minimum in (("token_budget", 2500, 0), ("max_entries", 20, 1)):
+        value = cfg.get(key, default)
+        try:
+            if isinstance(value, bool) or isinstance(value, float) and not value.is_integer():
+                raise ValueError("not an integer")
+            parsed = int(value)
+            if parsed < minimum:
+                raise ValueError("below minimum")
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise MemoryOrchestratorConfigError(
+                f"memory.orchestrator.{key} must be an integer >= {minimum}; "
+                f"set {key} to an integer >= {minimum} or omit it for default {default}"
+            ) from exc
+        limits.append(parsed)
+    if "weights" in cfg and not isinstance(cfg["weights"], Mapping):
+        raise MemoryOrchestratorConfigError(
+            "memory.orchestrator.weights must be a mapping; set weights to a mapping or omit it"
+        )
+    return limits[0], limits[1], ScoringWeights.from_config(cfg.get("weights"))
 
 
 def build_memory_orchestrator(
@@ -631,19 +685,13 @@ def build_memory_orchestrator(
     ):
         return None
     orch_cfg = (mem_config or {}).get("orchestrator", {}) if isinstance(mem_config, Mapping) else {}
-    if not isinstance(orch_cfg, Mapping) or not orch_cfg.get("enabled", True):
+    if isinstance(orch_cfg, Mapping) and not orch_cfg.get("enabled", True):
         return None
     targets = [t for t, on in (("memory", memory_enabled), ("user", user_profile_enabled)) if on]
     if not targets:
         return None
-    try:
-        return MemoryOrchestrator(
-            store,
-            targets=tuple(targets),
-            token_budget=int(orch_cfg.get("token_budget", 2500)),
-            max_entries=int(orch_cfg.get("max_entries", 20)),
-            weights=ScoringWeights.from_config(orch_cfg.get("weights")),
-        )
-    except (TypeError, ValueError) as exc:
-        logger.warning("memory orchestrator: invalid config, disabled: %s", exc)
-        return None
+    token_budget, max_entries, weights = read_orchestrator_config(mem_config)
+    return MemoryOrchestrator(
+        store, targets=tuple(targets), token_budget=token_budget,
+        max_entries=max_entries, weights=weights,
+    )
