@@ -382,6 +382,41 @@ def test_pack_empty_on_blank_query(mem_dir):
     s.close()
 
 
+def test_configured_score_weight_changes_pack_order_for_eligible_candidates(mem_dir, monkeypatch):
+    s = _fresh(mem_dir)
+    candidates = [
+        {
+            "id": "higher-importance",
+            "target": "memory",
+            "type": "fact",
+            "status": "active",
+            "content": "alpha issue candidate with stronger importance",
+            "importance": 0.9,
+            "confidence": 0.0,
+            "project": "beta",
+            "updated_at": "2026-08-14T10:00:00+00:00",
+        },
+        {
+            "id": "matching-project",
+            "target": "memory",
+            "type": "fact",
+            "status": "active",
+            "content": "alpha issue candidate linked to project",
+            "importance": 0.5,
+            "confidence": 0.0,
+            "project": "alpha",
+            "updated_at": "2026-08-14T10:00:00+00:00",
+        },
+    ]
+    monkeypatch.setattr(s, "recall_candidates", lambda *args, **kwargs: candidates)
+    weights = ScoringWeights.from_config({"project_link": 1.0})
+
+    pack = MemoryOrchestrator(s, weights=weights).build_pack("alpha issue")
+
+    assert pack.index("linked to project") < pack.index("stronger importance")
+    s.close()
+
+
 def test_evicted_entry_recalled_via_inflected_query(mem_dir):
     """Live-E2E shape: users ask with arbitrary word forms ("бэкапов", not
     "бэкапы"); the pack must still surface the evicted entry."""
