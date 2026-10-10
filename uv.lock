@@ -2641,6 +2641,7 @@ dev = [
 ]
 test = [
     { name = "agent-client-protocol" },
+    { name = "aiohttp" },
     { name = "anthropic" },
     { name = "distlib", marker = "sys_platform == 'win32'" },
     { name = "fal-client" },
@@ -2824,6 +2825,7 @@ dev = [
 ]
 test = [
     { name = "agent-client-protocol", specifier = "==0.9.0" },
+    { name = "aiohttp", specifier = "==3.14.3" },
     { name = "anthropic", specifier = "==0.87.0" },
     { name = "distlib", marker = "sys_platform == 'win32'", specifier = "==0.4.3" },
     { name = "fal-client", specifier = "==0.13.1" },
