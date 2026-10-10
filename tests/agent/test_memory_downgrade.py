@@ -358,3 +358,24 @@ class TestScriptEntryPoint:
         assert (mem / "MEMORY.md").read_bytes() == projection_before
         assert not list(mem.glob("*.bak.*"))
         assert not (mem / "downgrade-export-report.json").exists()
+
+    def test_script_rejects_invalid_memory_char_limit(self, v2_home):
+        """Malformed config must fail instead of silently using export defaults."""
+        mem = v2_home / "memories"
+        projections_before = {
+            name: (mem / name).read_bytes() for name in ("MEMORY.md", "USER.md")
+        }
+        (v2_home / "config.yaml").write_text(
+            "memory:\n  memory_char_limit: not-an-integer\n", encoding="utf-8"
+        )
+
+        proc = self._run(["--targets", "memory,user"], v2_home)
+
+        assert proc.returncode == 2
+        assert "not-an-integer" in proc.stderr
+        assert proc.stdout == ""
+        assert {
+            name: (mem / name).read_bytes() for name in ("MEMORY.md", "USER.md")
+        } == projections_before
+        assert not (mem / "downgrade-export-report.json").exists()
+        assert not list(mem.glob("*.bak.*"))
