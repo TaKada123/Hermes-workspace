@@ -1355,6 +1355,22 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
         and "memory" not in (agent.disabled_toolsets or [])
     )
     if not skip_memory or _memory_toolset_requested:
+        # Supplied configuration is not an optional-runtime failure. Validate
+        # before entering the storage suppression block (even if storage fails).
+        from tools.memory_tool import get_builtin_memory_config
+        from tools.delegate_tool_child_run import _memory_briefing_enabled
+        _memory_briefing_enabled()
+        from agent.memory_orchestrator import read_memory_boolean_section
+        # Defaults merging turns explicit null sections into default mappings.
+        # Validate the read-only raw view first so supplied null is not absence.
+        if os.environ.get("HERMES_IGNORE_USER_CONFIG") != "1":
+            from hermes_cli.config import read_raw_config
+            raw_memory = read_raw_config().get("memory", {})
+            read_memory_boolean_section(raw_memory, "recall_log", default=False)
+            read_memory_boolean_section(raw_memory, "orchestrator", default=True)
+        mem_config = get_builtin_memory_config(_agent_cfg)
+        _recall_log_enabled = read_memory_boolean_section(mem_config, "recall_log", default=False)
+        read_memory_boolean_section(mem_config, "orchestrator", default=True)
         # Memory is optional — don't break agent init
         with suppress(Exception):
             from tools.memory_tool import (
@@ -1381,10 +1397,7 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
                     # Recall-audit log: default OFF (memory.recall_log.enabled) —
                     # a per-pack DB row is an opt-in observability tax, not a
                     # silent default write.
-                    _recall_log_cfg = mem_config.get("recall_log") or {}
-                    store_kwargs["recall_log_enabled"] = bool(
-                        _recall_log_cfg.get("enabled", False)
-                    ) if isinstance(_recall_log_cfg, dict) else False
+                    store_kwargs["recall_log_enabled"] = _recall_log_enabled
                     agent._memory_store = MemoryStoreV2(**store_kwargs)
                 else:
                     agent._memory_store = MemoryStore(**store_kwargs)
