@@ -61,6 +61,43 @@ def _run(command, *, cwd: Path, env: dict) -> str:
     return result.stdout.strip()
 
 
+def prepare_test_python(root: Path) -> Path:
+    """Build a tiny isolated PM-worker interpreter from the locked test install.
+
+    CLI/worker tests exercise the real PM client, worker, and resolver; staging
+    PM's own dependency runtime is covered separately by tests/pm/test_runtime*.
+    Reusing only those four exact locked distributions avoids a second network
+    bootstrap per test file while keeping application packages out of workers.
+    """
+    from importlib.metadata import distribution
+    import sysconfig
+    import venv
+
+    venv.EnvBuilder(with_pip=False, system_site_packages=False).create(root)
+    from pm.environments import venv_python
+
+    python = venv_python(root)
+    version = f"{sys.version_info.major}.{sys.version_info.minor}"
+    site = root / ("Lib/site-packages" if os.name == "nt" else f"lib/python{version}/site-packages")
+    source_site = Path(sysconfig.get_paths()["purelib"])
+    for name, package_dir in (
+        ("packaging", "packaging"),
+        ("tomli-w", "tomli_w"),
+        ("truststore", "truststore"),
+        ("ruamel.yaml", "ruamel"),
+    ):
+        dist = distribution(name)
+        if Path(str(dist.locate_file(""))).resolve() != source_site.resolve():
+            raise RuntimeError(f"{name} is not installed in the selected test environment")
+        shutil.copytree(source_site / package_dir, site / package_dir, dirs_exist_ok=True)
+        metadata_file = next((path for path in dist.files or () if path.name == "METADATA"), None)
+        if metadata_file is None:
+            raise RuntimeError(f"installed metadata for {name} is missing")
+        metadata = Path(str(dist.locate_file(metadata_file))).parent
+        shutil.copytree(metadata, site / metadata.name, dirs_exist_ok=True)
+    return python
+
+
 def _ar_member(name: str, data: bytes) -> bytes:
     hdr = (
         name.ljust(16).encode()
@@ -114,12 +151,8 @@ def served(tmp_path):
 
 @pytest.fixture(scope="module")
 def isolated_python(tmp_path_factory):
-    from pm.runtime_stage import stage_runtime
-
     root = tmp_path_factory.mktemp("pm-python")
-    uv = shutil.which("uv")
-    assert uv, "the worker contract requires real uv"
-    python = stage_runtime(Path(uv), Path(sys.executable), root)
+    python = prepare_test_python(root)
     _run([str(python), "-I", "-c", "import importlib.util; assert importlib.util.find_spec('yaml') is None"],
          cwd=root, env=dict(os.environ))
     return python
