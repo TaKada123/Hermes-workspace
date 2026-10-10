@@ -153,6 +153,7 @@ def _v2_apply_single_action(
     entry_type: Optional[str] = None,
     importance: Optional[float] = None,
     written_by: Optional[str] = None,
+    project: Optional[str] = None,
     matched_entry: Optional[str] = None,
 ) -> Dict[str, Any]:
     """The v2 single-op store dispatch — ONE implementation shared by the
@@ -176,7 +177,7 @@ def _v2_apply_single_action(
     if action == "add":
         return store.add(
             target, content, entry_type=entry_type,
-            importance=importance, written_by=written_by,
+            importance=importance, written_by=written_by, project=project,
         )
     if action == "replace":
         return store.replace(
@@ -234,7 +235,7 @@ def _apply_write_gate(store: "MemoryStore", action: str, target: str, content: O
                               "\n".join(_batch_op_line(op) for op in operations),
                               {"action": "batch", "target": target, "operations": operations})
     payload = {"action": action, "target": target, "content": content, "old_text": old_text}
-    for key in ("old_id", "superseded_by_id", "reason", "entry_type", "importance", "written_by"):
+    for key in ("old_id", "superseded_by_id", "reason", "entry_type", "importance", "written_by", "project"):
         if extra.get(key) is not None:
             payload[key] = extra[key]
     summary, detail = _write_gate_text(action, label, payload)
@@ -542,6 +543,7 @@ def apply_memory_pending(payload: Dict[str, Any], store: "MemoryStore") -> Dict[
             entry_type=payload.get("entry_type"),
             importance=payload.get("importance"),
             written_by=payload.get("written_by"),
+            project=payload.get("project"),
         )
     if action not in _STORE_ACTIONS:
         return {"success": False, "error": f"Unknown staged action '{action}'."}
