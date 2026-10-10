@@ -23,6 +23,8 @@ from tests.pm._range_server import RangeHandler, dl_server, url  # noqa: F401
 
 @pytest.fixture(autouse=True)
 def restore_registry(monkeypatch):
+    # Cached modules do not rerun registration decorators after the registry is reset.
+    registry.all_packages()
     monkeypatch.setattr(registry, "_packages", dict(registry._packages))
 
 
