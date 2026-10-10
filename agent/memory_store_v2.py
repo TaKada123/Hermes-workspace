@@ -642,9 +642,9 @@ class MemoryStoreV2(MemoryStore):
         # a store built without an explicit map still expands, and
         # set_alias_cache (agent init, from config) overrides + rewrites it.
         self._alias_map: Dict[str, Tuple[str, ...]] = {}
-        # Contents of the entries currently included in the frozen prompt
-        # snapshot (per target, original content strings) — the Phase-2
-        # orchestrator dedupes its per-turn context pack against this set.
+        # Contents fully represented in the frozen prompt snapshot (per
+        # target, original content strings). Partial/blocked rows remain
+        # eligible for supplementary recall instead of being deduped away.
         self._snapshot_entry_contents: Dict[str, set] = {"memory": set(), "user": set()}
 
     # ------------------------------------------------------------------
@@ -1428,7 +1428,7 @@ class MemoryStoreV2(MemoryStore):
         """One budget pass over the visible rows (see :meth:`_budget_walk`)."""
 
         texts: List[str]                      # rendered entries included in the prompt
-        included_contents: set                # their original content strings
+        included_contents: set                # fully rendered original content strings
         evicted_ids: List[str]                # visible rows dropped by the budget
         used: int                             # chars the projection costs
         visible: int                          # visible rows walked
@@ -1450,7 +1450,11 @@ class MemoryStoreV2(MemoryStore):
         lane_overflow: List[str] = []
 
         def render_bounded(row: sqlite3.Row) -> str:
-            text = self._render_entry_for_prompt(row)
+            # Scan the entire record, not just the prefix that happens to fit.
+            text = self._sanitize_entries_for_snapshot(
+                [self._render_entry_for_prompt(row)],
+                "MEMORY.md" if target == "memory" else "USER.md",
+            )[0]
             if len(text) > self._max_entry_chars:
                 text = text[: self._max_entry_chars - 1].rstrip() + "…"
             return text
@@ -1488,7 +1492,10 @@ class MemoryStoreV2(MemoryStore):
                         return i
                     continue
                 texts.append(text)
-                included_contents.add(row["content"])
+                # A bounded prefix is not the full record: supplementary
+                # recall must still be able to recover its omitted evidence.
+                if text == self._render_entry_for_prompt(row):
+                    included_contents.add(row["content"])
                 included_ids.add(row["id"])
                 used += cost
             return len(rows)
@@ -2355,8 +2362,14 @@ class MemoryStoreV2(MemoryStore):
                     })
                     return
                 succ = conn.execute(
-                    "SELECT id, status FROM memories WHERE id=?", (succ_id,)
+                    "SELECT id, status, target FROM memories WHERE id=?", (succ_id,)
                 ).fetchone()
+                if succ["target"] != actual_target:
+                    outcome.update({
+                        "success": False,
+                        "error": "superseded_by_id must have the same actual target as old_id. Old entry left unchanged.",
+                    })
+                    return
                 if succ["id"] == row["id"]:
                     outcome.update({
                         "success": False,
@@ -2378,7 +2391,7 @@ class MemoryStoreV2(MemoryStore):
                         hit = conn.execute(
                             "SELECT id FROM memories WHERE target=? AND ulower(content) LIKE ?"
                             " AND status!='deprecated' LIMIT 1",
-                            (target, f"%{frag.lower()}%"),
+                            (actual_target, f"%{frag.lower()}%"),
                         ).fetchone()
                         if hit:
                             successor = hit["id"]
@@ -2457,6 +2470,10 @@ class MemoryStoreV2(MemoryStore):
         and deprecate-before-add can't find the successor). Any failure —
         unknown/deprecated/foreign old_id, duplicate content, scan rejection
         — leaves BOTH entries and the graph untouched.
+
+        ``project=None`` (including omission) inherits the predecessor's realm.
+        An explicit nonempty project moves it to that realm; ``project=""``
+        deliberately makes the successor global. The public tool omits project.
         """
         if target not in ("memory", "user"):
             return {"success": False, "error": f"Unknown target '{target}'."}
@@ -2486,7 +2503,7 @@ class MemoryStoreV2(MemoryStore):
                 outcome.update({"success": False, "error": err})
                 return
             old = conn.execute(
-                "SELECT id, content, status, type, target FROM memories WHERE id=?",
+                "SELECT id, content, status, type, target, project FROM memories WHERE id=?",
                 (resolved,),
             ).fetchone()
             if old["status"] not in ("active", "pinned", "dormant"):
@@ -2527,7 +2544,8 @@ class MemoryStoreV2(MemoryStore):
                 " status, project, written_by, created_at, updated_at)"
                 " VALUES (?,?,?,?,?,?, 'active', ?, ?, ?, ?)",
                 (new_id, actual_target, eff_type, content, importance, 0.7,
-                 (project or None), (written_by or None), _now(), _now()),
+                 (old["project"] if project is None else (project or None)),
+                 (written_by or None), _now(), _now()),
             )
             conn.execute(
                 "UPDATE memories SET status='deprecated', deprecate_reason=?, updated_at=?"
@@ -2863,6 +2881,9 @@ class MemoryStoreV2(MemoryStore):
         )
         out: Dict[str, List[Dict[str, Any]]] = {}
         for r in rows:
+            # Old/manual links must not bypass the disabled-target boundary.
+            if not self.target_enabled(r["ntarget"]):
+                continue
             entry = {
                 "id": r["nid"],
                 "short_id": r["nid"][:8],
@@ -3072,8 +3093,9 @@ class MemoryStoreV2(MemoryStore):
         return safe
 
     def snapshot_contents(self) -> set:
-        """Original content strings currently present in the frozen prompt snapshot.
+        """Original content strings fully represented in the frozen prompt snapshot.
 
+        Truncated and blocked entries are deliberately not in this set.
         Union across targets — the orchestrator uses it to keep its per-turn
         pack a *supplement* to the snapshot, never a duplication.
         """
