@@ -87,7 +87,8 @@ def _pin_matched_entries(store: "MemoryStore", payload: Dict[str, Any]) -> Optio
     selects now. Approval then applies to exactly the entry the approver reviewed
     and refuses if it changed: re-running the old_text search at approve time could
     hit a newer entry that still contains it. ``supersede`` is pinned by its
-    ``old_id`` (an exact UUID needs no text resolution). Returns the JSON error when
+    ``old_id`` plus the reviewed content/revision (display prefixes resolve once
+    to a full UUID). Returns the JSON error when
     the search fails now, as the direct write would."""
     target = payload.get("target", "memory")
     if payload.get("action") == "batch":
@@ -95,11 +96,20 @@ def _pin_matched_entries(store: "MemoryStore", payload: Dict[str, Any]) -> Optio
         if result.get("success"):
             payload["operations"] = [op if entry is None else {**op, "matched_entry": entry}
                                      for op, entry in zip(payload["operations"], result["matched_entries"])]
+            if "reviewed_entries" in result:
+                payload["reviewed_entries"] = result["reviewed_entries"]
+    elif payload.get("action") in ("deprecate", "supersede") and payload.get("old_id"):
+        result = store.resolve_reviewed_id(target, payload["old_id"])
+        if result.get("success"):
+            payload["reviewed_entry"] = result["reviewed_entry"]
+            payload["old_id"] = result["reviewed_entry"]["id"]
     elif payload.get("action") in _PIN_BY_TEXT_ACTIONS and not (
             payload.get("action") == "deprecate" and payload.get("old_id")):
         result = store.resolve_entry(target, payload.get("old_text") or "", payload["action"])
         if result.get("success"):
             payload["matched_entry"] = result["matched_entry"]
+            if "reviewed_entry" in result:
+                payload["reviewed_entry"] = result["reviewed_entry"]
     else:
         return None
     return None if result.get("success") else json.dumps(result, ensure_ascii=False)
@@ -112,12 +122,19 @@ def _gate_or_stage(store: "MemoryStore", summary: str, detail: str, payload: Dic
         from tools import write_approval as wa
     except Exception:
         return None
+    enabled = wa.write_approval_enabled(wa.MEMORY)
+    if enabled and (unmatched := _pin_matched_entries(store, payload)) is not None:
+        return unmatched
+    if enabled:
+        reviewed = memory_review_lines(payload)
+        if reviewed:
+            detail += "\nReviewed entries:\n" + "\n".join(reviewed)
     decision = wa.evaluate_gate(wa.MEMORY, inline_summary=summary, inline_detail=detail)
     if decision.allow:
-        return None
+        return json.dumps(apply_memory_pending(payload, store), ensure_ascii=False) if enabled else None
     if decision.blocked:
         return tool_error(decision.message, success=False)
-    if (unmatched := _pin_matched_entries(store, payload)) is not None:
+    if not enabled and (unmatched := _pin_matched_entries(store, payload)) is not None:
         return unmatched
     record = wa.stage_write(wa.MEMORY, payload, summary=f"{summary}: {detail[:120]}", origin=wa.current_origin())
     return json.dumps({"success": True, "staged": True, "pending_id": record["id"], "message": decision.message},
@@ -155,6 +172,7 @@ def _v2_apply_single_action(
     written_by: Optional[str] = None,
     project: Optional[str] = None,
     matched_entry: Optional[str] = None,
+    reviewed_entry: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """The v2 single-op store dispatch — ONE implementation shared by the
     live tool path and the staged-write replay, so the two cannot drift.
@@ -167,12 +185,13 @@ def _v2_apply_single_action(
         return store.supersede(
             target, old_id=old_id, content=content, entry_type=entry_type,
             importance=importance, reason=reason or "", written_by=written_by,
+            reviewed_entry=reviewed_entry,
         )
     if action == "deprecate":
         return store.deprecate(
             target, old_text=old_text or "", reason=reason or "",
             old_id=old_id, superseded_by_id=superseded_by_id,
-            matched_entry=matched_entry,
+            matched_entry=matched_entry, reviewed_entry=reviewed_entry,
         )
     if action == "add":
         return store.add(
@@ -182,7 +201,7 @@ def _v2_apply_single_action(
     if action == "replace":
         return store.replace(
             target, old_text, content, matched_entry,
-            entry_type=entry_type, importance=importance,
+            entry_type=entry_type, importance=importance, reviewed_entry=reviewed_entry,
         )
     raise KeyError(action)
 
@@ -278,7 +297,7 @@ def _validate_single_op(store, action, target, content, old_text,
 # Destructive actions for the background-review gate (add stays free).
 _BG_DELETE_ACTIONS = ("replace", "remove", "deprecate", "supersede")
 # Destructive actions whose staged payload is pinned by resolved entry TEXT
-# (supersede is pinned by its exact old_id instead).
+# (v2 ID-addressed actions additionally pin content and revision).
 _PIN_BY_TEXT_ACTIONS = ("replace", "remove", "deprecate")
 
 
@@ -287,6 +306,20 @@ def destructive_ops(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     replace/remove plus the v2 revocations deprecate/supersede."""
     ops = (payload.get("operations") or []) if payload.get("action") == "batch" else [payload]
     return [op for op in ops if (op or {}).get("action") in _BG_DELETE_ACTIONS]
+
+
+def memory_review_lines(payload: Dict[str, Any]) -> List[str]:
+    """Full reviewed evidence, shared by the inline prompt and /memory pending."""
+    lines = []
+    reviews = payload.get("reviewed_entries") or ([payload["reviewed_entry"]] if payload.get("reviewed_entry") else [])
+    for entry in reviews:
+        lines.append(f"reviewed entry id: {entry['id']} (revision {entry['revision']})\n{entry['content']}")
+    for op in destructive_ops(payload):
+        if op.get("matched_entry"):
+            lines.append(f"{op['action']}s entry: {op['matched_entry']}")
+        elif not op.get("reviewed_entry"):
+            lines.append(f"{op['action']}: unpinned legacy target — reject and recreate before approving")
+    return lines
 
 
 def _background_delete_gate(store, action, operations, target="memory", content=None,
@@ -362,6 +395,11 @@ def _applied(result: Dict[str, Any]) -> Tuple[str, str]:
     return ("success" if result.get("success") else "failed"), json.dumps(result, ensure_ascii=False)
 
 
+def _gated_result(result_json: str) -> Tuple[str, str]:
+    """Staged/denied writes are rejected; an inline-approved replay is a real write."""
+    return ("success" if json.loads(result_json).get("done") else "rejected"), result_json
+
+
 def _memory_tool(action, target, content, old_text, new_text, operations, store,
                  entry_type=None, importance=None, query=None, reason=None,
                  written_by=None, old_id=None, superseded_by_id=None) -> Tuple[str, str]:
@@ -382,7 +420,7 @@ def _memory_tool(action, target, content, old_text, new_text, operations, store,
         # Approval gate: stages (background/gateway) or prompts inline (CLI); off by default.
         gate_result = _apply_write_gate(store, "batch", target, None, None, operations)
         if gate_result is not None:
-            return "rejected", gate_result
+            return _gated_result(gate_result)
         return _applied(store.apply_batch(target, operations))
     # Reject calls that provide neither action (single-op) nor operations
     # (batch).  Without this guard the dispatch falls through to the generic
@@ -415,7 +453,7 @@ def _memory_tool(action, target, content, old_text, new_text, operations, store,
                                         reason=reason, entry_type=entry_type,
                                         importance=importance, written_by=written_by))
         if invalid is not None:
-            return "rejected", invalid
+            return _gated_result(invalid)
         return _applied(_v2_apply_single_action(
             store, action, target, content or "", old_text,
             old_id=old_id, superseded_by_id=superseded_by_id, reason=reason,
@@ -432,7 +470,7 @@ def _memory_tool(action, target, content, old_text, new_text, operations, store,
                                         entry_type=entry_type, importance=importance,
                                         written_by=written_by))
         if invalid is not None:
-            return "rejected", invalid
+            return _gated_result(invalid)
         if is_v2 and action in ("add", "replace"):
             return _applied(_v2_apply_single_action(
                 store, action, target, content or "", old_text,
@@ -485,16 +523,26 @@ def _memory_target_error(store: "MemoryStore", target: str) -> Optional[Dict[str
     return {"success": False, "error": f"Built-in {label} writes are disabled in memory config.", "target": target}
 
 
-def _destructive_pin_error(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _destructive_pin_error(payload: Dict[str, Any], *, is_v2: bool = False) -> Optional[Dict[str, Any]]:
     """Error when a destructive staged op lacks the pin its approve-time replay
     requires — ``matched_entry`` for text-addressed ops, ``old_id`` for the
     id-addressed v2 revocations — or None when the payload is verifiable."""
-    for op in destructive_ops(payload):
+    ops = destructive_ops(payload)
+    if is_v2 and ops:
+        pin = "reviewed_entries" if payload.get("action") == "batch" else "reviewed_entry"
+        value = payload.get(pin)
+        valid = (isinstance(value, list) and all(isinstance(e, dict) and e for e in value)
+                 if pin == "reviewed_entries" else isinstance(value, dict) and bool(value))
+        if not valid:
+            return {"success": False, "error": (
+                "This destructive pending write predates revision pinning and cannot be verified; "
+                "nothing was applied. Reject it and recreate the change.")}
+    for op in ops:
         act = op.get("action")
-        if act == "supersede":
-            if not op.get("old_id"):
+        if act == "supersede" or (act == "deprecate" and op.get("old_id")):
+            if not op.get("old_id") or not op.get("reviewed_entry"):
                 return {"success": False, "error": (
-                    "This supersede pending write predates id pinning and cannot be "
+                    "This ID-addressed pending write predates revision pinning and cannot be "
                     "verified; nothing was applied. Reject it and recreate the change.")}
             continue
         if act == "deprecate":
@@ -519,11 +567,12 @@ def apply_memory_pending(payload: Dict[str, Any], store: "MemoryStore") -> Dict[
     target_error = _memory_target_error(store, target)
     if target_error is not None:
         return target_error
-    if pin_error := _destructive_pin_error(payload):
+    if pin_error := _destructive_pin_error(payload, is_v2=_store_is_v2(store)):
         return pin_error
-    if action == "batch":
-        return store.apply_batch(target, payload.get("operations") or [])
     is_v2 = _store_is_v2(store)
+    if action == "batch":
+        kwargs = {"reviewed_entries": payload.get("reviewed_entries")} if is_v2 else {}
+        return store.apply_batch(target, payload.get("operations") or [], **kwargs)
     if action in ("supersede", "deprecate"):
         if not is_v2:
             return {"success": False, "error": _TYPED_MEMORY_REQUIRES_V2}
@@ -534,17 +583,22 @@ def apply_memory_pending(payload: Dict[str, Any], store: "MemoryStore") -> Dict[
             reason=payload.get("reason"), entry_type=payload.get("entry_type"),
             importance=payload.get("importance"), written_by=payload.get("written_by"),
             matched_entry=payload.get("matched_entry"),
+            reviewed_entry=payload.get("reviewed_entry"),
         )
     if action in ("add", "replace") and is_v2:
         return _v2_apply_single_action(
             store, action, target,
             payload.get("content") or "", payload.get("old_text") or "",
             matched_entry=payload.get("matched_entry"),
+            reviewed_entry=payload.get("reviewed_entry"),
             entry_type=payload.get("entry_type"),
             importance=payload.get("importance"),
             written_by=payload.get("written_by"),
             project=payload.get("project"),
         )
+    if action == "remove" and is_v2:
+        return store.remove(target, payload.get("old_text") or "", payload.get("matched_entry"),
+                            reviewed_entry=payload.get("reviewed_entry"))
     if action not in _STORE_ACTIONS:
         return {"success": False, "error": f"Unknown staged action '{action}'."}
     return _STORE_ACTIONS[action][0](store, target, payload.get("content") or "", payload.get("old_text") or "",
