@@ -31,6 +31,8 @@ jobs:
             --exclude='.git' \
             --exclude='.github/workflows/' \
             /tmp/hermes-agent/ ./
+          mkdir -p tests/ci/fixtures/upstream-workflows
+          rsync -a --delete /tmp/hermes-agent/.github/workflows/ tests/ci/fixtures/upstream-workflows/
           mkdir -p .github/workflows
           cp /tmp/import-hermes.yml .github/workflows/import-hermes.yml
 

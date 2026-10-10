@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.ci.workflow_fixtures import workflow_path
 
 _PATH = Path(__file__).resolve().parents[2] / "scripts" / "ci" / "classify_changes.py"
 _spec = importlib.util.spec_from_file_location("classify_changes", _PATH)
@@ -406,7 +407,8 @@ _REPO = Path(__file__).resolve().parents[2]
 
 def _yaml(rel: str) -> dict:
     yaml = pytest.importorskip("hermes_yaml")
-    return yaml.safe_load((_REPO / rel).read_text(encoding="utf-8"))
+    path = workflow_path(Path(rel).name) if rel.startswith(".github/workflows/") else _REPO / rel
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
 def test_every_lane_reaches_the_composite_action():
