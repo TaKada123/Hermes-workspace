@@ -7,7 +7,7 @@ import importlib
 import sys
 from collections.abc import Callable
 
-REQUIRED_MODULES = ("acp", "fal_client", "parallel")
+REQUIRED_MODULES = ("acp", "fal_client", "parallel", "aiohttp")
 
 
 def missing_test_modules(import_module: Callable[[str], object] = importlib.import_module) -> list[str]:
