@@ -549,12 +549,24 @@ class MemoryOrchestrator:
             row for row in candidates.values()
             if row.get("content") not in already_prompted
         ]
-        # Relevance-dominant ranking (Gate 1 §4.2): admission by normalized
-        # match, ordering by the lexicographic tuple — type/importance can
-        # only break ties INSIDE a relevance class, never cross it.
+        # Gate 1 relevance ranking is the admission filter and the outermost
+        # ordering boundary: match_class==0 never enters, and a lower class
+        # can never outrank a higher one. Within each eligible class, the
+        # configured weighted score determines both pack order and which
+        # entries reach the token-budget cut. Stable sorting preserves
+        # rank_candidates' deterministic tie-break order.
+        ranked = rank_candidates(deduped, nq)
+        now = datetime.now(timezone.utc)
         scored: List[Tuple[Dict[str, Any], float]] = [
-            (row, 0.0) for row in rank_candidates(deduped, nq)
+            (row, score_candidate(row, query_tokens, self._weights, now))
+            for row in ranked
         ]
+        scored.sort(
+            key=lambda pair: (
+                -match_normalized(nq, str(pair[0].get("content") or ""))[0],
+                -pair[1],
+            )
+        )
         if not scored:
             self._log_recall(intent=intent, query=query, before=len(candidates), after=0, nonempty=False)
             return ""
