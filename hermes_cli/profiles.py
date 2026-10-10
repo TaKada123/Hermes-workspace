@@ -625,7 +625,6 @@ def build_alias_map() -> dict[str, str]:
     if not wrapper_dir.is_dir():
         return result
     is_windows = sys.platform == "win32"
-    prefix = "hermes -p "
     for entry in sorted(wrapper_dir.iterdir()):
         if not entry.is_file():
             continue
@@ -639,12 +638,28 @@ def build_alias_map() -> dict[str, str]:
                 content = f.read(_WRAPPER_READ_LIMIT)
         except (OSError, UnicodeDecodeError):
             continue  # UnicodeDecodeError = a binary on PATH, not a wrapper
-        idx = content.find(prefix)
-        if idx == -1:
-            continue
-        rest = content[idx + len(prefix):]
-        # Profile id is the first whitespace-delimited token after the flag.
-        canon = rest.split(None, 1)[0].strip() if rest.strip() else ""
+        try:
+            if is_windows:
+                # Windows wrappers contain a command line: hermes -p <profile> %*
+                commands = (line.strip() for line in content.splitlines())
+                commands = (line for line in commands if line.startswith("hermes "))
+                tokenized = (shlex.split(line) for line in commands)
+            else:
+                # POSIX wrappers are emitted as: exec <quoted-hermes-path> -p <profile> "$@"
+                commands = (line.strip() for line in content.splitlines())
+                commands = (line for line in commands if line.startswith("exec "))
+                tokenized = (shlex.split(line) for line in commands)
+            canon = ""
+            for tokens in tokenized:
+                try:
+                    flag_index = tokens.index("-p")
+                except ValueError:
+                    continue
+                if flag_index + 1 < len(tokens):
+                    canon = tokens[flag_index + 1]
+                    break
+        except ValueError:
+            continue  # malformed shell quoting is not one of our wrappers
         if not canon:
             continue
         canon = normalize_profile_name(canon)

@@ -1108,6 +1108,23 @@ class TestWrapperScriptSecurity:
 class TestFindAliasForProfile:
     """Tests for find_alias_for_profile() and alias display in list/show."""
 
+    @pytest.mark.parametrize("executable", [
+        "/opt/hermes/bin/hermes",
+        "/opt/Hermes Suite/bin/hermes",
+        "/opt/Гермес/bin/hermes",
+    ])
+    def test_reverse_lookup_supports_quoted_executable_paths(self, profile_env, monkeypatch, executable):
+        monkeypatch.setattr("hermes_cli.profiles.shutil.which", lambda name: executable)
+        create_wrapper_script("steve")
+        from hermes_cli.profiles import find_alias_for_profile
+        assert find_alias_for_profile("steve") == "steve"
+
+    def test_reverse_lookup_custom_alias(self, profile_env, monkeypatch):
+        monkeypatch.setattr("hermes_cli.profiles.shutil.which", lambda name: "/opt/hermes/bin/hermes")
+        create_wrapper_script("qiaobusi", target="steve")
+        from hermes_cli.profiles import find_alias_for_profile
+        assert find_alias_for_profile("steve") == "qiaobusi"
+
     def test_profile_named_alias(self, profile_env):
         from hermes_cli.profiles import create_wrapper_script, find_alias_for_profile
         create_wrapper_script("steve")
