@@ -2642,6 +2642,8 @@ dev = [
 test = [
     { name = "anthropic" },
     { name = "distlib", marker = "sys_platform == 'win32'" },
+    { name = "fal-client" },
+    { name = "parallel-web" },
 ]
 
 [package.metadata]

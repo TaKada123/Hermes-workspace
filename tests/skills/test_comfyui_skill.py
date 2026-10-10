@@ -77,14 +77,16 @@ def test_load_schema_reads_non_ascii_under_non_utf8_locale(tmp_path):
         ).encode("utf-8")
     )
 
+    scripts_link = tmp_path / "comfyui-scripts"
+    scripts_link.symlink_to(SCRIPTS, target_is_directory=True)
     result = _run_under_c_locale(
         textwrap.dedent(
             f"""
             import sys
-            sys.path.insert(0, {str(SCRIPTS)!r})
+            sys.path.insert(0, {ascii(str(scripts_link))})
             from run_workflow import load_schema
 
-            schema = load_schema({str(schema_path)!r}, {{}})
+            schema = load_schema({ascii(str(schema_path))}, {{}})
             assert schema["prompt"]["label"] == "\\u30d7\\u30ed\\u30f3\\u30d7\\u30c8", schema
             print("SUCCESS")
             """
@@ -107,14 +109,16 @@ def test_load_schema_tolerates_utf8_bom(tmp_path):
         b"\xef\xbb\xbf" + json.dumps({"prompt": {"type": "string"}}).encode("utf-8")
     )
 
+    scripts_link = tmp_path / "comfyui-scripts"
+    scripts_link.symlink_to(SCRIPTS, target_is_directory=True)
     result = _run_under_c_locale(
         textwrap.dedent(
             f"""
             import sys
-            sys.path.insert(0, {str(SCRIPTS)!r})
+            sys.path.insert(0, {ascii(str(scripts_link))})
             from run_workflow import load_schema
 
-            schema = load_schema({str(schema_path)!r}, {{}})
+            schema = load_schema({ascii(str(schema_path))}, {{}})
             assert schema["prompt"]["type"] == "string", schema
             print("SUCCESS")
             """
