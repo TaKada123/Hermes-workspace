@@ -392,7 +392,12 @@ def test_every_slow_lane_path_matches_a_tracked_file():
     if tracked.returncode != 0:
         pytest.skip("not a git checkout")
     files = tracked.stdout.splitlines()
-    tables = {**_mod._E2E_LANES, "docker": _mod._DOCKER_PATHS, "nix": _mod._NIX_LANE_PATHS}
+    # The importer deliberately excludes upstream .github/workflows/ from
+    # active downstream CI; it copies them only as inert fixtures. This fork
+    # therefore has no Nix job or nix/flake source tree to trigger the imported
+    # nix lane. Keep checking every supported downstream slow lane, but do not
+    # treat that upstream-only surface as a dead downstream path.
+    tables = {**_mod._E2E_LANES, "docker": _mod._DOCKER_PATHS}
     dead = {
         (lane, prefix)
         for lane, prefixes in tables.items()
