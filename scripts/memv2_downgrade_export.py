@@ -57,22 +57,19 @@ def _build_store():
     """MemoryStoreV2 with the configured limits/flags (load_on_disk_store shape)."""
     limits = (2200, 1375)
     memory_enabled = user_profile_enabled = True
-    try:
-        from hermes_cli.config import load_config
-        from tools.memory_tool import (
-            get_builtin_memory_config,
-            get_builtin_memory_store_flags,
-        )
+    from hermes_cli.config import load_config
+    from tools.memory_tool import (
+        get_builtin_memory_config,
+        get_builtin_memory_store_flags,
+    )
 
-        config = load_config() or {}
-        mem_cfg = get_builtin_memory_config(config)
-        memory_enabled, user_profile_enabled = get_builtin_memory_store_flags(config)
-        limits = (
-            int(mem_cfg.get("memory_char_limit", 2200)),
-            int(mem_cfg.get("user_char_limit", 1375)),
-        )
-    except Exception:  # config optional — defaults keep the export working
-        pass
+    config = load_config() or {}
+    mem_cfg = get_builtin_memory_config(config)
+    memory_enabled, user_profile_enabled = get_builtin_memory_store_flags(config)
+    limits = (
+        int(mem_cfg.get("memory_char_limit", 2200)),
+        int(mem_cfg.get("user_char_limit", 1375)),
+    )
     from agent.memory_store_v2 import MemoryStoreV2
 
     return MemoryStoreV2(
