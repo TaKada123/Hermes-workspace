@@ -13,6 +13,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 
 REPO = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO / "optional-skills" / "creative" / "comfyui" / "scripts"
@@ -63,6 +65,7 @@ def _run_under_c_locale(snippet: str) -> subprocess.CompletedProcess:
     )
 
 
+@pytest.mark.platforms("posix")
 def test_load_schema_reads_non_ascii_under_non_utf8_locale(tmp_path):
     """A schema with non-ASCII labels loads under the C locale.
 
@@ -98,6 +101,7 @@ def test_load_schema_reads_non_ascii_under_non_utf8_locale(tmp_path):
     assert "SUCCESS" in result.stdout
 
 
+@pytest.mark.platforms("posix")
 def test_load_schema_tolerates_utf8_bom(tmp_path):
     """A schema saved by a Windows GUI editor (UTF-8 BOM) still parses.
 
