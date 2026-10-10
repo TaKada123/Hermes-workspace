@@ -3,7 +3,7 @@ import sqlite3
 
 import pytest
 
-from agent.memory_store_v2 import MemoryStoreV2
+from agent.memory_store_v2 import MemoryStoreV2, SCHEMA_VERSION
 
 
 IDS = ["11111111-1111-4111-8111-111111111111",
@@ -86,7 +86,7 @@ def test_public_load_preserves_old_schema_and_provenance_on_interruption(tmp_pat
         store.load_from_disk()  # retry on the same object/connection
         assert {r["id"] for r in store.visible_rows("memory")} == set(IDS)
         with real_connect(path) as db:
-            assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() == ("4",)
+            assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() == (str(SCHEMA_VERSION),)
             assert set(db.execute("SELECT * FROM memory_links")) == {
                 (IDS[0], IDS[1], "supersedes", STAMP), (IDS[1], IDS[2], "supports", STAMP)}
             assert db.execute("PRAGMA foreign_key_check").fetchall() == []
@@ -154,8 +154,8 @@ def test_unavailable_fts_still_loads_and_recalls_without_partial_triggers(tmp_pa
         assert result["count"] == 1
         assert result["results"][0]["content"] == "велотренажёр"
         with real_connect(path) as db:
-            assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() == ("4",)
-            assert db.execute("SELECT name FROM sqlite_master WHERE type='trigger'").fetchall() == []
+            assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() == (str(SCHEMA_VERSION),)
+            assert db.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'memories_fts_%'").fetchall() == []
     finally:
         store.close()
 

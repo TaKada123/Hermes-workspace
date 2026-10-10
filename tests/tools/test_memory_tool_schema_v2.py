@@ -124,13 +124,13 @@ def test_handler_still_dispatches_legacy_shape(tmp_path, monkeypatch):
         store.close()
 
 
-def test_pending_summary_renders_v2_pins():
-    """The /memory approve summary must show the v2 pin, not 'unpinned legacy'."""
+def test_pending_summary_warns_about_unverifiable_old_id_pin():
+    """An old ID-only proposal is no longer a verified revision pin."""
     from hermes_cli.write_approval_commands import _matched_entries
     lines = _matched_entries({
         "action": "supersede", "target": "memory", "old_id": "abc123",
         "content": "new entry"})
-    assert lines == ["supersede entry id: abc123"]
+    assert "unpinned legacy target" in lines[0]
     lines = _matched_entries({
         "action": "deprecate", "target": "memory", "old_text": "x",
         "matched_entry": "Full entry text"})

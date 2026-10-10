@@ -421,7 +421,8 @@ class TestReplayOfStagedV2Writes:
     def test_replay_staged_supersede(self, store):
         first = store.add("memory", "User prefers tea")
         payload = {"action": "supersede", "target": "memory", "old_id": first["id"],
-                   "content": "User prefers coffee", "reason": "changed mind"}
+                   "content": "User prefers coffee", "reason": "changed mind",
+                   "reviewed_entry": store.resolve_reviewed_id("memory", first["id"])["reviewed_entry"]}
         result = apply_memory_pending(payload, store)
         assert result["success"]
         assert store.recall("coffee")["count"] == 1
@@ -431,7 +432,8 @@ class TestReplayOfStagedV2Writes:
         store.add("memory", "Decision to retire")
         payload = {"action": "deprecate", "target": "memory",
                    "old_text": "Decision to retire", "reason": "stale",
-                   "matched_entry": "Decision to retire"}
+                   "matched_entry": "Decision to retire",
+                   "reviewed_entry": store.resolve_entry("memory", "Decision to retire", "deprecate")["reviewed_entry"]}
         result = apply_memory_pending(payload, store)
         assert result["success"]
         assert store.recall("Decision to retire")["count"] == 0
@@ -439,7 +441,8 @@ class TestReplayOfStagedV2Writes:
     def test_replay_staged_deprecate_by_id(self, store):
         first = store.add("memory", "Decision to retire by id")
         payload = {"action": "deprecate", "target": "memory", "old_id": first["id"],
-                   "reason": "stale"}
+                   "reason": "stale",
+                   "reviewed_entry": store.resolve_reviewed_id("memory", first["id"])["reviewed_entry"]}
         result = apply_memory_pending(payload, store)
         assert result["success"]
         assert store.recall("Decision to retire by id")["count"] == 0
@@ -450,7 +453,7 @@ class TestReplayOfStagedV2Writes:
                    "matched_entry": "Entry that no longer exists"}
         result = apply_memory_pending(payload, store)
         assert not result["success"]
-        assert "no longer in memory" in result["error"]
+        assert "cannot be verified" in result["error"]
 
     def test_replay_requires_pin_on_destructive_v2_ops(self, store):
         store.add("memory", "User prefers tea")

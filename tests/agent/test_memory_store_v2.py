@@ -587,15 +587,17 @@ class TestV2ToolDispatch:
         resolved = store.resolve_entry("memory", "Оригинал", "replace")
         assert resolved["success"] and resolved["matched_entry"] == "Оригинал записи"
         payload = {"action": "replace", "target": "memory", "content": "Новая запись",
-                   "old_text": "Оригинал", "matched_entry": resolved["matched_entry"]}
+                   "old_text": "Оригинал", "matched_entry": resolved["matched_entry"],
+                   "reviewed_entry": resolved["reviewed_entry"]}
         result = apply_memory_pending(payload, store)
         assert result["success"]
         # A stale pin is refused, not re-matched by substring.
         stale = {"action": "remove", "target": "memory", "content": "",
-                 "old_text": "Оригинал", "matched_entry": "Оригинал записи"}
+                 "old_text": "Оригинал", "matched_entry": "Оригинал записи",
+                 "reviewed_entry": resolved["reviewed_entry"]}
         refused = apply_memory_pending(stale, store)
         assert not refused["success"]
-        assert "no longer in memory" in refused["error"]
+        assert "stale" in refused["error"]
 
     def test_resolve_batch_entries(self, store):
         store.add("memory", "Запись один")

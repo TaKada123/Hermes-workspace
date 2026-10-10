@@ -8,7 +8,8 @@ still nameable once the list has shifted). Ids from an older graph carry no
 fingerprint and resolve by position alone.
 Shared by CLI ``hermes journey``, the TUI ``/journey`` overlay and the desktop.
 Deleting a skill *archives* it (``hermes curator restore`` recovers it);
-deleting a memory rewrites its file under the memory tool's lock.
+deleting a memory uses its configured store (canonical SQLite transaction in v2,
+file rewrite under the memory tool's lock in legacy).
 """
 
 from __future__ import annotations
@@ -113,7 +114,24 @@ def _mutate_memory(node_id: str, replacement: str | None) -> dict[str, Any]:
                     "error": f"Replacement would put memory at {total:,}/{limit:,} chars. Shorten the new content."}
         return new_entries, message
 
-    result = load_on_disk_store()._mutate(_STORE_TARGETS[source], _apply)
+    store = load_on_disk_store()
+    try:
+        if hasattr(store, "mutate_visible_entry"):
+            _, gidx, fingerprint = _parse_memory_id(node_id)
+
+            def _select(chunks, memory_count):
+                if fingerprint:
+                    return _resolve_fingerprint(chunks, fingerprint)
+                return gidx if source == "memory" else gidx - memory_count
+
+            # Explicit Journey user consent is already handled by the caller.
+            # Resolve against canonical visible rows, never a possibly edited projection.
+            result = store.mutate_visible_entry(_STORE_TARGETS[source], _select, replacement)
+        else:
+            result = store._mutate(_STORE_TARGETS[source], _apply)
+    finally:
+        if hasattr(store, "close"):
+            store.close()
     if not result.get("success"):
         return {"ok": False, "message": result.get("error", f"{name} write failed")}
     return {"ok": True, "message": message}

@@ -101,7 +101,7 @@ _VISIBLE_STATUSES = ("active", "pinned")
 # a ``[type]`` prefix in the snapshot so the model treats them as binding.
 _PREFIXED_TYPES = ("decision", "constraint")
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 # Version of the migration-manifest JSON schema (meta['migration_manifest']
 # and <memories>/migration-manifest.json). Bump only when the shape changes.
 MIGRATION_MANIFEST_VERSION = 1
@@ -700,6 +700,8 @@ class MemoryStoreV2(MemoryStore):
 
     def _apply_schema(self, conn: sqlite3.Connection) -> None:
         _execute_schema_sql(conn, _SCHEMA_SQL)
+        from agent.memory_store_approval import init_revisions
+        init_revisions(conn, _execute_schema_sql)
         fts_available = True
         try:
             _execute_schema_sql(conn, _FTS_SQL)
@@ -1616,6 +1618,15 @@ class MemoryStoreV2(MemoryStore):
     # Mutations (public tool surface — parent contract preserved)
     # ------------------------------------------------------------------
 
+    def _mutate(self, target: str, mutate, *, skip_drift: bool = False) -> Dict[str, Any]:
+        """Fail closed: inherited flat-file callbacks must never write a v2 projection."""
+        return _error("Flat-file mutation is unavailable for SQLite memory; use a canonical store operation.")
+
+    def mutate_visible_entry(self, target: str, selector, replacement: Optional[str]) -> Dict[str, Any]:
+        """User-approved card edit/delete; resolve the selector under the canonical lock."""
+        from agent.memory_store_mutations import mutate_visible_entry
+        return mutate_visible_entry(self, target, selector, replacement)
+
     def add(
         self,
         target: str,
@@ -1714,6 +1725,7 @@ class MemoryStoreV2(MemoryStore):
         matched_entry: Optional[str] = None,
         entry_type: Optional[str] = None,
         importance: Optional[float] = None,
+        reviewed_entry: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Update the entry whose content contains ``old_text`` (parent contract).
 
@@ -1747,9 +1759,14 @@ class MemoryStoreV2(MemoryStore):
         outcome: Dict[str, Any] = {}
 
         def _update(conn: sqlite3.Connection) -> None:
+            from agent.memory_store_approval import review_error
+            if fail := review_error(conn, reviewed_entry):
+                outcome.update(fail)
+                return
             row, fail = self._resolve_old_text(
                 conn, target, old_text, matched_entry or None,
                 statuses=("active", "dormant", "archived", "pinned"),
+                reviewed_entry=reviewed_entry,
             )
             if fail is not None:
                 outcome.update(fail)
@@ -1789,6 +1806,7 @@ class MemoryStoreV2(MemoryStore):
 
     def remove(
         self, target: str, old_text: str, matched_entry: Optional[str] = None,
+        reviewed_entry: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Hard-delete the entry containing ``old_text`` (parent contract).
 
@@ -1805,9 +1823,14 @@ class MemoryStoreV2(MemoryStore):
         outcome: Dict[str, Any] = {}
 
         def _delete(conn: sqlite3.Connection) -> None:
+            from agent.memory_store_approval import review_error
+            if fail := review_error(conn, reviewed_entry):
+                outcome.update(fail)
+                return
             row, fail = self._resolve_old_text(
                 conn, target, old_text, matched_entry or None,
                 statuses=("active", "dormant", "archived", "pinned"),
+                reviewed_entry=reviewed_entry,
             )
             if fail is not None:
                 outcome.update(fail)
@@ -1832,44 +1855,16 @@ class MemoryStoreV2(MemoryStore):
     # Workspace approval-gate contract (staged-write pinning + batch)
     # ------------------------------------------------------------------
 
-    def _locate_visible_row(
-        self, target: str, old_text: str, verb: str,
-        matched_entry: Optional[str] = None,
-    ) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
-        """``(content, error)`` for the visible entry *old_text* selects.
-
-        The v2 twin of the flat store's ``_locate``: a staged write's
-        ``matched_entry`` pins the EXACT content the approver reviewed (stale
-        if it is gone); otherwise whole-content exact matches win over
-        substring matches, distinct matches are ambiguous, and a miss carries
-        ``current_entries`` for the retry loop. ``content`` is the live entry
-        text, so pinning stays backend-independent — the approval payloads and
-        their replay are byte-identical between backends.
-        """
-        entries = [r["content"] for r in self._visible_rows(target)]
-        if matched_entry is not None:
-            if matched_entry in entries:
-                return matched_entry, None
-            return None, _error(_stale_entry_message(matched_entry))
-        idx, ambiguous = _find_unique_match(entries, old_text)
-        if ambiguous:
-            return None, _error(
-                f"Multiple entries matched '{old_text}'. Be more specific.",
-                matches=[e[:80] + ("..." if len(e) > 80 else "") for e in entries if old_text in e])
-        if idx is None:
-            return None, self._consolidation_failure(_error(
-                f"No entry matched '{old_text}'. Check current_entries below and retry with the exact text "
-                f"of the entry you want to {verb}.", current_entries=entries))
-        return entries[idx], None
+    def resolve_reviewed_id(self, target: str, ident: str) -> Dict[str, Any]:
+        """Resolve a display prefix once and pin its full identity and revision."""
+        from agent.memory_store_approval import resolve_id_review
+        return self._execute_write(lambda conn: resolve_id_review(self, conn, target, ident))
 
     def resolve_entry(self, target: str, old_text: str, verb: str) -> Dict[str, Any]:
-        """``{"success": True, "matched_entry": <full entry>}`` for the entry
-        *old_text* selects now, read from the visible SQLite rows — the v2
-        resolution used by the write-approval pinning step."""
-        content, err = self._locate_visible_row(target, old_text.strip(), verb)
-        if err is not None:
-            return err
-        return {"success": True, "matched_entry": content}
+        """Pin full content/identity/revision with the same statuses as the mutation."""
+        from agent.memory_store_approval import resolve_text_review
+        result = self._execute_write(lambda conn: resolve_text_review(self, conn, target, old_text, verb))
+        return self._no_match_error(verb, target, old_text) if result.get("no_match") else result
 
     def resolve_batch_entries(self, target: str, operations: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Dry-run batch resolution against the visible rows: the SAME
@@ -1890,28 +1885,8 @@ class MemoryStoreV2(MemoryStore):
             )
             if scan_error:
                 return _error(f"Operation {i + 1}: {scan_error}")
-        working = list(self._entries_for(target))
-        matched: List[Optional[str]] = []
-        for i, op in enumerate(ops):
-            act = op.get("action")
-            content = (op.get("content") or op.get("new_text") or "").strip()
-            old_text = (op.get("old_text") or "").strip()
-            msg, prev = MemoryStore._apply_batch_op(
-                working, act, content, old_text,
-                f"Operation {i + 1} ({act or 'unknown'})",
-                op.get("matched_entry"),
-            )
-            if msg:
-                return self._batch_failure(target, msg)
-            matched.append(prev)
-        if self._entries_for(target) and not working:
-            label = self._path_for(target).name
-            return self._batch_failure(target, (
-                f"Refusing to empty {label}: this batch would remove every entry from a "
-                f"previously non-empty store. Keep at least one entry — merge overlapping "
-                f"entries into a shorter one instead of removing the last one. To delete the "
-                f"final entry deliberately, use single remove() calls."))
-        return {"success": True, "matched_entries": matched}
+        from agent.memory_store_approval import resolve_batch_reviews
+        return self._execute_write(lambda conn: resolve_batch_reviews(self, conn, target, ops))
 
     def _insert_row(
         self,
@@ -1943,7 +1918,8 @@ class MemoryStoreV2(MemoryStore):
         )
         return new_id
 
-    def apply_batch(self, target: str, operations: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def apply_batch(self, target: str, operations: List[Dict[str, Any]],
+                    reviewed_entries: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """Apply add/replace/remove ops ATOMICALLY in ONE SQLite transaction.
 
         All-or-nothing (workspace contract): every op is validated up front —
@@ -1977,6 +1953,11 @@ class MemoryStoreV2(MemoryStore):
         outcome: Dict[str, Any] = {}
 
         def _apply_all(conn: sqlite3.Connection) -> None:
+            from agent.memory_store_approval import review_error, apply_reviewed_batch_step
+            for expected in reviewed_entries or []:
+                if fail := review_error(conn, expected):
+                    outcome["error"] = fail
+                    return
             rows = conn.execute(
                 "SELECT * FROM memories WHERE target=? AND status IN ('active','pinned')"
                 " ORDER BY (status='pinned') DESC, importance DESC,"
@@ -1986,18 +1967,16 @@ class MemoryStoreV2(MemoryStore):
             # Validation walk on a copy (same matching semantics as the flat
             # store): nothing is written until the whole batch is proven valid.
             working = [r["content"] for r in rows]
+            origins = [r["id"] for r in rows]
+            reviewed_ids = {e["id"] for e in reviewed_entries or []}
             previous: List[Optional[str]] = []
             for i, op in enumerate(ops):
-                act = op.get("action")
-                content = (op.get("content") or op.get("new_text") or "").strip()
-                old_text = (op.get("old_text") or "").strip()
-                msg, prev = MemoryStore._apply_batch_op(
-                    working, act, content, old_text,
-                    f"Operation {i + 1} ({act or 'unknown'})",
-                    op.get("matched_entry"),
-                )
+                msg, prev, origin = apply_reviewed_batch_step(working, origins, op, i)
                 if msg:
                     outcome["error"] = self._batch_failure(target, msg)
+                    return
+                if reviewed_entries is not None and origin and origin not in reviewed_ids:
+                    outcome["error"] = _error("Missing reviewed batch entry revision; nothing was applied. Recreate the proposal.")
                     return
                 previous.append(prev)
             if rows and not working:
@@ -2228,6 +2207,7 @@ class MemoryStoreV2(MemoryStore):
         *,
         statuses: Tuple[str, ...] = ("active", "pinned", "dormant"),
         hint: str = "",
+        reviewed_entry: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Optional[sqlite3.Row], Optional[Dict[str, Any]]]:
         """Resolve the OLD row for replace/remove/deprecate — ONE implementation.
 
@@ -2243,6 +2223,13 @@ class MemoryStoreV2(MemoryStore):
         across the three callers).
         """
         status_clause = ", ".join(f"'{s}'" for s in statuses)
+        if reviewed_entry is not None:
+            row = conn.execute(
+                f"SELECT id, content FROM memories WHERE id=? AND target=?"
+                f" AND content=? AND status IN ({status_clause})",
+                (reviewed_entry["id"], target, reviewed_entry["content"]),
+            ).fetchone()
+            return (row, None) if row else (None, {"stale": True})
         if matched_entry is not None:
             row = conn.execute(
                 f"SELECT id, content FROM memories WHERE target=? AND content=?"
@@ -2281,6 +2268,7 @@ class MemoryStoreV2(MemoryStore):
         old_id: Optional[str] = None,
         superseded_by_id: Optional[str] = None,
         matched_entry: Optional[str] = None,
+        reviewed_entry: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Mark an entry deprecated (hidden from retrieval/snapshot, kept for audit).
 
@@ -2309,6 +2297,10 @@ class MemoryStoreV2(MemoryStore):
         outcome: Dict[str, Any] = {}
 
         def _dep(conn: sqlite3.Connection) -> None:
+            from agent.memory_store_approval import review_error
+            if fail := review_error(conn, reviewed_entry, old_id or None):
+                outcome.update(fail)
+                return
             if old_id and matched_entry is None:
                 # Full UUID or an unambiguous 8+ char prefix (the short form
                 # retrieval surfaces show) — resolved before any mutation.
@@ -2336,7 +2328,7 @@ class MemoryStoreV2(MemoryStore):
             else:
                 row, fail = self._resolve_old_text(
                     conn, target, old_text, matched_entry,
-                    hint=" or pass old_id.",
+                    hint=" or pass old_id.", reviewed_entry=reviewed_entry,
                 )
                 if fail is not None:
                     outcome.update(fail)
@@ -2455,6 +2447,7 @@ class MemoryStoreV2(MemoryStore):
         reason: str = "",
         written_by: Optional[str] = None,
         project: Optional[str] = None,
+        reviewed_entry: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Atomic decision change: new entry + old deprecation + provenance
         link in ONE transaction (2026-08-30 graph TZ, approach B).
@@ -2484,6 +2477,10 @@ class MemoryStoreV2(MemoryStore):
         new_id_holder: List[str] = []
 
         def _sup(conn: sqlite3.Connection) -> None:
+            from agent.memory_store_approval import review_error
+            if fail := review_error(conn, reviewed_entry, old_id):
+                outcome.update(fail)
+                return
             resolved, err = self._resolve_entry_id(conn, target, old_id, role="old_id")
             if resolved is None:
                 outcome.update({"success": False, "error": err})
