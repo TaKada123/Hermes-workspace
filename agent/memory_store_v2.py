@@ -2233,8 +2233,9 @@ class MemoryStoreV2(MemoryStore):
 
         A staged write's ``matched_entry`` (write-approval pin) selects the
         exact content the approver reviewed: exact-equality lookup, ``stale``
-        when gone (never re-matched by substring). Otherwise a case-folded
-        LIKE match over ``old_text``: ``no_match`` when nothing matches, an
+        when gone (never re-matched by substring). Otherwise use the legacy
+        case-sensitive, literal matcher (whole-entry exact matches win):
+        ``no_match`` when nothing matches, an
         ambiguity failure (``success: False`` + ``matches`` previews) when
         several DISTINCT contents match, else the row. Returns
         ``(row, failure_outcome)`` — exactly one is not None; the failure
@@ -2252,24 +2253,25 @@ class MemoryStoreV2(MemoryStore):
                 return None, {"stale": True}
             return row, None
         rows = conn.execute(
-            f"SELECT id, content FROM memories WHERE target=? AND ulower(content) LIKE ?"
+            f"SELECT id, content FROM memories WHERE target=?"
             f" AND status IN ({status_clause})",
-            (target, f"%{old_text.lower()}%"),
+            (target,),
         ).fetchall()
-        if not rows:
-            return None, {"no_match": True}
-        unique = {r["content"] for r in rows}
-        if len(unique) > 1:
+        entries = [r["content"] for r in rows]
+        idx, ambiguous = _find_unique_match(entries, old_text)
+        if ambiguous:
             previews = [
-                r["content"][:80] + ("..." if len(r["content"]) > 80 else "")
-                for r in rows
+                entry[:80] + ("..." if len(entry) > 80 else "")
+                for entry in entries if old_text in entry
             ]
             return None, {
                 "success": False,
                 "error": f"Multiple entries matched '{old_text}'. Be more specific{hint}.",
                 "matches": previews,
             }
-        return rows[0], None
+        if idx is None:
+            return None, {"no_match": True}
+        return rows[idx], None
 
     def deprecate(
         self,
@@ -2285,7 +2287,8 @@ class MemoryStoreV2(MemoryStore):
         Resolution of the OLD entry: a staged write's ``matched_entry`` pins
         the exact content the approver reviewed (stale if gone), then exact
         ``old_id`` (preferred — no substring guessing), then the legacy
-        ``old_text`` LIKE match. Successor linking, in priority order:
+        ``old_text`` literal, case-sensitive match (whole-entry exact first).
+        Successor linking, in priority order:
 
         1. ``superseded_by_id`` — exact id. Validated strictly (exists,
            same target, not the old entry itself, not deprecated); any
