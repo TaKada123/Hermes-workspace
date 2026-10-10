@@ -34,6 +34,85 @@ def cli(home, dry_run):
     )
 
 
+def home_inventory(home):
+    """Inventory the ENTIRE profile, not just its memories directory.
+
+    SQLite SHM is transient lock bookkeeping. Only that exact sidecar and
+    an empty WAL are exempt; a nonempty WAL must remain byte-identical.
+    Directories (including an initially missing home) are part of the inventory.
+    """
+    inventory = {".": "directory"} if home.exists() else {}
+    for path in home.rglob("*"):
+        name = path.relative_to(home).as_posix()
+        if name == "memories/memory.db-shm":
+            continue
+        if name == "memories/memory.db-wal" and path.stat().st_size == 0:
+            continue
+        inventory[name] = "directory" if path.is_dir() else hashlib.sha256(path.read_bytes()).hexdigest()
+    return inventory
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("configured", [False, True])
+def test_cli_writes_only_declared_export_artifacts_in_entire_home(tmp_path, dry_run, configured):
+    home = tmp_path / "profile"
+    memories = home / "memories"
+    memories.mkdir(parents=True)
+    # Minimal independently constructed existing V2 store, no startup loader.
+    with sqlite3.connect(memories / "memory.db") as db:
+        db.execute("CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT)")
+        db.execute("INSERT INTO meta VALUES ('schema_version','4')")
+        db.execute("CREATE TABLE memories(id TEXT,target TEXT,type TEXT,content TEXT,"
+                   "status TEXT,importance REAL,written_by TEXT,created_at TEXT)")
+        db.execute("INSERT INTO memories VALUES ('canonical','memory','fact','Record',"
+                   "'active',0.5,NULL,'2026-01-01')")
+    db.close()
+    (memories / "MEMORY.md").write_text("Legacy")
+    (memories / "USER.md").write_text("User")
+    (home / "unrelated").mkdir()
+    (home / "unrelated" / "keep.bin").write_bytes(b"\x00\xff")
+    if configured:
+        (home / "config.yaml").write_text("memory:\n  memory_char_limit: 2200\n")
+    before = home_inventory(home)
+    proc = cli(home, dry_run)
+    assert proc.returncode == 0, proc.stderr
+    after = home_inventory(home)
+    if dry_run:
+        assert after == before
+    else:
+        report = json.loads(proc.stdout)
+        allowed = {"memories/MEMORY.md", "memories/USER.md", "memories/downgrade-export-report.json"}
+        allowed.update(Path(t["backup"]).relative_to(home).as_posix() for t in report["targets"].values())
+        changed = {name for name in before.keys() | after.keys() if before.get(name) != after.get(name)}
+        assert changed == allowed
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_cli_does_not_seed_a_missing_home(tmp_path, dry_run):
+    home = tmp_path / "absent-profile"
+    before = home_inventory(home)
+    proc = cli(home, dry_run)
+    assert proc.returncode == 2
+    assert "memory.db is missing" in proc.stderr
+    assert home_inventory(home) == before == {}
+
+
+@pytest.mark.parametrize("key", ["memory_char_limit", "user_char_limit"])
+@pytest.mark.parametrize("value", ["not-a-number", "null", "[]", "{}"])
+def test_cli_malformed_limit_diagnostic_does_not_write_home(tmp_path, key, value):
+    home = tmp_path / "profile"
+    home.mkdir()
+    (home / "config.yaml").write_text(f"memory:\n  {key}: {value}\n")
+    before = home_inventory(home)
+    proc = cli(home, True)
+    assert proc.returncode == 2
+    assert key in proc.stderr
+    assert "integer" in proc.stderr
+    if value == "not-a-number":
+        assert value in proc.stderr
+    assert home_inventory(home) == before
+
+
 @pytest.mark.parametrize("dry_run", [False, True])
 @pytest.mark.parametrize("migrated", [False, True])
 def test_cli_never_initializes_or_migrates_existing_store(tmp_path, monkeypatch, dry_run, migrated):

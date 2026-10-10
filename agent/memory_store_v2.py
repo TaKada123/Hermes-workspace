@@ -61,6 +61,36 @@ from utils import atomic_write_text
 
 logger = logging.getLogger(__name__)
 
+
+class MemoryAliasConfigError(ValueError):
+    """Malformed memory.aliases; distinct from store/runtime failures."""
+
+    def __init__(self, key: str, cause: str):
+        self.key = key
+        self.cause = cause
+        self.remediation = (
+            "Set memory.aliases to a mapping of non-empty terms to non-empty "
+            "strings or lists of strings (for example {network: [vpn]}), "
+            "or remove it/set null to clear aliases; then retry."
+        )
+        super().__init__(f"Invalid {key}: {cause}. {self.remediation}")
+
+
+def _execute_schema_sql(conn: sqlite3.Connection, script: str) -> None:
+    """Execute complete DDL statements without executescript's implicit COMMIT.
+
+    complete_statement keeps trigger bodies (and their internal semicolons)
+    together. All shipped schema statements end on a line boundary.
+    """
+    statement = ""
+    for line in script.splitlines(keepends=True):
+        statement += line
+        if sqlite3.complete_statement(statement):
+            conn.execute(statement)
+            statement = ""
+    if statement.strip():
+        conn.execute(statement)
+
 # Entry types understood by the store. ``legacy`` marks pre-v2 imports.
 ENTRY_TYPES = ("fact", "decision", "constraint", "pattern", "preference", "legacy")
 # Statuses governing retrieval/snapshot visibility.
@@ -653,11 +683,32 @@ class MemoryStoreV2(MemoryStore):
         return conn
 
     def _init_schema(self, conn: sqlite3.Connection) -> None:
-        conn.executescript(_SCHEMA_SQL)
+        # DDL, provenance repair, FTS rebuilds and the version marker are one
+        # unit, including on fresh databases. Savepoints also compose safely
+        # with callers that already hold a transaction.
+        conn.execute("SAVEPOINT memory_schema")
         try:
-            conn.executescript(_FTS_SQL)
+            self._apply_schema(conn)
+            conn.execute("RELEASE memory_schema")
+        except BaseException:
+            # SQLITE_INTERRUPT/FULL/IOERR may already have rolled back the
+            # whole transaction. Do not mask that fault with "no savepoint".
+            if conn.in_transaction:
+                conn.execute("ROLLBACK TO memory_schema")
+                conn.execute("RELEASE memory_schema")
+            raise
+
+    def _apply_schema(self, conn: sqlite3.Connection) -> None:
+        _execute_schema_sql(conn, _SCHEMA_SQL)
+        fts_available = True
+        try:
+            _execute_schema_sql(conn, _FTS_SQL)
         except sqlite3.OperationalError as exc:
-            # FTS5 unavailable in this build — search falls back to LIKE.
+            # Only a missing SQLite extension is optional. Disk/SQL/interrupt
+            # faults must abort the entire upgrade, not bless a partial index.
+            if str(exc).lower() != "no such module: fts5":
+                raise
+            fts_available = False
             logger.warning("memory.db: FTS5 unavailable (%s); recall degrades to LIKE", exc)
         # Forward migrations for existing v1 databases (fresh ones get the
         # current schema from _SCHEMA_SQL and land at SCHEMA_VERSION directly).
@@ -666,9 +717,9 @@ class MemoryStoreV2(MemoryStore):
         ).fetchone()
         version = int(stored["value"]) if stored else SCHEMA_VERSION
         if version < 2:
-            self._migrate_v1_to_v2(conn)
+            self._migrate_v1_to_v2(conn, fts_available=fts_available)
         if version < 3:
-            self._migrate_v2_to_v3(conn)
+            self._migrate_v2_to_v3(conn, fts_available=fts_available)
         if version < 4:
             self._migrate_v3_to_v4(conn)
         # Monotonic schema marker (Gate 0.5 compatibility bridge): never
@@ -691,7 +742,7 @@ class MemoryStoreV2(MemoryStore):
             )
 
     @staticmethod
-    def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
+    def _migrate_v1_to_v2(conn: sqlite3.Connection, *, fts_available: bool = True) -> None:
         """v1 → v2: consumer-provenance column for scoped revert (Phase 3).
 
         Also rebuilds the FTS index: a pre-FTS database (or one whose FTS
@@ -701,14 +752,12 @@ class MemoryStoreV2(MemoryStore):
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(memories)")}
         if "written_by" not in cols:
             conn.execute("ALTER TABLE memories ADD COLUMN written_by TEXT")
-        try:
+        if fts_available:
             conn.execute("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')")
-        except sqlite3.OperationalError as exc:
-            logger.debug("memory.db: FTS rebuild skipped (%s)", exc)
         logger.info("memory.db: migrated schema v1 → v2 (written_by column)")
 
     @staticmethod
-    def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
+    def _migrate_v2_to_v3(conn: sqlite3.Connection, *, fts_available: bool = True) -> None:
         """v2 → v3: rebuild the FTS index with е-folded content (P7).
 
         ``INSERT INTO memories_fts(memories_fts) VALUES('rebuild')`` is NOT
@@ -721,16 +770,15 @@ class MemoryStoreV2(MemoryStore):
         from the content table — exactly what the triggers do per row. The
         ``memories.content`` column is not touched: entries stay verbatim.
         """
-        try:
+        if fts_available:
             conn.execute("DROP TABLE IF EXISTS memories_fts")
-            conn.executescript(_FTS_SQL)  # recreate virtual table + triggers
+            _execute_schema_sql(conn, _FTS_SQL)
             conn.execute(
                 "INSERT INTO memories_fts(rowid, content)"
                 " SELECT rowid, replace(replace(content, 'ё', 'е'), 'Ё', 'Е')"
                 " FROM memories"
             )
-        except sqlite3.OperationalError as exc:
-            logger.debug("memory.db: folded FTS reindex skipped (%s)", exc)
+
         logger.info("memory.db: migrated schema v2 → v3 (е-folded FTS reindex)")
 
     @staticmethod
@@ -766,7 +814,7 @@ class MemoryStoreV2(MemoryStore):
             return None, "unexpected id length"
 
         conn.execute("DROP TABLE memory_links")
-        conn.executescript(
+        conn.execute(
             "CREATE TABLE memory_links ("
             " source_id TEXT NOT NULL, target_id TEXT NOT NULL,"
             " relation_type TEXT NOT NULL, created_at TEXT NOT NULL,"
@@ -914,24 +962,31 @@ class MemoryStoreV2(MemoryStore):
             cache.setdefault(r["term"], []).append(r["alias"])
         self._alias_map = {k: tuple(v) for k, v in cache.items()}
 
-    def set_alias_cache(self, alias_map: Optional[Dict[str, Any]]) -> None:
+    def set_alias_cache(self, alias_map: Any) -> None:
         """Install config-provided aliases and rewrite the cache table (P2).
 
         ``memory.aliases`` in config.yaml is the source of truth
         ({term: [aliases]}); this wholesale-replaces both the in-memory map
-        and the ``memory_aliases`` cache. Unknown shapes are ignored, not
-        raised — a malformed config must never break memory.
+        and the ``memory_aliases`` cache. None/absent clears aliases. String
+        scalars and lists/tuples of strings are accepted; malformed supplied
+        values raise MemoryAliasConfigError BEFORE either cache is mutated.
         """
         clean: Dict[str, Tuple[str, ...]] = {}
-        if isinstance(alias_map, dict):
+        if alias_map is not None and not isinstance(alias_map, dict):
+            raise MemoryAliasConfigError("memory.aliases", "expected a mapping or null")
+        if alias_map is not None:
             for term, aliases in alias_map.items():
                 if not isinstance(term, str) or not term.strip():
-                    continue
-                values = [
-                    _fold_yo(str(a).strip().lower())
-                    for a in (aliases if isinstance(aliases, (list, tuple)) else [aliases])
-                    if isinstance(a, str) and a.strip()
-                ]
+                    raise MemoryAliasConfigError("memory.aliases", "expected non-empty string keys")
+                key = f"memory.aliases[{term!r}]"
+                if not isinstance(aliases, (str, list, tuple)):
+                    raise MemoryAliasConfigError(key, "expected a string or list of strings")
+                supplied = [aliases] if isinstance(aliases, str) else aliases
+                values = []
+                for index, alias in enumerate(supplied):
+                    if not isinstance(alias, str) or not alias.strip():
+                        raise MemoryAliasConfigError(f"{key}[{index}]", "expected a non-empty string")
+                    values.append(_fold_yo(alias.strip().lower()))
                 if values:
                     # Keys are folded too (P7): a ё-spelled config key must
                     # fire for an е-spelled query word and vice versa.
