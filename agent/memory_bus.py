@@ -43,6 +43,7 @@ orchestrator lands with ticket #6.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -370,7 +371,8 @@ class MemoryBus:
 
         Gated by the consumer's capabilities (read-only specs are refused
         structurally), tagged with ``written_by`` for scoped revert, and
-        mirrored to the external provider via the existing bridge.
+        subject to the memory tool's write-approval gate. Only committed writes
+        are mirrored to the external provider via the existing bridge.
         """
         write_cap = _TARGET_CAPS.get(target, ("", ""))[1] if target in _TARGET_CAPS else None
         if write_cap is None:
@@ -381,6 +383,16 @@ class MemoryBus:
                 "success": False,
                 "error": f"consumer '{consumer_id}' is read-only or not subscribed — write refused",
             }
+        # Capabilities grant the operation, not permission to bypass human review.
+        # Use the same typed payload and approval replay as the memory tool.
+        from tools.memory_tool import _apply_write_gate
+        gated = _apply_write_gate(
+            self.store, "add", target, content, None,
+            entry_type=entry_type, importance=importance,
+            written_by=sub.spec.consumer_id, project=sub.spec.project,
+        )
+        if gated is not None:
+            return json.loads(gated)
         result = self.store.add(
             target,
             content,
@@ -423,6 +435,10 @@ class MemoryBus:
         flips only the calling consumer's rows of THAT target to
         ``deprecated`` (never deletes, never touches other consumers' or
         MAIN's rows, and never crosses into the other target's rows).
+
+        Approval-enabled or unattended-review contexts refuse this live-group
+        operation: the current store API cannot atomically revert a pinned set
+        of reviewed rows. Capabilities do not override issue #2 stories 12/13.
         """
         self.refresh_capabilities()
         sub = self._subscriptions.get(consumer_id)
@@ -446,6 +462,22 @@ class MemoryBus:
             return {
                 "success": False,
                 "error": f"consumer '{consumer_id}' lacks '{roll_cap}' — rollback refused",
+            }
+        # rollback_consumer selects a live group, not a pinned set of reviewed
+        # rows. Replaying it later could revoke future writes; approving inline
+        # has the same race. Until the store exposes an atomic pinned-ID revert,
+        # restricted contexts must refuse instead of staging a broad remove.
+        from tools import write_approval as wa
+        from tools.skill_provenance import is_unattended_review
+        if wa.write_approval_enabled(wa.MEMORY) or is_unattended_review():
+            return {
+                "success": False,
+                "error": (
+                    "Scoped rollback requires pinned-row approval, which is not supported. "
+                    "Nothing was deprecated. Review the exact records and propose individual "
+                    "deprecate operations by old_id via the memory tool, then approve them "
+                    "with /memory pending and /memory approve <id>."
+                ),
             }
         return self.store.rollback_consumer(consumer_id, reason=reason, target=target)
 
