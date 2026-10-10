@@ -189,6 +189,10 @@ for _entry in "${_path_entries[@]}"; do
 done
 
 # ── Run in hermetic env ──────────────────────────────────────────────────────
+# Fail before pytest collection gives confusing per-file ImportErrors when a
+# locally supplied interpreter is missing an SDK declared by the test group.
+"$PYTHON" "$SCRIPT_DIR/check_test_environment.py"
+
 # env -i: start with empty environment, opt-in only what we need.
 # No credential var can leak — you'd have to explicitly add it here.
 echo "▶ running per-file parallel test suite via run_tests_parallel.py"

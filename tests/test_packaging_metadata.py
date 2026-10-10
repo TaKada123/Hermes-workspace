@@ -17,6 +17,10 @@ def test_test_dependencies_are_group_only_in_manifest_and_lock():
     assert "dev" not in manifest["project"]["optional-dependencies"]
     assert "dev" in hermes["dev-dependencies"]
     assert "dev" not in hermes.get("optional-dependencies", {})
+    locked_test_group = {
+        dependency["name"] for dependency in hermes["dev-dependencies"]["test"]
+    }
+    assert {"agent-client-protocol", "fal-client", "parallel-web"} <= locked_test_group
 
 
 def test_full_suite_provider_sdks_are_test_group_only():
@@ -24,7 +28,10 @@ def test_full_suite_provider_sdks_are_test_group_only():
     test_group = {
         Requirement(dep).name for dep in metadata["dependency-groups"]["test"]
     }
-    assert {"fal-client", "parallel-web"} <= test_group
+    assert {"agent-client-protocol", "fal-client", "parallel-web"} <= test_group
+    assert "agent-client-protocol" not in {
+        Requirement(dep).name for dep in metadata["project"]["dependencies"]
+    }
     assert "fal-client" not in {Requirement(dep).name for dep in metadata["project"]["dependencies"]}
     assert "parallel-web" not in {Requirement(dep).name for dep in metadata["project"]["dependencies"]}
 
