@@ -678,6 +678,11 @@ def _build_child_goal_message(goal: str, images: List[str], child) -> Any:
         )
         if mode == "native":
             parts, skipped = build_native_content_parts(goal, paths, urls)
+            if parts and parts[0].get("type") == "text":
+                # The shared image builder strips captions. Delegated goals are
+                # verbatim contracts; retain their trailing/Unicode newlines,
+                # including when the builder adds image-location hints.
+                parts[0] = {**parts[0], "text": goal + parts[0]["text"][len(goal.strip()):]}
             if skipped:
                 logger.warning("delegate_task: skipped %d unreadable image(s) for subagent: %s", len(skipped), ", ".join(skipped[:3]))
             if data_urls:
@@ -943,6 +948,8 @@ class _ChildRun:
                     briefing = user_message[len(clean_user_message):]
                 else:
                     briefing = user_message[-1]["text"]
+                goal_text = (clean_user_message if isinstance(clean_user_message, str)
+                             else clean_user_message[0]["text"])
 
                 def with_briefing(messages, *args, **options):
                     outbound = sanitize(messages, *args, **options)
@@ -951,9 +958,20 @@ class _ChildRun:
                         if msg.get("role") != "user":
                             continue
                         content = msg.get("content")
-                        # Steering/recovery may append other user turns. The
-                        # briefing belongs to the original goal, never those.
-                        if self.goal not in str(content):
+                        # Steering/recovery may append other user turns. Match
+                        # the original text value, not repr(content): repr escapes
+                        # multiline/Unicode goals and can match image URLs or
+                        # quoted history that merely contains the goal.
+                        if isinstance(content, str):
+                            is_goal = content == clean_user_message
+                        elif isinstance(content, list):
+                            is_goal = any(
+                                isinstance(part, dict) and part.get("type") == "text"
+                                and part.get("text") == goal_text for part in content
+                            )
+                        else:
+                            is_goal = False
+                        if not is_goal:
                             continue
                         if isinstance(content, str):
                             content = content + briefing
