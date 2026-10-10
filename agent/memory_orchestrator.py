@@ -633,12 +633,33 @@ class MemoryOrchestrator:
         return pack
 
 
+def read_memory_boolean_section(mem_config: Mapping, section: str, *, default: bool) -> bool:
+    """Absent sections/flags keep defaults; explicit shapes and values are strict."""
+    if not isinstance(mem_config, Mapping):
+        raise MemoryOrchestratorConfigError(
+            "memory must be a mapping; set memory to a mapping or omit it"
+        )
+    cfg = mem_config.get(section, {})
+    if not isinstance(cfg, Mapping):
+        raise MemoryOrchestratorConfigError(
+            f"memory.{section} must be a mapping; set {section} to a mapping or omit it"
+        )
+    value = cfg.get("enabled", default)
+    if not isinstance(value, bool):
+        raise MemoryOrchestratorConfigError(
+            f"memory.{section}.enabled must be a boolean (true or false), not {type(value).__name__}; "
+            f"set enabled to true or false or omit it for default {str(default).lower()}"
+        )
+    return value
+
+
 def read_orchestrator_config(mem_config: Mapping) -> Tuple[int, int, ScoringWeights]:
     """Read the retrieval settings shared by the pack and delegation bus.
 
     Absent keys retain defaults; explicitly supplied unusable values do not.
     Numeric strings remain accepted, and weights need not sum to one.
     """
+    read_memory_boolean_section(mem_config, "orchestrator", default=True)
     cfg = mem_config.get("orchestrator", {})
     if not isinstance(cfg, Mapping):
         raise MemoryOrchestratorConfigError(
@@ -680,12 +701,12 @@ def build_memory_orchestrator(
     orchestrator-facing methods) instead of importing MemoryStoreV2 —
     the legacy flat-file store simply yields ``None``.
     """
+    enabled = read_memory_boolean_section(mem_config, "orchestrator", default=True)
     if store is None or not all(
         hasattr(store, m) for m in ("recall_candidates", "recent_entries", "snapshot_contents", "bump_access")
     ):
         return None
-    orch_cfg = (mem_config or {}).get("orchestrator", {}) if isinstance(mem_config, Mapping) else {}
-    if isinstance(orch_cfg, Mapping) and not orch_cfg.get("enabled", True):
+    if not enabled:
         return None
     targets = [t for t, on in (("memory", memory_enabled), ("user", user_profile_enabled)) if on]
     if not targets:

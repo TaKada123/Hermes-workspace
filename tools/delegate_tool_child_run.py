@@ -700,14 +700,37 @@ def _build_child_goal_message(goal: str, images: List[str], child) -> Any:
         return goal
 
 
+class DelegationMemoryConfigError(ValueError):
+    """An explicitly supplied briefing gate cannot be interpreted safely."""
+
+
+def _validate_briefing_section(cfg: Any) -> bool:
+    from collections.abc import Mapping
+    if not isinstance(cfg, Mapping):
+        raise DelegationMemoryConfigError(
+            "delegation must be a mapping; set delegation to a mapping or omit it"
+        )
+    enabled = cfg.get("memory_briefing", True)
+    if not isinstance(enabled, bool):
+        raise DelegationMemoryConfigError(
+            "delegation.memory_briefing must be a boolean (true or false), "
+            f"not {type(enabled).__name__}; set memory_briefing to true or false or omit it for default true"
+        )
+    return enabled
+
+
 def _memory_briefing_enabled() -> bool:
-    """``delegation.memory_briefing`` gate (default True) — the kill switch for the
-    subagent memory briefing (ticket #8). Read from the live ``delegation`` config
-    section (NOT a top-level key — the arch2 bug). Fail-open: an unreadable config
-    keeps the default-on behaviour."""
+    """Default-on; runtime read failures stay soft, supplied config errors do not."""
     try:
+        # The normal delegation loader discards malformed sections and the
+        # defaults merger replaces explicit null. Validate raw supplied shapes.
+        if os.environ.get("HERMES_IGNORE_USER_CONFIG") != "1":
+            from hermes_cli.config import read_raw_config
+            _validate_briefing_section(read_raw_config().get("delegation", {}))
         from tools.delegate_tool_config import _load_config
-        return bool((_load_config() or {}).get("memory_briefing", True))
+        return _validate_briefing_section(_load_config())
+    except DelegationMemoryConfigError:
+        raise
     except Exception:
         return True
 
@@ -889,9 +912,6 @@ class _ChildRun:
         from tools.daemon_pool import DaemonThreadPoolExecutor
         child, task_index = self.child, self.task_index
         child_timeout = _get_child_timeout()
-        executor = DaemonThreadPoolExecutor(
-            max_workers=1, initializer=_set_subagent_approval_cb, initargs=(_get_subagent_approval_callback(),),
-        )
         # Worker thread handle so the timeout diagnostic can dump its stack.
         worker_thread_holder: Dict[str, Optional[threading.Thread]] = {"t": None}
         # Resolved after seed_workspace so a multimodal goal's text part carries the worktree note too.
@@ -900,18 +920,80 @@ class _ChildRun:
         # Ticket #8: the parent recalls memory on the child's behalf — a one-time
         # read-only briefing appended to the goal (gated by delegation.memory_briefing).
         # Never persisted, never fenced; the child itself stays memoryless.
+        clean_user_message = user_message
         user_message = _attach_delegation_briefing(
             self.parent_agent, self.goal, self.subagent_id, user_message,
         )
+        briefing_attached = user_message != clean_user_message
 
         def _run_with_thread_capture():
             worker_thread_holder["t"] = threading.current_thread()
             from agent.delegation_context import delegated_child_context
             with delegated_child_context(str(getattr(child, "session_id", "") or "")):
-                return child.run_conversation(
-                    user_message=user_message, task_id=self.child_task_id, stream_callback=self.relay_text,
-                )
+                kwargs = dict(task_id=self.child_task_id, stream_callback=self.relay_text)
+                if not briefing_attached:
+                    return child.run_conversation(user_message=user_message, **kwargs)
+                kwargs["persist_user_message"] = clean_user_message
+                # A durable override alone is NOT ephemeral: turn-start persistence
+                # records augmented bytes in api_content, and resume replays them.
+                # Keep the live history clean too; attach only to outbound copies,
+                # after sidecar stamping, compaction and snapshot selection.
+                sanitize = child._sanitize_api_messages
+                if isinstance(user_message, str):
+                    briefing = user_message[len(clean_user_message):]
+                else:
+                    briefing = user_message[-1]["text"]
 
+                def with_briefing(messages, *args, **options):
+                    outbound = sanitize(messages, *args, **options)
+                    for index in range(len(outbound) - 1, -1, -1):
+                        msg = outbound[index]
+                        if msg.get("role") != "user":
+                            continue
+                        content = msg.get("content")
+                        # Steering/recovery may append other user turns. The
+                        # briefing belongs to the original goal, never those.
+                        if self.goal not in str(content):
+                            continue
+                        if isinstance(content, str):
+                            content = content + briefing
+                        elif isinstance(content, list):
+                            content = list(content) + [{"type": "text", "text": briefing}]
+                        else:
+                            break
+                        outbound = list(outbound)
+                        outbound[index] = {**msg, "content": content}
+                        break
+                    return outbound
+
+                # Provider debug dumps are durable too, including on 4xx errors.
+                # Remove this exact generated briefing, not a broad marker regex
+                # that could erase literal user text; leave all other diagnostics.
+                dump_request = child._dump_api_request_debug
+
+                def clean_dump_value(value):
+                    if isinstance(value, str):
+                        return value.replace(briefing.strip(), "")
+                    if isinstance(value, list):
+                        return [clean_dump_value(item) for item in value]
+                    if isinstance(value, dict):
+                        return {key: clean_dump_value(item) for key, item in value.items()}
+                    return value
+
+                def dump_without_briefing(api_kwargs, *args, **options):
+                    return dump_request(clean_dump_value(api_kwargs), *args, **options)
+
+                child._sanitize_api_messages = with_briefing
+                child._dump_api_request_debug = dump_without_briefing
+                try:
+                    return child.run_conversation(user_message=clean_user_message, **kwargs)
+                finally:
+                    child._sanitize_api_messages = sanitize
+                    child._dump_api_request_debug = dump_request
+
+        executor = DaemonThreadPoolExecutor(
+            max_workers=1, initializer=_set_subagent_approval_cb, initargs=(_get_subagent_approval_callback(),),
+        )
         future = executor.submit(contextvars.copy_context().run, _run_with_thread_capture)
         # One wait covers both ways out: the worker finishing, or the heartbeat's stale verdict.
         # Without the second, a worker wedged after its final answer holds a finite (-Q / Bot Chat
