@@ -213,6 +213,11 @@ def test_subscribe_satisfaction_predicate(mem_dir):
     assert bus.subscribe(ConsumerSpec("", needs=frozenset({READ_MEMORY}))) is None
     assert bus.subscribe(ConsumerSpec("bad", needs=frozenset({"fly:moon"}))) is None
     assert bus.subscription("bad") is None
+    # A valid need must not hide an unknown requested capability.
+    assert bus.subscribe(ConsumerSpec(
+        "mixed", needs=frozenset({READ_MEMORY, "fly:moon"}),
+    )) is None
+    assert bus.subscription("mixed") is None
     s.close()
 
 

@@ -108,9 +108,9 @@ class ConsumerSpec:
         """Normalize; ``None`` if the spec is malformed (empty id / bad keys)."""
         if not self.consumer_id or not self.consumer_id.strip():
             return None
-        clean = frozenset(k for k in self.needs if k in ALL_CAPABILITIES)
-        if not clean:
+        if not self.needs or not self.needs <= ALL_CAPABILITIES:
             return None
+        clean = self.needs
         return ConsumerSpec(
             consumer_id=self.consumer_id.strip(),
             needs=clean,
