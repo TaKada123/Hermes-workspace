@@ -14,15 +14,8 @@ import threading
 _INTERPRETER_PREFIXES = tuple({
     Path(p).resolve() for p in (sys.prefix, sys.base_prefix, sys.exec_prefix, sys.base_exec_prefix)
 } | {
-    # A PM-activated developer shell runs sys.prefix's python against a dependency generation
-    # whose site-packages sits under the (real) Hermes home; third-party imports from it are the
-    # interpreter's installation, not Hermes state.
     Path(p).resolve() for p in sys.path if p and Path(p).name in ("site-packages", "dist-packages")
 } | {
-    # The default install checks the repo out INSIDE the home (install.sh:
-    # INSTALL_DIR=$HERMES_HOME/hermes-agent). Reading test data, sources for tracebacks, or the
-    # checkout's own .venv is not Hermes state; without this every run from a default install
-    # trips on its first traceback.
     Path(__file__).resolve().parent.parent,
 })
 # The same prefixes as plain strings for the check() fast path. PurePath comparison folds case on
@@ -30,6 +23,17 @@ _INTERPRETER_PREFIXES = tuple({
 # resolve once at import, as before: they are fixed for the process lifetime.
 _normcase = os.path.normcase
 _INTERPRETER_PREFIX_STRS = tuple(_normcase(os.fspath(p)) for p in _INTERPRETER_PREFIXES)
+
+
+@lru_cache(maxsize=8)
+def _interpreter_prefixes_outside_roots(roots) -> tuple[str, ...]:
+    """Allow interpreter files only when their installation is outside protected homes."""
+    protected = tuple(_normcase(os.path.realpath(os.fspath(root))) for root in roots)
+    project = _normcase(os.path.realpath(os.fspath(Path(__file__).resolve().parent.parent)))
+    return tuple(
+        prefix for prefix in _INTERPRETER_PREFIX_STRS
+        if prefix == project or not any(_within(prefix, root) for root in protected)
+    )
 
 
 def _within(path: str, prefix: str) -> bool:
@@ -82,6 +86,7 @@ class HomeIOGuard:
                 return
             resolved = self._refuse_installed_app_change(value, absolute) if destructive else None
             roots = tuple(_normcase(os.fspath(r)) for r in self.roots())
+            interpreter_prefixes = _interpreter_prefixes_outside_roots(roots)
             # Resolving the root itself (get_default_hermes_root's relative_to
             # probe) reads no state; only its contents are guarded.
             if metadata and absolute in roots:
@@ -94,10 +99,9 @@ class HomeIOGuard:
                 cwd = os.getcwd() if self._relative_path_entries(path) else None
                 if os.path.dirname(absolute) in self._path_entries(path, cwd):
                     return
-            # The interpreter's own installation (a PM-managed python under ~/.hermes/tools):
-            # stdlib source reads (linecache, traceback) are not Hermes state either, nor is
-            # realpath() walking up through its ancestors.
-            for prefix in _INTERPRETER_PREFIX_STRS:
+            # The interpreter's own installation: stdlib source reads (linecache, traceback) are
+            # not Hermes state when the installation is outside every protected home.
+            for prefix in interpreter_prefixes:
                 if _within(absolute, prefix) or (metadata and _contains(absolute, prefix)):
                     return
             # Check the lexical path first: resolving must not probe a protected
@@ -110,7 +114,7 @@ class HomeIOGuard:
             if metadata and resolved in roots:
                 return
             # A fixture symlink to the running interpreter resolves into its installation.
-            for prefix in _INTERPRETER_PREFIX_STRS:
+            for prefix in interpreter_prefixes:
                 if _within(resolved, prefix):
                     return
             for root in roots:
