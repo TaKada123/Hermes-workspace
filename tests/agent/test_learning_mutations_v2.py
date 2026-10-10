@@ -97,4 +97,3 @@ def test_journey_identity_handles_shift_and_profile_global_offset(tmp_path, monk
         assert edit_node(ident, "quartz corrected profile")["ok"]
         store.load_from_disk()
         assert [r["content"] for r in store.visible_rows("user")] == ["quartz corrected profile"]
-
