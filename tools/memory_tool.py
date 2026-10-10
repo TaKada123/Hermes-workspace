@@ -407,10 +407,12 @@ def _memory_tool(action, target, content, old_text, new_text, operations, store,
         invalid = (_validate_single_op(store, action, target, content, old_text, old_id, query)
                    or _background_delete_gate(store, action, None, target, content, old_text,
                                               old_id=old_id, superseded_by_id=superseded_by_id,
-                                              reason=reason)
+                                              reason=reason, entry_type=entry_type,
+                                              importance=importance, written_by=written_by)
                    or _apply_write_gate(store, action, target, content, old_text,
                                         old_id=old_id, superseded_by_id=superseded_by_id,
-                                        reason=reason))
+                                        reason=reason, entry_type=entry_type,
+                                        importance=importance, written_by=written_by))
         if invalid is not None:
             return "rejected", invalid
         return _applied(_v2_apply_single_action(
@@ -422,7 +424,9 @@ def _memory_tool(action, target, content, old_text, new_text, operations, store,
         if action in ("add", "replace") and not is_v2 and (entry_type or importance is not None):
             return "rejected", tool_error(_TYPED_MEMORY_REQUIRES_V2, success=False)
         invalid = (_validate_single_op(store, action, target, content, old_text)
-                   or _background_delete_gate(store, action, None, target, content, old_text)
+                   or _background_delete_gate(store, action, None, target, content, old_text,
+                                              entry_type=entry_type, importance=importance,
+                                              written_by=written_by)
                    or _apply_write_gate(store, action, target, content, old_text,
                                         entry_type=entry_type, importance=importance,
                                         written_by=written_by))

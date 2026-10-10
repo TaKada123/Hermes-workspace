@@ -1342,6 +1342,7 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
     # at the end of this function (separate helper so it coexists with #6's
     # _init_memory_orchestrator, which has its own call site).
     agent._memory_bus = None
+    mem_config = {}
     # skip_memory skips the external *provider*; enabled_toolsets=["memory"] still gets the
     # built-in store so the memory tool never sees store=None.
     # Flush/background agents can still pass enabled_toolsets=["memory"] so the built-in file store exists
@@ -1388,15 +1389,21 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
                 else:
                     agent._memory_store = MemoryStore(**store_kwargs)
                 agent._memory_store.load_from_disk()
-                # Query-expansion aliases (memory.aliases) — the store's
-                # in-memory cache is config-driven, wired here so the layer
-                # is not dead code. AFTER load_from_disk: the rewrite of the
-                # memory_aliases table needs the schema, and load_from_disk
-                # reloads the cache from that table. Duck-typed: the legacy
-                # flat store simply has no alias cache.
-                _set_aliases = getattr(agent._memory_store, "set_alias_cache", None)
-                if callable(_set_aliases):
-                    _set_aliases(mem_config.get("aliases", {}))
+        # Alias configuration errors must escape the optional-storage handler.
+        # AFTER load_from_disk: aliases need the schema; the legacy flat store
+        # has no alias cache and takes no additional initialization path.
+        _set_aliases = getattr(agent._memory_store, "set_alias_cache", None)
+        if callable(_set_aliases):
+            try:
+                _set_aliases(mem_config.get("aliases", {}))
+            except Exception as exc:
+                # The store owns alias validation. Only its dedicated config
+                # error is fatal; ordinary optional-storage errors stay soft.
+                from agent import memory_store_v2
+                alias_error = getattr(memory_store_v2, "MemoryAliasConfigError", None)
+                if alias_error is not None and isinstance(exc, alias_error):
+                    raise
+                logger.warning("Memory alias cache init failed (non-fatal): %s", exc)
         # Optional storage failures remain non-fatal; supplied config errors do not.
         _init_memory_orchestrator(agent, _agent_cfg, agent._memory_store)
 
@@ -1466,14 +1473,17 @@ def _init_memory_bus(agent, _agent_cfg, store, memory_manager=None):
     from agent.memory_orchestrator import MemoryOrchestratorConfigError
     # Always materialize the attribute: every non-v2 path leaves it None.
     agent._memory_bus = None
+    from tools.memory_tool import get_builtin_memory_config
+    from agent.memory_bus import read_bus_enabled
+    _mem_cfg = get_builtin_memory_config(_agent_cfg)
+    _bus_enabled = read_bus_enabled(_mem_cfg)
     try:
         from tools.memory_tool import resolve_memory_backend
         if resolve_memory_backend(_agent_cfg) != "sqlite_v2":
             return
         if store is None or not callable(getattr(store, "recall_candidates", None)):
             return
-        _mem_cfg = (_agent_cfg or {}).get("memory") or {}
-        if isinstance(_mem_cfg, dict) and not bool((_mem_cfg.get("bus") or {}).get("enabled", True)):
+        if not _bus_enabled:
             return
         from agent.memory_bus import MemoryBus
         from agent.memory_orchestrator import read_orchestrator_config
@@ -1481,7 +1491,7 @@ def _init_memory_bus(agent, _agent_cfg, store, memory_manager=None):
         agent._memory_bus = MemoryBus(
             store=store,
             manager=memory_manager or None,
-            targets=("memory", "user"),
+            targets=tuple(target for target in ("memory", "user") if store.target_enabled(target)),
             weights=_weights,
             token_budget=_token_budget,
             max_entries=_max_entries,

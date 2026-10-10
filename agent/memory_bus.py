@@ -81,6 +81,29 @@ _TARGET_CAPS = {
 _TARGETS = ("memory", "user")
 
 
+class MemoryBusConfigError(ValueError):
+    """Unusable supplied memory.bus settings (not an optional runtime failure)."""
+
+
+def read_bus_enabled(memory_config: Mapping[str, Any]) -> bool:
+    """Validate supplied bus settings without truthiness coercion."""
+    if "bus" not in memory_config:
+        return True
+    config = memory_config["bus"]
+    if not isinstance(config, Mapping):
+        raise MemoryBusConfigError(
+            "memory.bus must be a mapping; set memory.bus to {enabled: true} "
+            "or remove the key to use defaults."
+        )
+    enabled = config.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise MemoryBusConfigError(
+            "memory.bus.enabled must be a boolean; set memory.bus.enabled "
+            "to true or false, or remove the key to use defaults."
+        )
+    return enabled
+
+
 @dataclass(frozen=True)
 class ConsumerSpec:
     """Declarative needs of one memory consumer (coeffect specification).
@@ -170,7 +193,7 @@ class MemoryBus:
         if self.store is not None:
             can_rollback = callable(getattr(self.store, "rollback_consumer", None))
             for target in _TARGETS:
-                if target in self.targets:
+                if target in self.targets and self.store.target_enabled(target):
                     caps.update(_TARGET_CAPS[target][:2])  # read + write
                     if can_rollback:
                         caps.add(_TARGET_CAPS[target][2])
@@ -178,6 +201,7 @@ class MemoryBus:
         # its writes stay its own — the bus never claims write caps for it.
         self._capabilities = frozenset(caps)
         for sub in self._subscriptions.values():
+            sub.capabilities = self._capabilities
             if self._satisfied(sub.spec):
                 if not sub.active:
                     sub.active = True
@@ -400,6 +424,7 @@ class MemoryBus:
         ``deprecated`` (never deletes, never touches other consumers' or
         MAIN's rows, and never crosses into the other target's rows).
         """
+        self.refresh_capabilities()
         sub = self._subscriptions.get(consumer_id)
         if sub is None or not sub.active:
             return {
@@ -440,6 +465,7 @@ class MemoryBus:
     # -- internals ------------------------------------------------------------
 
     def _require_active(self, consumer_id: str, needed: FrozenSet[str] = frozenset()) -> Optional[Subscription]:
+        self.refresh_capabilities()
         sub = self._subscriptions.get(consumer_id)
         if sub is None or not sub.active:
             return None
@@ -504,7 +530,8 @@ def build_delegation_briefing(
     except Exception as exc:
         logger.warning("memory bus: delegation briefing bus copy failed (non-fatal): %s", exc)
         return ""
-    view = bus.scoped_view(ConsumerSpec(consumer, needs=frozenset({READ_MEMORY, READ_USER}), project=project))
+    read_caps = bus.capabilities() & frozenset({READ_MEMORY, READ_USER})
+    view = bus.scoped_view(ConsumerSpec(consumer, needs=read_caps, project=project))
     if view is None:
         return ""
     try:
