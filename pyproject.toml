@@ -550,6 +550,8 @@ dev = [
 test = [
   "distlib==0.4.3; sys_platform == 'win32'",
   "anthropic==0.87.0",
+  "fal-client==0.13.1",
+  "parallel-web==0.4.2",
 ]
 
 [build-system]
