@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -66,6 +67,50 @@ EXPORT_TARGETS = {"memory": "MEMORY.md", "user": "USER.md"}
 _AWARENESS_PREFIX = "awareness"
 
 _REPORT_NAME = "downgrade-export-report.json"
+
+
+class ReadOnlyExportStore:
+    """Existing canonical rows only: no schema setup, migration or access writes.
+
+    A read transaction gives both targets and the cutover marker one snapshot.
+    mode=ro (not immutable) includes committed WAL rows without checkpointing.
+    """
+
+    def __init__(self, db_path: Path):
+        self.db_path = Path(db_path)
+        if not self.db_path.is_file():
+            raise ValueError(f"Canonical memory.db is missing: {self.db_path}")
+        self._conn = sqlite3.connect(self.db_path.resolve().as_uri() + "?mode=ro", uri=True)
+        self._conn.row_factory = sqlite3.Row
+        try:
+            self._conn.execute("PRAGMA query_only=ON")
+            self._conn.execute("BEGIN")
+            version = self._conn.execute(
+                "SELECT value FROM meta WHERE key='schema_version'",
+            ).fetchone()
+            if version is None or int(version["value"]) < 1:
+                raise ValueError("missing V2 schema version")
+            self._conn.execute(
+                "SELECT id, target, type, content, status, importance, written_by, created_at"
+                " FROM memories LIMIT 0",
+            )
+        except (sqlite3.Error, ValueError) as exc:
+            self._conn.close()
+            raise ValueError(f"memory.db is not a compatible V2 store: {self.db_path}: {exc}") from exc
+
+    def visible_rows(self, target: str) -> List[Dict[str, Any]]:
+        return [dict(row) for row in self._conn.execute(
+            "SELECT * FROM memories WHERE target=? AND status IN ('active','pinned')"
+            " ORDER BY (status='pinned') DESC, importance DESC, datetime(created_at) ASC",
+            (target,),
+        )]
+
+    def legacy_migrated_at(self) -> Optional[str]:
+        row = self._conn.execute("SELECT value FROM meta WHERE key='legacy_migrated'").fetchone()
+        return row["value"] if row else None
+
+    def close(self) -> None:
+        self._conn.close()
 
 
 def _sha256(path: Path) -> Optional[str]:
@@ -116,7 +161,7 @@ def export_legacy(
 ) -> Dict[str, Any]:
     """Export the canonical store's visible rows to §-delimited legacy files.
 
-    ``store`` must be a loaded MemoryStoreV2 (duck-typed: needs the PUBLIC
+    ``store`` must be a loaded MemoryStoreV2 or ReadOnlyExportStore (needs the PUBLIC
     ``visible_rows`` and ``db_path``). Returns the verification report::
 
         {

@@ -1025,8 +1025,7 @@ class MemoryStoreV2(MemoryStore):
                 report["sha256"] = None
             raw, read_ok = self._read_raw_checked(path)
             if not read_ok:
-                report["read_error"] = "unreadable or undecodable source file"
-                return report
+                raise OSError(f"Cannot migrate legacy source {path}: unreadable or undecodable source file")
             if not raw.strip():
                 return report  # completely empty file: nothing recognized
             for content in (seg.strip() for seg in raw.split(ENTRY_DELIMITER)):
@@ -2286,6 +2285,11 @@ class MemoryStoreV2(MemoryStore):
                     return
                 assert row is not None
 
+            actual_target = outcome.get("target_corrected") or target
+            if not self.target_enabled(actual_target):
+                outcome.update(_error(f"Memory target '{actual_target}' is disabled."))
+                return
+
             # Resolve the successor BEFORE mutating — explicit ids must fail
             # closed, and marker misses must be visible in the response.
             successor: Optional[str] = None
@@ -2440,6 +2444,9 @@ class MemoryStoreV2(MemoryStore):
             # actual store (2026-08-31: entries addressed to 'memory' that
             # live in 'user' failed as "not found" four times in a row).
             actual_target = old["target"]
+            if not self.target_enabled(actual_target):
+                outcome.update(_error(f"Memory target '{actual_target}' is disabled."))
+                return
             if actual_target != target:
                 outcome["target_corrected"] = actual_target
                 eff_type = self._normalize_type(entry_type, actual_target)
@@ -2542,8 +2549,9 @@ class MemoryStoreV2(MemoryStore):
             len(rows), len(rows), bool(rows),
         )
 
+        safe_rows = [self._sanitize_retrieved_row(r) for r in rows]
         results = []
-        for r in rows:
+        for r in safe_rows:
             item = {
                 "id": r["id"],
                 "target": r["target"],
@@ -2571,7 +2579,7 @@ class MemoryStoreV2(MemoryStore):
         # the per-turn orchestrator pack deliberately does NOT inject this.
         # Attached only when present, so tension-free recalls stay
         # byte-identical.
-        possible = _tension_pairs([dict(r) for r in rows])
+        possible = _tension_pairs(safe_rows)
         if possible:
             resp["possible_tensions"] = possible[:3]
         return resp
@@ -2757,7 +2765,7 @@ class MemoryStoreV2(MemoryStore):
                 continue  # deprecated/archived never reach the prompt
             if project is not None and r["project"] not in (None, project):
                 continue  # realm: foreign-project rows stay invisible
-            cand = dict(r)
+            cand = self._sanitize_retrieved_row(r)
             if bm25_by_id is not None:
                 # Missing id = the row reached us via the LIKE fallback —
                 # no bm25 exists for it, the ranker treats that as neutral 0.
@@ -2792,7 +2800,7 @@ class MemoryStoreV2(MemoryStore):
         placeholders = ",".join("?" * len(ids))
         rows = self._query(
             "SELECT l.source_id AS sid, m.id AS nid, m.content AS ncontent,"
-            " m.status AS nstatus, m.created_at AS ncreated, l.created_at AS linked"
+            " m.target AS ntarget, m.status AS nstatus, m.created_at AS ncreated, l.created_at AS linked"
             f" FROM memory_links l JOIN memories m ON m.id = l.target_id"
             f" WHERE l.relation_type='supersedes' AND l.source_id IN ({placeholders})"
             " ORDER BY datetime(l.created_at) DESC",
@@ -2803,7 +2811,9 @@ class MemoryStoreV2(MemoryStore):
             entry = {
                 "id": r["nid"],
                 "short_id": r["nid"][:8],
-                "content": r["ncontent"][:160],
+                "content": self._sanitize_entries_for_snapshot(
+                    [r["ncontent"]], self._path_for(r["ntarget"]).name,
+                )[0][:160],
                 "status": r["nstatus"],
                 "created_at": r["ncreated"],
                 "linked_at": r["linked"],
@@ -2996,7 +3006,15 @@ class MemoryStoreV2(MemoryStore):
             params.extend(wanted)
         sql += " ORDER BY datetime(updated_at) DESC LIMIT ?"
         params.append(max(1, int(limit)))
-        return [dict(r) for r in self._query(sql, tuple(params))]
+        return [self._sanitize_retrieved_row(r) for r in self._query(sql, tuple(params))]
+
+    def _sanitize_retrieved_row(self, row) -> Dict[str, Any]:
+        """Scan full canonical content at read time; keep stored evidence intact."""
+        safe = dict(row)
+        safe["content"] = self._sanitize_entries_for_snapshot(
+            [safe["content"]], self._path_for(safe["target"]).name,
+        )[0]
+        return safe
 
     def snapshot_contents(self) -> set:
         """Original content strings currently present in the frozen prompt snapshot.
