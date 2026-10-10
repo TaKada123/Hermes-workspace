@@ -55,14 +55,33 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _build_store():
     """Validate profile config, then open only the existing canonical store."""
-    from hermes_cli.config import load_config
+    import hermes_yaml as yaml
+    from hermes_constants import get_hermes_home
+    from utils import fast_safe_load
     from tools.memory_tool import get_builtin_memory_config
 
-    config = load_config() or {}
+    # These limits are diagnostics only, not runtime settings for this reader.
+    # The normal loader initializes the home/SOUL and records good-config
+    # backups even on reads. Export (including errors/dry-run) must not do so.
+    # Even importing hermes_cli.config discovers providers that call its
+    # initializing loader. Read just this file through the import-safe parser.
+    config_path = get_hermes_home() / "config.yaml"
+    try:
+        with config_path.open(encoding="utf-8-sig") as stream:
+            config = fast_safe_load(stream) or {}
+    except FileNotFoundError:
+        config = {}
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        raise ValueError(f"Cannot read {config_path}: {exc}; repair config.yaml and retry") from exc
+    if not isinstance(config, dict):
+        raise ValueError(f"{config_path}: expected a settings mapping; repair config.yaml and retry")
     mem_cfg = get_builtin_memory_config(config)
     # Retain malformed-config diagnostics without constructing a writable store.
     for key, default in (("memory_char_limit", 2200), ("user_char_limit", 1375)):
-        int(mem_cfg.get(key, default))
+        try:
+            int(mem_cfg.get(key, default))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"memory.{key}: {exc}; set an integer in config.yaml and retry") from exc
     from agent.memory_downgrade import ReadOnlyExportStore
     from tools.memory_tool import get_memory_dir
 
