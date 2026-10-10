@@ -308,6 +308,35 @@ def test_design_route_prompt_contains_only_sanctioned_context(tmp_path):
     assert prompt == expected
 
 
+def test_design_route_uses_hermes_entrypoint_resolver(tmp_path, monkeypatch):
+    """The router follows Hermes's canonical entrypoint resolution policy."""
+    import shutil
+    import sys
+
+    from hermes_cli import relaunch
+
+    mod = _load_route_module()
+    handoff_path = _handoff_file(tmp_path)
+    resolved = "/managed/hermes-entrypoint"
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(relaunch, "resolve_hermes_bin", lambda: resolved)
+    monkeypatch.setattr(shutil, "which", lambda _name: "/ambient/hermes")
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["route_design_profile.py", "--handoff-file", str(handoff_path)],
+    )
+
+    assert mod.main() == 0
+    assert calls[0][0] == resolved
+
+
 def test_design_route_validation_rejects_malformed_handoffs(tmp_path):
     """AC: the router refuses handoffs that would widen the sanctioned surface."""
     mod = _load_route_module()
