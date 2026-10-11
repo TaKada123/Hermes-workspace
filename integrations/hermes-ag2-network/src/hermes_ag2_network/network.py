@@ -195,7 +195,8 @@ class Network:
         if not isinstance(data.get("text"), str) or not data["text"].strip():
             return
         request = ExecutionRequest(self.name, channel.metadata.labels["project_id"],
-                                   envelope.channel_id, data["operation_id"], data["text"])
+                                   envelope.channel_id, data["operation_id"], data["text"],
+                                   *self.ledger.session(self.name, channel.metadata.labels["project_id"], envelope.channel_id))
         async with self._run_lock:
             # A failed handler would be NACKed and immediately replayed by
             # native AG2. Catch execution errors after durable admission to
@@ -206,6 +207,7 @@ class Network:
                     if self.executor is None:
                         raise ExecutionUncertain("no executor enrolled")
                     result = await self.executor(request)
+                    self.ledger.advance_session(request.profile, request.project_id, request.channel_id, result.session_id)
                     self.ledger.finish(request.operation_id, result)
                 reply_data: dict[str, Any] = {"kind": "reply", "text": result.text,
                     "session_id": result.session_id, "run_id": result.run_id}

@@ -13,32 +13,56 @@ from hermes_ag2_network.executor import HermesHTTPExecutor
 @contextmanager
 def hermes_api():
     requests = []
+    origin_session = ""
+    current_tip = ""
+    run_number = 0
+    session_created = False
 
     class API(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
             pass
 
         def do_POST(self):
+            nonlocal origin_session, current_tip, run_number, session_created
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             requests.append((self.path, dict(self.headers), body))
             if self.headers.get("Authorization") != "Bearer fixture-secret":
                 self.respond(401, {"error": "unauthorized"})
             elif self.path == "/p/architect/api/sessions":
-                self.respond(201, {"id": body["id"]})
+                if session_created:
+                    self.respond(409, {"error": {"code": "session_exists"}})
+                else:
+                    origin_session = body["id"]
+                    current_tip = origin_session
+                    session_created = True
+                    self.respond(201, {"id": origin_session})
             elif self.path == "/p/architect/v1/runs":
-                self.respond(202, {"run_id": "http-controlled-run", "status": "queued"})
+                run_number += 1
+                # Simulate in-run Hermes rotation: the final run response will
+                # still report its old id, while the canonical messages API
+                # resolves the new tip after the second turn.
+                current_tip = origin_session if run_number == 1 else "rotated-session"
+                self.respond(202, {"run_id": f"http-controlled-run-{run_number}", "status": "queued"})
             else:
                 self.respond(404, {})
 
         def do_GET(self):
             if self.headers.get("Authorization") != "Bearer fixture-secret":
                 self.respond(401, {"error": "unauthorized"})
-            elif self.path.startswith("/p/architect/api/sessions/"):
-                self.respond(200, {"session": {"id": requests[0][2]["id"]}})
-            elif self.path == "/p/architect/v1/runs/http-controlled-run":
-                self.respond(200, {"run_id": "http-controlled-run", "status": "completed",
+            elif self.path.startswith("/p/architect/api/sessions/") and "/messages?" not in self.path:
+                session_id = self.path.removeprefix("/p/architect/api/sessions/")
+                self.respond(200, {"session": {"id": session_id}})
+            elif self.path.startswith(f"/p/architect/api/sessions/{origin_session}/messages?"):
+                assert self.path.endswith("limit=0")
+                self.respond(200, {"session_id": current_tip, "data": []})
+            elif self.path.startswith("/p/architect/v1/runs/http-controlled-run-"):
+                run_id = self.path.rsplit("-", 1)[-1]
+                run_posts = [body for path, _, body in requests if path == "/p/architect/v1/runs"]
+                posted = run_posts[int(run_id) - 1]
+                stale_id = origin_session
+                self.respond(200, {"run_id": self.path.rsplit("/", 1)[-1], "status": "completed",
                                    "output": "HTTP runtime replied.", "completed": True,
-                                   "session_id": requests[1][2]["session_id"]})
+                                   "session_id": stale_id, "posted_session_id": posted["session_id"]})
             else:
                 self.respond(404, {})
 
@@ -73,7 +97,7 @@ def test_native_network_executes_only_new_input_via_authenticated_profile_runs(t
                             channel = await caller.open(peer="architect", project_id="http-tracer")
                             reply = await caller.ask(channel, "Only this new message.", operation_id="http-tracer-01", timeout=5)
                             assert reply.text == "HTTP runtime replied."
-                            assert reply.run_id == "http-controlled-run"
+                            assert reply.run_id == "http-controlled-run-1"
                             assert reply.session_id.startswith("ag2-")
                             assert len(await caller.history(channel)) == 2
                             assert requests[0][0] == "/p/architect/api/sessions"

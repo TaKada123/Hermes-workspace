@@ -1,4 +1,4 @@
-# Ticket 01 verification receipts
+# AG2 ticket verification receipts
 
 ## Result / scope
 
@@ -78,6 +78,20 @@ The Hermes runtime used its normal provider, tools and profile configuration; it
 
 Before restart, live `gateway_state.json` reported `active_agents=0`, `active_work=null`, and the API port refused connections. Added protected API keys for `default`, `coding`, and `architect` (preserving any usable existing key); kept `.env`/`config.yaml` snapshots with mode 0600. Restarted the authorized user Gateway once; read back `/health` = 200 and confirmed only the loopback API listener on 8642. Post-smoke the Gateway remained active with `active_work=null`, `active_agents=0`. Existing memory backend settings were not changed: Coding/Architect remain legacy file memory.
 
+## Ticket 17: restart and rotation
+
+Canonical suite: `HERMES_PYTHON=/home/vottak/.hermes/cache/scratch/ag2-session-lineage-env/bin/python scripts/run_tests.sh integrations/hermes-ag2-network/tests/ -v --tb=short` — **6 passed, 0 failed**. Ruff and ty pass against that isolated environment.
+
+The public Network test performs a first Hermes HTTP turn, closes both bridges and the disk Hub, reopens the Hub from the same DiskKnowledgeStore, reconnects both identities using the same durable ledgers, and continues the existing channel. Its HTTP server models actual Hermes APIs: deterministic session create returns `session_exists` on repeat; the run endpoint rotates in-turn but returns the stale origin ID; only `GET /api/sessions/<origin>/messages?limit=0` yields the new tip. The next run uses that rotated tip. A later duplicate operation returns its recorded result and sends no fourth run.
+
+A real Coding Profile E2E also exercised two distinct requests against one channel across a native Hub restart using the same profile ledger. Both authenticated Hermes Runs completed, each invoked a terminal tool, and the persisted AG2 WAL retained both request/reply pairs:
+
+```json
+{"live":true,"profile":"coding","channel_id":"18dd8e1e3104ebe28931392446e17eb5","first_session_id":"ag2-ea9534f090685c889c6bfd0fdddbbfa7","second_session_id":"ag2-ea9534f090685c889c6bfd0fdddbbfa7","session_reused":true,"first_run_id":"run_8182ef3c9410483da5d061a7f9a797e2","second_run_id":"run_7202d21bfb96470faf267ac0cb0dce58","first_tool_digest":"2232dd9eac73344cf04c09a067e0abbe661a9d533c7742867688729f1daaf50f","second_tool_digest":"13677d559066e5a216bcc7e5db02ff8fd3f6ae819e0bb7d469d833125d427535","persisted_wal_texts":4,"hub_restarted":true}
+```
+
+This is a fresh network channel/session, not an existing user conversation. The live smoke used two authorized, read-only terminal/hash prompts. It left the service configuration, profile settings and existing sessions unchanged.
+
 ## Independent review and correction
 
-Standards-axis review identified a malformed channel invitation without `project_id` could reach an unchecked mapping access; a fail-closed project scope check is now applied both before invitation ACK and before channel use. The corresponding test was RED (bridge left the invalid channel pending), then GREEN (AG2 closes the handshake with `invite_rejected`; the executor is never invoked). Full network suite after the correction: 5 passed; scoped Ruff and ty checks pass. Spec-axis review's concern about missing real E2E is satisfied by the receipt above. The task is still only the first tracer slice: later session-lineage, specialist tools, project grants, artifacts, budgets and services remain open under tickets 17–21.
+Standards-axis review identified a malformed channel invitation without `project_id` could reach an unchecked mapping access; a fail-closed project scope check was merged in commit `790ddf0b` before ticket 17 work began. The corresponding test is green. Ticket 17 implements session lineage; independent review and merging are still pending. Specialist tool enrollment, project grants/budgets, artifacts and services remain in tickets 18–21.

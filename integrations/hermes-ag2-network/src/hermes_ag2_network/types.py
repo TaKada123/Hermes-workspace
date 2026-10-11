@@ -10,6 +10,8 @@ class ExecutionRequest:
     channel_id: str
     operation_id: str
     text: str
+    session_origin_id: str = ""
+    session_current_id: str = ""
 
 
 @dataclass(frozen=True)
