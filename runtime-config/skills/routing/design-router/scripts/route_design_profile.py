@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -84,7 +83,9 @@ def main() -> int:
         }, ensure_ascii=False))
         return 0
 
-    hermes = shutil.which("hermes")
+    from hermes_cli.relaunch import resolve_hermes_bin
+
+    hermes = resolve_hermes_bin()
     if not hermes:
         print(json.dumps({"ok": False, "error": "hermes executable not found"}, ensure_ascii=False))
         return 3

@@ -1,8 +1,35 @@
 #!/usr/bin/env python3
-"""Install the fork's runtime configuration into the active HERMES_HOME."""
+"""Install the fork's runtime configuration into the active HERMES_HOME.
+
+Legacy backend (``memory.backend: file`` — the default): byte-for-byte the
+behavior it always had — the managed files (including
+``runtime-config/memories/USER.md``) are copied over the home, config defaults
+are applied, replaced files land in ``backups/``.
+
+``sqlite_v2`` backend: ``memories/USER.md`` is NOT copied. Instead the managed
+§-entries of ``runtime-config/memories/USER.md`` are imported IDEMPOTENTLY into
+the canonical SQLite store (``memories/memory.db``) through the store's PUBLIC
+``MemoryStoreV2.import_managed_entries`` API with ``written_by`` =
+``installer``:
+
+- a fresh load runs the one-shot legacy migration first (``load_from_disk``);
+- the store owns the sha marker (``meta['managed_import_sha:installer']``):
+  an unchanged sha imports NOTHING (no duplicate rows);
+- a CHANGED sha imports new entries, claims provenance on matching
+  migration-imported rows, and deprecates stale installer-written user rows
+  (status ``deprecated`` — hidden but kept for audit);
+- projections are only ever regenerated THROUGH the store (never written by
+  this script directly) and never overwritten on a no-op re-run.
+
+Error policy: the legacy copy path stays fail-safe exactly as before; the v2
+import is fail-CLOSED — any store error aborts the install with a clear
+message, because silently skipping the managed profile import would degrade a
+documented guarantee (the managed USER.md is part of the shipped runtime).
+"""
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import sys
@@ -12,6 +39,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE = REPO_ROOT / "runtime-config"
 PLUGIN_ID = "gumar-runtime-policy"
+
+# Provenance of rows imported from the managed runtime-config profile (the
+# store's meta marker key derives from this: ``managed_import_sha:installer``).
+INSTALLER_WRITER = "installer"
 
 # Tools pinned as deferred so the lean tool surface (18 tools instead of 25, ~9.4 KB
 # of schemas saved per request) survives a config rewrite or a fresh install. The
@@ -51,7 +82,7 @@ def _backup_if_changed(src: Path, dst: Path, backup_root: Path) -> None:
     shutil.copy2(dst, target)
 
 
-def _copy_tree() -> list[str]:
+def _copy_tree(skip_user_md: bool = False) -> list[str]:
     home = _hermes_home()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup_root = home / "backups" / "runtime-config" / stamp
@@ -59,8 +90,9 @@ def _copy_tree() -> list[str]:
 
     mappings = [
         (SOURCE / "SOUL.md", home / "SOUL.md"),
-        (SOURCE / "memories" / "USER.md", home / "memories" / "USER.md"),
     ]
+    if not skip_user_md:
+        mappings.append((SOURCE / "memories" / "USER.md", home / "memories" / "USER.md"))
     mappings += [
         (src, home / "policies" / src.name)
         for src in sorted((SOURCE / "policies").glob("*.md"))
@@ -130,14 +162,86 @@ def _apply_config() -> int:
     return len(pinned)
 
 
+def _resolve_backend() -> str:
+    """Resolve the TARGET home's memory backend after _apply_config.
+
+    The ONE resolver the runtime uses (``tools.memory_tool.resolve_memory_backend``)
+    so the installer can never diverge from ``agent_init``/``load_on_disk_store``:
+    a fresh home has no flag and stays legacy ``file``.
+    """
+    from hermes_cli.config import read_raw_config
+    from tools.memory_tool import resolve_memory_backend
+
+    return resolve_memory_backend(read_raw_config())
+
+
+def _split_managed_entries(source: Path) -> list[str]:
+    """Managed §-entries of the source file (strict utf-8-sig, empties dropped).
+
+    Same splitting contract as the legacy migration (``_migrate_legacy_files``):
+    a file without § separators is ONE entry.
+    """
+    from tools.memory_tool_store import ENTRY_DELIMITER
+
+    raw = source.read_text(encoding="utf-8-sig")
+    return [seg.strip() for seg in raw.split(ENTRY_DELIMITER) if seg.strip()]
+
+
+def _import_managed_user_memory(home: Path, source: Path) -> dict:
+    """Idempotently import the managed USER.md §-entries into the canonical store.
+
+    Thin wrapper over the store's PUBLIC ``import_managed_entries`` (the
+    idempotent transactional import — sha marker, claim/deprecate logic —
+    lives in the store, not here). Runs the one-shot legacy migration via
+    ``load_from_disk``, then delegates. Returns the store's report dict;
+    raises on any store error (fail-closed — see module docstring).
+    """
+    from agent.memory_store_v2 import MemoryStoreV2
+
+    store = MemoryStoreV2(db_path=home / "memories" / "memory.db")
+    try:
+        store.load_from_disk()
+        entries = _split_managed_entries(source)
+        sha = hashlib.sha256(source.read_bytes()).hexdigest()
+        return store.import_managed_entries(
+            entries, target="user", written_by=INSTALLER_WRITER, source_sha=sha,
+        )
+    finally:
+        store.close()
+
+
 def main() -> int:
-    installed = _copy_tree()
+    home = _hermes_home()
     deferred = _apply_config()
-    print(f"Installed Gumar runtime config into {_hermes_home()}")
+    backend = _resolve_backend()
+    installed = _copy_tree(skip_user_md=(backend == "sqlite_v2"))
+    print(f"Installed Gumar runtime config into {home}")
     print(f"Enabled plugin: {PLUGIN_ID}")
     print(f"Pinned deferred tools: {deferred} (required {len(REQUIRED_DEFER)})")
     for path in installed:
         print(f"  - {path}")
+    if backend == "sqlite_v2":
+        print(f"Memory backend: sqlite_v2 — idempotent import of {SOURCE / 'memories' / 'USER.md'}")
+        try:
+            report = _import_managed_user_memory(home, SOURCE / "memories" / "USER.md")
+        except Exception as exc:
+            # Fail-closed: silently skipping the managed profile import would
+            # degrade a documented guarantee of the shipped runtime.
+            print(
+                f"error: failed to import managed USER.md into the sqlite_v2 store: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+        if report["status"] == "unchanged":
+            print(
+                "  managed entries unchanged (sha "
+                f"{report['sha'][:12]}); no rows touched"
+            )
+        else:
+            print(
+                f"  imported: {report['imported']}, claimed: {report['claimed']},"
+                f" deprecated: {report['deprecated']}, sha {report['sha'][:12]}"
+            )
     return 0
 
 

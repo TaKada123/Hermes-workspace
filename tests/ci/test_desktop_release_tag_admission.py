@@ -28,7 +28,7 @@ from tests.ci.desktop_release_roles import (
 )
 
 _REPO = Path(__file__).resolve().parents[2]
-_WORKFLOW = _REPO / ".github" / "workflows" / "desktop-bundled-release.yml"
+_WORKFLOW = _REPO / "tests" / "ci" / "fixtures" / "upstream-workflows" / "desktop-bundled-release.yml"
 _SIGNING_ENV = "release-signing"
 _CONTROLLER = "c" * 40
 

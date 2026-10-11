@@ -161,7 +161,38 @@ for _test_var in HERMES_TEST_IMAGE HERMES_TEST_WORKERS HERMES_TEST_PATHS \
   fi
 done
 
+# PATH is needed for test subprocesses, but forwarding it verbatim exposes the
+# checkout's .hermes/bin and Hermes-managed installs. Keep ordinary system/tool
+# entries and remove entries rooted in Hermes state before crossing env -i.
+_PATH_SEPARATOR=:
+case "$PATH" in *';'*) _PATH_SEPARATOR=';' ;; esac
+IFS="$_PATH_SEPARATOR" read -r -a _path_entries <<< "$PATH"
+_HERMES_PATH_ROOTS=("$REPO_ROOT/.hermes" "$HOME/.hermes" "${HERMES_HOME:-$HOME/.hermes}")
+[ -z "${HERMES_RUNTIME_DIR:-}" ] || _HERMES_PATH_ROOTS+=("$HERMES_RUNTIME_DIR")
+for _i in "${!_HERMES_PATH_ROOTS[@]}"; do
+  _root="${_HERMES_PATH_ROOTS[$_i]}"
+  _HERMES_PATH_ROOTS[$_i]="$(cd "$_root" 2>/dev/null && pwd -P || printf '%s' "$_root")"
+done
+SAFE_PATH=""
+for _entry in "${_path_entries[@]}"; do
+  [ -n "$_entry" ] || continue
+  _resolved_entry="$(cd "$_entry" 2>/dev/null && pwd -P || printf '%s' "$_entry")"
+  _blocked=0
+  for _root in "${_HERMES_PATH_ROOTS[@]}"; do
+    case "$_resolved_entry/" in
+      "$_root"|"$_root"/*|"$_root"/) _blocked=1; break ;;
+    esac
+  done
+  [ "$_blocked" = 1 ] && continue
+  if [ -n "$SAFE_PATH" ]; then SAFE_PATH+="$_PATH_SEPARATOR"; fi
+  SAFE_PATH+="$_entry"
+done
+
 # ── Run in hermetic env ──────────────────────────────────────────────────────
+# Fail before pytest collection gives confusing per-file ImportErrors when a
+# locally supplied interpreter is missing an SDK declared by the test group.
+"$PYTHON" "$SCRIPT_DIR/check_test_environment.py"
+
 # env -i: start with empty environment, opt-in only what we need.
 # No credential var can leak — you'd have to explicitly add it here.
 echo "▶ running per-file parallel test suite via run_tests_parallel.py"
@@ -179,7 +210,8 @@ echo "▶ pre-compiling bytecode cache"
 
 echo "▶ launching test runner"
 exec env -i \
-  PATH="$PATH" \
+  PATH="$SAFE_PATH" \
+  HERMES_PYTHON="$PYTHON" \
   HOME="$HOME" \
   ${WIN_ENV[@]+"${WIN_ENV[@]}"} \
   ${TEST_ENV[@]+"${TEST_ENV[@]}"} \

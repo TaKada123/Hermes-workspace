@@ -1,0 +1,273 @@
+"""Verified downgrade export: MemoryStoreV2 → legacy §-delimited files (ticket #11).
+
+The return path of the two-level rollback: when a profile flips
+``memory.backend`` back to ``file`` (or drops the flag), the flat
+``MemoryStore`` reads MEMORY.md/USER.md again — this module guarantees those
+files contain every entry created in V2 after the cutover, with a count
+verification the operator can check.
+
+Contract:
+
+- exports the canonical store's *visible* rows per target — status
+  ``active``/``pinned`` (``store.visible_rows`` — the PUBLIC store API, never
+  the private ``_visible_rows``), in snapshot priority order, with awareness
+  telemetry (``written_by`` starting with ``awareness``) skipped: that
+  channel never sat in the v2 prompt and must not start doing so on legacy;
+- writes §-delimited files (``ENTRY_DELIMITER`` join, raw content — the same
+  shape the v2 projections use) into ``HERMES_HOME/memories/`` or a
+  caller-supplied directory;
+- verifies counts: each target reports ``expected`` (visible rows) vs
+  ``written`` (entries parsed back from the file) with an ``ok`` flag;
+- additionally reports ``post_cutover`` per target — the number of exported
+  rows created AFTER ``meta['legacy_migrated']`` (the cutover point, read via
+  the public ``store.legacy_migrated_at()``). This is REPORT-ONLY
+  observability: the export itself stays FULL-STORE on purpose — the flat
+  store has no notion of cutover and must read every visible entry, and a
+  cutover-partial export would silently drop pre-cutover legacy data the
+  operator still expects in MEMORY.md/USER.md;
+- before overwriting a pre-existing file creates a timestamped
+  ``<file>.bak.<ts>`` copy;
+- NEVER opens memory.db for writing: the file is preserved byte-identical
+  (sha256 before/after recorded in the report; path via ``store.db_path``);
+- writes an audit marker ``downgrade-export-report.json`` next to the
+  exported files (timestamps + counts);
+- ``dry_run=True`` reports projected counts (incl. ``post_cutover``) and
+  writes nothing at all.
+
+Round-trip semantics: after a successful export, flipping
+``memory.backend`` to ``file`` makes the agent read the exported §-files via
+the flat MemoryStore and see exactly the exported entries; memory.db stays
+on disk untouched for a later re-cutover (the migration manifest keeps a
+re-migration idempotent).
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import sqlite3
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence
+
+from tools.memory_tool_store import ENTRY_DELIMITER, MemoryStore
+from utils import atomic_write_text
+
+# Version of the downgrade-export report JSON (memories/downgrade-export-
+# report.json). Bump only when the shape changes; readers must check it.
+EXPORT_REPORT_VERSION = 1
+
+# target → legacy projection filename in the memories directory.
+EXPORT_TARGETS = {"memory": "MEMORY.md", "user": "USER.md"}
+
+# Rows written by the awareness controller are per-turn telemetry: excluded
+# from the static v2 snapshot by policy, and excluded from the legacy export
+# for the same reason (legacy files go straight into the prompt).
+_AWARENESS_PREFIX = "awareness"
+
+_REPORT_NAME = "downgrade-export-report.json"
+
+
+class ReadOnlyExportStore:
+    """Existing canonical rows only: no schema setup, migration or access writes.
+
+    A read transaction gives both targets and the cutover marker one snapshot.
+    mode=ro (not immutable) includes committed WAL rows without checkpointing.
+    """
+
+    def __init__(self, db_path: Path):
+        self.db_path = Path(db_path)
+        if not self.db_path.is_file():
+            raise ValueError(f"Canonical memory.db is missing: {self.db_path}")
+        self._conn = sqlite3.connect(self.db_path.resolve().as_uri() + "?mode=ro", uri=True)
+        self._conn.row_factory = sqlite3.Row
+        try:
+            self._conn.execute("PRAGMA query_only=ON")
+            self._conn.execute("BEGIN")
+            version = self._conn.execute(
+                "SELECT value FROM meta WHERE key='schema_version'",
+            ).fetchone()
+            if version is None or int(version["value"]) < 1:
+                raise ValueError("missing V2 schema version")
+            self._conn.execute(
+                "SELECT id, target, type, content, status, importance, written_by, created_at"
+                " FROM memories LIMIT 0",
+            )
+        except (sqlite3.Error, ValueError) as exc:
+            self._conn.close()
+            raise ValueError(f"memory.db is not a compatible V2 store: {self.db_path}: {exc}") from exc
+
+    def visible_rows(self, target: str) -> List[Dict[str, Any]]:
+        return [dict(row) for row in self._conn.execute(
+            "SELECT * FROM memories WHERE target=? AND status IN ('active','pinned')"
+            " ORDER BY (status='pinned') DESC, importance DESC, datetime(created_at) ASC",
+            (target,),
+        )]
+
+    def legacy_migrated_at(self) -> Optional[str]:
+        row = self._conn.execute("SELECT value FROM meta WHERE key='legacy_migrated'").fetchone()
+        return row["value"] if row else None
+
+    def close(self) -> None:
+        self._conn.close()
+
+
+def _sha256(path: Path) -> Optional[str]:
+    """Hex sha256 of *path*, or None when it does not exist / is unreadable."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _export_rows(store, target: str) -> List[Any]:
+    """Visible export rows: ``store.visible_rows`` minus awareness telemetry."""
+    rows = store.visible_rows(target)
+    return [
+        r for r in rows
+        if not str(r["written_by"] or "").startswith(_AWARENESS_PREFIX)
+    ]
+
+
+def _post_cutover_count(rows: List[Any], migrated_at: Optional[str]) -> int:
+    """Rows created AFTER the cutover marker (report-only observability)."""
+    if not migrated_at:
+        return 0
+    return sum(
+        1 for r in rows
+        if str(r.get("created_at") or "") > migrated_at
+    )
+
+
+def _backup(path: Path) -> Optional[Path]:
+    """Timestamped ``<file>.bak.<ts>`` copy; None when nothing to back up."""
+    if not path.exists():
+        return None
+    bak = path.with_suffix(path.suffix + f".bak.{int(time.time())}")
+    bak.write_bytes(path.read_bytes())
+    return bak
+
+
+def export_legacy(
+    store,
+    out_dir: Optional[Path | str] = None,
+    targets: Sequence[str] = ("memory", "user"),
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """Export the canonical store's visible rows to §-delimited legacy files.
+
+    ``store`` must be a loaded MemoryStoreV2 or ReadOnlyExportStore (needs the PUBLIC
+    ``visible_rows`` and ``db_path``). Returns the verification report::
+
+        {
+          "schema_version": 1,
+          "exported_at": "<ISO-8601 UTC>",
+          "dry_run": false,
+          "out_dir": "<abs path>",
+          "legacy_migrated_at": "<ISO-8601 UTC | null>",
+          "targets": {
+            "memory": {"path": ..., "expected": N, "written": N,
+                       "post_cutover": N,  # rows created after the cutover
+                       "ok": true, "backup": "<path> | null"},
+            ...
+          },
+          "memory_db": {"path": ..., "exists": true,
+                        "sha256_before": ..., "sha256_after": ...,
+                        "unchanged": true},
+          "audit_file": "<path> | null",
+        }
+
+    In dry-run mode ``written`` is 0 and ``ok`` is null (nothing on disk to
+    verify), ``audit_file`` is null, and no file, backup or directory is
+    created. memory.db is never opened for writing in either mode.
+    ``post_cutover`` is report-only observability — the export itself stays
+    full-store (see the module docstring for why).
+    """
+    if not hasattr(store, "visible_rows"):
+        raise TypeError(
+            "export_legacy requires the MemoryStoreV2 canonical store "
+            f"(got {type(store).__name__} without visible_rows)"
+        )
+    if out_dir is not None:
+        out_dir = Path(out_dir)
+    else:
+        from tools import memory_tool
+
+        out_dir = memory_tool.get_memory_dir()
+    unknown = [t for t in targets if t not in EXPORT_TARGETS]
+    if unknown:
+        raise ValueError(f"Unknown export targets: {', '.join(unknown)}")
+
+    db_path = getattr(store, "db_path", None)
+    db_path = Path(db_path) if db_path else None
+    sha_before = _sha256(db_path) if db_path else None
+    _migrated_at = store.legacy_migrated_at() if hasattr(store, "legacy_migrated_at") else None
+
+    report: Dict[str, Any] = {
+        "schema_version": EXPORT_REPORT_VERSION,
+        "exported_at": _iso_now(),
+        "dry_run": bool(dry_run),
+        "out_dir": str(out_dir),
+        "legacy_migrated_at": _migrated_at,
+        "targets": {},
+        "memory_db": {
+            "path": str(db_path) if db_path else None,
+            "exists": bool(db_path and db_path.exists()),
+            "sha256_before": sha_before,
+            "sha256_after": None,
+            "unchanged": None,
+        },
+        "audit_file": None,
+    }
+
+    if dry_run:
+        for target in targets:
+            rows = _export_rows(store, target)
+            report["targets"][target] = {
+                "path": str(out_dir / EXPORT_TARGETS[target]),
+                "expected": len(rows),
+                "written": 0,
+                "post_cutover": _post_cutover_count(rows, _migrated_at),
+                "ok": None,
+                "backup": None,
+            }
+        report["memory_db"]["sha256_after"] = sha_before
+        report["memory_db"]["unchanged"] = True
+        return report
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for target in targets:
+        rows = _export_rows(store, target)
+        contents = [r["content"] for r in rows]
+        path = out_dir / EXPORT_TARGETS[target]
+        backup = _backup(path)
+        atomic_write_text(path, ENTRY_DELIMITER.join(contents), tmp_prefix=".mem_")
+        # Count verification: re-parse exactly what the flat store will read.
+        written = len(MemoryStore._parse_entries(
+            path.read_text(encoding="utf-8")))
+        report["targets"][target] = {
+            "path": str(path),
+            "expected": len(contents),
+            "written": written,
+            "post_cutover": _post_cutover_count(rows, _migrated_at),
+            "ok": written == len(contents),
+            "backup": str(backup) if backup else None,
+        }
+
+    sha_after = _sha256(db_path) if db_path else None
+    report["memory_db"]["sha256_after"] = sha_after
+    report["memory_db"]["unchanged"] = sha_before == sha_after
+
+    marker = out_dir / _REPORT_NAME
+    report["audit_file"] = str(marker)
+    atomic_write_text(
+        marker,
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+        tmp_prefix=".mem_",
+    )
+    return report

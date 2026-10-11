@@ -678,6 +678,11 @@ def _build_child_goal_message(goal: str, images: List[str], child) -> Any:
         )
         if mode == "native":
             parts, skipped = build_native_content_parts(goal, paths, urls)
+            if parts and parts[0].get("type") == "text":
+                # The shared image builder strips captions. Delegated goals are
+                # verbatim contracts; retain their trailing/Unicode newlines,
+                # including when the builder adds image-location hints.
+                parts[0] = {**parts[0], "text": goal + parts[0]["text"][len(goal.strip()):]}
             if skipped:
                 logger.warning("delegate_task: skipped %d unreadable image(s) for subagent: %s", len(skipped), ", ".join(skipped[:3]))
             if data_urls:
@@ -698,6 +703,77 @@ def _build_child_goal_message(goal: str, images: List[str], child) -> Any:
     except Exception:
         logger.warning("delegate_task: image forwarding failed; sending text-only goal", exc_info=True)
         return goal
+
+
+class DelegationMemoryConfigError(ValueError):
+    """An explicitly supplied briefing gate cannot be interpreted safely."""
+
+
+def _validate_briefing_section(cfg: Any) -> bool:
+    from collections.abc import Mapping
+    if not isinstance(cfg, Mapping):
+        raise DelegationMemoryConfigError(
+            "delegation must be a mapping; set delegation to a mapping or omit it"
+        )
+    enabled = cfg.get("memory_briefing", True)
+    if not isinstance(enabled, bool):
+        raise DelegationMemoryConfigError(
+            "delegation.memory_briefing must be a boolean (true or false), "
+            f"not {type(enabled).__name__}; set memory_briefing to true or false or omit it for default true"
+        )
+    return enabled
+
+
+def _memory_briefing_enabled() -> bool:
+    """Default-on; runtime read failures stay soft, supplied config errors do not."""
+    try:
+        # The normal delegation loader discards malformed sections and the
+        # defaults merger replaces explicit null. Validate raw supplied shapes.
+        if os.environ.get("HERMES_IGNORE_USER_CONFIG") != "1":
+            from hermes_cli.config import read_raw_config
+            _validate_briefing_section(read_raw_config().get("delegation", {}))
+        from tools.delegate_tool_config import _load_config
+        return _validate_briefing_section(_load_config())
+    except DelegationMemoryConfigError:
+        raise
+    except Exception:
+        return True
+
+
+def _attach_delegation_briefing(parent_agent: Any, goal: str, subagent_id: Optional[str], user_message: Any) -> Any:
+    """Append the parent-recalled read-only memory briefing to the child's goal message.
+
+    Ticket #8: the PARENT recalls memory on the child's behalf; the briefing is a
+    ONE-TIME copy that rides the first user message — never persisted, never wrapped
+    in the ``<memory-context>`` fence, never attached again. The child itself stays
+    memoryless (no memory tool, no bus handle, no DB path — unchanged isolation).
+
+    ``user_message`` is either the goal string or (multimodal tasks) a list of
+    OpenAI-style content parts; the briefing is appended as text / a trailing text
+    part. Any failure returns the message untouched — a broken recall must never
+    break the spawn.
+    """
+    if not _memory_briefing_enabled():
+        return user_message
+    if getattr(parent_agent, "_memory_bus", None) is None:
+        return user_message
+    try:
+        from agent.memory_bus import build_delegation_briefing as _build_briefing
+        # project=None: the workspace has no subagent realm helper; realm scoping
+        # stays an explicit future opt-in.
+        briefing = _build_briefing(parent_agent, goal, subagent_id=subagent_id or "", project=None)
+    except Exception:
+        logger.warning("delegate_task: memory briefing failed (non-fatal)", exc_info=True)
+        briefing = ""
+    if not briefing:
+        return user_message
+    if isinstance(user_message, str):
+        return user_message + "\n\n" + briefing
+    if isinstance(user_message, list):
+        parts = [dict(p) for p in user_message]
+        parts.append({"type": "text", "text": briefing})
+        return parts
+    return user_message
 
 
 @dataclass
@@ -841,23 +917,101 @@ class _ChildRun:
         from tools.daemon_pool import DaemonThreadPoolExecutor
         child, task_index = self.child, self.task_index
         child_timeout = _get_child_timeout()
-        executor = DaemonThreadPoolExecutor(
-            max_workers=1, initializer=_set_subagent_approval_cb, initargs=(_get_subagent_approval_callback(),),
-        )
         # Worker thread handle so the timeout diagnostic can dump its stack.
         worker_thread_holder: Dict[str, Optional[threading.Thread]] = {"t": None}
         # Resolved after seed_workspace so a multimodal goal's text part carries the worktree note too.
         _images = list(getattr(child, "_delegate_images", None) or [])
         user_message: Any = _build_child_goal_message(self.goal, _images, child) if _images else self.goal
+        # Ticket #8: the parent recalls memory on the child's behalf — a one-time
+        # read-only briefing appended to the goal (gated by delegation.memory_briefing).
+        # Never persisted, never fenced; the child itself stays memoryless.
+        clean_user_message = user_message
+        user_message = _attach_delegation_briefing(
+            self.parent_agent, self.goal, self.subagent_id, user_message,
+        )
+        briefing_attached = user_message != clean_user_message
 
         def _run_with_thread_capture():
             worker_thread_holder["t"] = threading.current_thread()
             from agent.delegation_context import delegated_child_context
             with delegated_child_context(str(getattr(child, "session_id", "") or "")):
-                return child.run_conversation(
-                    user_message=user_message, task_id=self.child_task_id, stream_callback=self.relay_text,
-                )
+                kwargs = dict(task_id=self.child_task_id, stream_callback=self.relay_text)
+                if not briefing_attached:
+                    return child.run_conversation(user_message=user_message, **kwargs)
+                kwargs["persist_user_message"] = clean_user_message
+                # A durable override alone is NOT ephemeral: turn-start persistence
+                # records augmented bytes in api_content, and resume replays them.
+                # Keep the live history clean too; attach only to outbound copies,
+                # after sidecar stamping, compaction and snapshot selection.
+                sanitize = child._sanitize_api_messages
+                if isinstance(user_message, str):
+                    briefing = user_message[len(clean_user_message):]
+                else:
+                    briefing = user_message[-1]["text"]
+                goal_text = (clean_user_message if isinstance(clean_user_message, str)
+                             else clean_user_message[0]["text"])
 
+                def with_briefing(messages, *args, **options):
+                    outbound = sanitize(messages, *args, **options)
+                    for index in range(len(outbound) - 1, -1, -1):
+                        msg = outbound[index]
+                        if msg.get("role") != "user":
+                            continue
+                        content = msg.get("content")
+                        # Steering/recovery may append other user turns. Match
+                        # the original text value, not repr(content): repr escapes
+                        # multiline/Unicode goals and can match image URLs or
+                        # quoted history that merely contains the goal.
+                        if isinstance(content, str):
+                            is_goal = content == clean_user_message
+                        elif isinstance(content, list):
+                            is_goal = any(
+                                isinstance(part, dict) and part.get("type") == "text"
+                                and part.get("text") == goal_text for part in content
+                            )
+                        else:
+                            is_goal = False
+                        if not is_goal:
+                            continue
+                        if isinstance(content, str):
+                            content = content + briefing
+                        elif isinstance(content, list):
+                            content = list(content) + [{"type": "text", "text": briefing}]
+                        else:
+                            break
+                        outbound = list(outbound)
+                        outbound[index] = {**msg, "content": content}
+                        break
+                    return outbound
+
+                # Provider debug dumps are durable too, including on 4xx errors.
+                # Remove this exact generated briefing, not a broad marker regex
+                # that could erase literal user text; leave all other diagnostics.
+                dump_request = child._dump_api_request_debug
+
+                def clean_dump_value(value):
+                    if isinstance(value, str):
+                        return value.replace(briefing.strip(), "")
+                    if isinstance(value, list):
+                        return [clean_dump_value(item) for item in value]
+                    if isinstance(value, dict):
+                        return {key: clean_dump_value(item) for key, item in value.items()}
+                    return value
+
+                def dump_without_briefing(api_kwargs, *args, **options):
+                    return dump_request(clean_dump_value(api_kwargs), *args, **options)
+
+                child._sanitize_api_messages = with_briefing
+                child._dump_api_request_debug = dump_without_briefing
+                try:
+                    return child.run_conversation(user_message=clean_user_message, **kwargs)
+                finally:
+                    child._sanitize_api_messages = sanitize
+                    child._dump_api_request_debug = dump_request
+
+        executor = DaemonThreadPoolExecutor(
+            max_workers=1, initializer=_set_subagent_approval_cb, initargs=(_get_subagent_approval_callback(),),
+        )
         future = executor.submit(contextvars.copy_context().run, _run_with_thread_capture)
         # One wait covers both ways out: the worker finishing, or the heartbeat's stale verdict.
         # Without the second, a worker wedged after its final answer holds a finite (-Q / Bot Chat

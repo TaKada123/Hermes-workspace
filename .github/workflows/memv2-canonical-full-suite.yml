@@ -1,0 +1,147 @@
+name: MEMV2 canonical full suite (20 shards)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci/memv2-57a309a-20shards]
+
+permissions:
+  contents: read
+
+jobs:
+  canonical:
+    name: Canonical shard ${{ matrix.slice }}/20
+    if: github.ref == 'refs/heads/ci/memv2-57a309a-20shards'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        slice: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    env:
+      HERMES_TEST_WORKERS: '2'
+      HERMES_TEST_FILE_RETRIES: '0'
+      TZ: UTC
+      LANG: C.UTF-8
+      PYTHONHASHSEED: '0'
+    steps:
+      - name: Initialize artifact directory
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/memv2-results" "$RUNNER_TEMP/memv2-home"
+          printf 'HERMES_HOME=%s/memv2-home\nUV_PROJECT_ENVIRONMENT=%s/memv2-venv\nRESULTS=%s/memv2-results\n' "$RUNNER_TEMP" "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Checkout exact CI head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          # Keep real history/tags available; fixture-local repositories remain independent.
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Verify unchanged candidate tree and external paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor 57a309a6bab854b83ad52cc322dabf9c4c6844a4 HEAD
+          test "$(git rev-parse --is-shallow-repository)" = false
+          python3 - <<'PY' | tee "$RESULTS/path-audit.json"
+          import json, os
+          from pathlib import Path
+          workspace = Path(os.environ['GITHUB_WORKSPACE']).resolve()
+          paths = {key: str(Path(os.environ[key]).resolve()) for key in
+                   ('HERMES_HOME', 'UV_PROJECT_ENVIRONMENT', 'RESULTS')}
+          assert all(not Path(path).is_relative_to(workspace) for path in paths.values())
+          print(json.dumps({'workspace': str(workspace), 'external_paths': paths}, indent=2))
+          PY
+          git diff --name-only 57a309a6bab854b83ad52cc322dabf9c4c6844a4 HEAD | tee "$RESULTS/ci-only-diff.txt"
+          python3 - <<'PY'
+          import subprocess
+          changed = set(subprocess.check_output(['git', 'diff', '--name-only', '57a309a6bab854b83ad52cc322dabf9c4c6844a4', 'HEAD'], text=True).splitlines())
+          assert changed == {'.github/workflows/memv2-canonical-full-suite.yml', 'scripts/ci/memv2_shards.py'}, changed
+          PY
+      - name: Install and verify native test prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Matches the checked-in upstream tests.yml unit lane, not a blanket apt install.
+          for tool in bash git curl tar sha256sum install uname cut node npm; do command -v "$tool"; done
+          test "$(uname -m)" = x86_64
+          RG_VERSION=15.1.0
+          RG_SHA256=1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599
+          RG_TARBALL="ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          native="$RUNNER_TEMP/memv2-native"
+          mkdir -p "$native"
+          curl -sSfL --retry 3 --retry-delay 5 -o "$native/$RG_TARBALL" \
+            "https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/${RG_TARBALL}"
+          printf '%s  %s\n' "$RG_SHA256" "$native/$RG_TARBALL" | sha256sum -c -
+          tar -xzf "$native/$RG_TARBALL" -C "$native"
+          install -m 0755 "$native/ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl/rg" "$native/rg"
+          printf '%s\n' "$native" >> "$GITHUB_PATH"
+          "$native/rg" --version | tee "$RESULTS/ripgrep-version.txt"
+          git --version | tee "$RESULTS/git-version.txt"
+          node --version | tee "$RESULTS/node-version.txt"
+          npm --version | tee "$RESULTS/npm-version.txt"
+      - name: Set up project-pinned uv (no shared duration cache)
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: '0.12.3' # pm/lock.json; 0.13 removes _virtualenv.pth used by PM contracts.
+          enable-cache: false
+      - name: Install standalone Python and require safe SQLite before tests
+        shell: bash
+        env:
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/memv2-python
+          UV_PYTHON_BIN_DIR: ${{ runner.temp }}/memv2-python-bin
+        run: |
+          set -euo pipefail
+          uv --version | tee "$RESULTS/uv-version.txt"
+          test "$(uv --version | cut -d ' ' -f 2)" = 0.12.3
+          uv python install 3.14.7 2>&1 | tee "$RESULTS/python-install.log"
+          base_python="$(uv python find --managed-python 3.14.7)"
+          "$base_python" - <<'PY' | tee "$RESULTS/base-sqlite.json"
+          import json, sqlite3, sys
+          from hermes_cli.sqlite_runtime import is_sqlite_wal_reset_vulnerable
+          assert sys.version_info[:3] == (3, 14, 7), sys.version
+          print(json.dumps({'python': sys.version, 'executable': sys.executable,
+                            'sqlite': sqlite3.sqlite_version,
+                            'source_id': sqlite3.connect(':memory:').execute('select sqlite_source_id()').fetchone()[0]}))
+          assert not is_sqlite_wal_reset_vulnerable(sqlite3.sqlite_version_info), 'unsafe SQLite: refusing misleading test coverage'
+          PY
+          printf 'HERMES_BASE_PYTHON=%s\n' "$base_python" >> "$GITHUB_ENV"
+      - name: Sync locked independent dev and test environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv sync --locked --group dev --group test --no-install-project --python "$HERMES_BASE_PYTHON" 2>&1 | tee "$RESULTS/dependency-sync.log"
+          printf 'HERMES_PYTHON=%s/bin/python\n' "$UV_PROJECT_ENVIRONMENT" >> "$GITHUB_ENV"
+          "$UV_PROJECT_ENVIRONMENT/bin/python" - <<'PY' | tee "$RESULTS/test-sqlite.json"
+          import json, sqlite3, sys
+          from hermes_cli.sqlite_runtime import is_sqlite_wal_reset_vulnerable
+          assert sys.version_info[:3] == (3, 14, 7), sys.version
+          assert not is_sqlite_wal_reset_vulnerable(sqlite3.sqlite_version_info), 'test interpreter has unsafe SQLite'
+          print(json.dumps({'executable': sys.executable, 'base_prefix': sys.base_prefix,
+                            'python': sys.version, 'sqlite': sqlite3.sqlite_version}))
+          PY
+      - name: Audit all 20 slices then run canonical default-discovery slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          # No positional paths, --files, -k, or marker override: full default suite union.
+          "$HERMES_PYTHON" scripts/ci/memv2_shards.py --output "$RESULTS" --run-slice "${{ matrix.slice }}"
+      - name: Preserve observed durations and workflow
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$RESULTS"
+          if test -f test_durations.json; then cp test_durations.json "$RESULTS/test_durations.json"; fi
+          if test -f .github/workflows/memv2-canonical-full-suite.yml; then cp .github/workflows/memv2-canonical-full-suite.yml "$RESULTS/workflow.yml"; fi
+          printf 'job_status=%s\nhead_sha=%s\nslice=%s/20\n' '${{ job.status }}' "$GITHUB_SHA" '${{ matrix.slice }}' > "$RESULTS/job-status.txt"
+      - name: Upload canonical logs, results, coverage and durations even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: memv2-canonical-slice-${{ matrix.slice }}
+          path: ${{ runner.temp }}/memv2-results/
+          if-no-files-found: error
+          retention-days: 14

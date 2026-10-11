@@ -1332,6 +1332,17 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
     agent._memory_nudge_interval = 10
     agent._turns_since_memory = 0
     agent._iters_since_skill = 0
+    # MEM-V2 (#6): context-pack orchestrator (sqlite_v2 only) + its per-turn cache.
+    # Defaults so the turn prologue can read them on every backend.
+    agent._memory_orchestrator = None
+    agent._memory_pack_cache = ""
+    # Ticket #8: parent-only MemoryBus for subagent briefings. Reset FIRST so
+    # subagents (skip_memory) structurally never inherit a handle; only a
+    # sqlite_v2 parent with memory.bus.enabled gets one — see _init_memory_bus
+    # at the end of this function (separate helper so it coexists with #6's
+    # _init_memory_orchestrator, which has its own call site).
+    agent._memory_bus = None
+    mem_config = {}
     # skip_memory skips the external *provider*; enabled_toolsets=["memory"] still gets the
     # built-in store so the memory tool never sees store=None.
     # Flush/background agents can still pass enabled_toolsets=["memory"] so the built-in file store exists
@@ -1344,10 +1355,27 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
         and "memory" not in (agent.disabled_toolsets or [])
     )
     if not skip_memory or _memory_toolset_requested:
+        # Supplied configuration is not an optional-runtime failure. Validate
+        # before entering the storage suppression block (even if storage fails).
+        from tools.memory_tool import get_builtin_memory_config
+        from tools.delegate_tool_child_run import _memory_briefing_enabled
+        _memory_briefing_enabled()
+        from agent.memory_orchestrator import read_memory_boolean_section
+        # Defaults merging turns explicit null sections into default mappings.
+        # Validate the read-only raw view first so supplied null is not absence.
+        if os.environ.get("HERMES_IGNORE_USER_CONFIG") != "1":
+            from hermes_cli.config import read_raw_config
+            raw_memory = read_raw_config().get("memory", {})
+            read_memory_boolean_section(raw_memory, "recall_log", default=False)
+            read_memory_boolean_section(raw_memory, "orchestrator", default=True)
+        mem_config = get_builtin_memory_config(_agent_cfg)
+        _recall_log_enabled = read_memory_boolean_section(mem_config, "recall_log", default=False)
+        read_memory_boolean_section(mem_config, "orchestrator", default=True)
         # Memory is optional — don't break agent init
         with suppress(Exception):
             from tools.memory_tool import (
                 MemoryStore, get_builtin_memory_config, get_builtin_memory_store_flags,
+                resolve_memory_backend,
             )
             mem_config = get_builtin_memory_config(_agent_cfg)
             agent._memory_enabled, agent._user_profile_enabled = get_builtin_memory_store_flags(
@@ -1355,13 +1383,42 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
             )
             agent._memory_nudge_interval = int(mem_config.get("nudge_interval", 10))
             if agent._memory_enabled or agent._user_profile_enabled:
-                agent._memory_store = MemoryStore(
+                store_kwargs = dict(
                     memory_char_limit=mem_config.get("memory_char_limit", 2200),
                     user_char_limit=mem_config.get("user_char_limit", 1375),
                     memory_enabled=agent._memory_enabled,
                     user_profile_enabled=agent._user_profile_enabled,
                 )
+                if resolve_memory_backend(_agent_cfg) == "sqlite_v2":
+                    # Typed SQLite canonical store; MEMORY.md/USER.md become derived
+                    # projections. Same public surface (load_from_disk, add/replace/
+                    # remove, format_for_system_prompt) — consumers are duck-typed.
+                    from agent.memory_store_v2 import MemoryStoreV2
+                    # Recall-audit log: default OFF (memory.recall_log.enabled) —
+                    # a per-pack DB row is an opt-in observability tax, not a
+                    # silent default write.
+                    store_kwargs["recall_log_enabled"] = _recall_log_enabled
+                    agent._memory_store = MemoryStoreV2(**store_kwargs)
+                else:
+                    agent._memory_store = MemoryStore(**store_kwargs)
                 agent._memory_store.load_from_disk()
+        # Alias configuration errors must escape the optional-storage handler.
+        # AFTER load_from_disk: aliases need the schema; the legacy flat store
+        # has no alias cache and takes no additional initialization path.
+        _set_aliases = getattr(agent._memory_store, "set_alias_cache", None)
+        if callable(_set_aliases):
+            try:
+                _set_aliases(mem_config.get("aliases", {}))
+            except Exception as exc:
+                # The store owns alias validation. Only its dedicated config
+                # error is fatal; ordinary optional-storage errors stay soft.
+                from agent import memory_store_v2
+                alias_error = getattr(memory_store_v2, "MemoryAliasConfigError", None)
+                if alias_error is not None and isinstance(exc, alias_error):
+                    raise
+                logger.warning("Memory alias cache init failed (non-fatal): %s", exc)
+        # Optional storage failures remain non-fatal; supplied config errors do not.
+        _init_memory_orchestrator(agent, _agent_cfg, agent._memory_store)
 
     # External memory provider plugin (one at a time, alongside built-in): memory.provider.
     agent._memory_manager = None
@@ -1404,6 +1461,90 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
 
     from agent.memory_manager import inject_memory_provider_tools
     inject_memory_provider_tools(agent)
+
+    # Ticket #8 call site (clearly separated from #6's _init_memory_orchestrator,
+    # which edits its own region of this file): parent-only MemoryBus for
+    # subagent briefings. Subagents reach this line with store=None →
+    # _memory_bus stays None (structural isolation, AC of #8).
+    _init_memory_bus(agent, _agent_cfg, agent._memory_store, agent._memory_manager)
+
+
+def _init_memory_bus(agent, _agent_cfg, store, memory_manager=None):
+    """Ticket #8: wire the parent's MemoryBus (delegation briefings; NOT subagents).
+
+    Gates (all must pass, else ``agent._memory_bus`` stays None):
+    1. ``memory.backend == 'sqlite_v2'`` (the ONE resolver, same as the store);
+    2. the store duck-types the v2 retrieval surface (``recall_candidates``);
+    3. ``memory.bus.enabled`` (default True — the kill switch).
+
+    Children reach ``_init_memory`` with skip_memory=True and a blocked memory
+    toolset, so their store is None and this helper is a no-op for them: the
+    child never gets a bus handle, exactly like it never gets the memory tool
+    or a DB path. Runtime failures are non-fatal; unusable supplied config
+    is rejected at startup with its key and remediation.
+    """
+    from agent.memory_orchestrator import MemoryOrchestratorConfigError
+    # Always materialize the attribute: every non-v2 path leaves it None.
+    agent._memory_bus = None
+    from tools.memory_tool import get_builtin_memory_config
+    from agent.memory_bus import read_bus_enabled
+    _mem_cfg = get_builtin_memory_config(_agent_cfg)
+    _bus_enabled = read_bus_enabled(_mem_cfg)
+    try:
+        from tools.memory_tool import resolve_memory_backend
+        if resolve_memory_backend(_agent_cfg) != "sqlite_v2":
+            return
+        if store is None or not callable(getattr(store, "recall_candidates", None)):
+            return
+        if not _bus_enabled:
+            return
+        from agent.memory_bus import MemoryBus
+        from agent.memory_orchestrator import read_orchestrator_config
+        _token_budget, _max_entries, _weights = read_orchestrator_config(_mem_cfg)
+        agent._memory_bus = MemoryBus(
+            store=store,
+            manager=memory_manager or None,
+            targets=tuple(target for target in ("memory", "user") if store.target_enabled(target)),
+            weights=_weights,
+            token_budget=_token_budget,
+            max_entries=_max_entries,
+        )
+    except MemoryOrchestratorConfigError:
+        raise
+    except Exception:
+        logger.warning("memory bus: init failed (non-fatal)", exc_info=True)
+        agent._memory_bus = None
+
+
+def _init_memory_orchestrator(agent, cfg, store):
+    """MEM-V2 (#6): wire the context-pack orchestrator when the typed backend is active.
+
+    ``agent._memory_orchestrator`` is set when ``memory.backend == "sqlite_v2"`` AND the
+    store duck-types the orchestrator API AND ``memory.orchestrator.enabled``; every other
+    case (legacy ``file`` backend, missing store, disabled flag) yields
+    ``None``; unusable supplied config raises. Separate named helper with a clearly
+    commented call site in ``_init_memory`` so the parallel bus wiring (#8) can coexist.
+    """
+    from agent.memory_orchestrator import MemoryOrchestratorConfigError
+    agent._memory_orchestrator = None
+    if store is None:
+        return
+    try:
+        from tools.memory_tool import get_builtin_memory_config, resolve_memory_backend
+        if resolve_memory_backend(cfg) != "sqlite_v2":
+            return
+        from agent.memory_orchestrator import build_memory_orchestrator
+        agent._memory_orchestrator = build_memory_orchestrator(
+            store,
+            get_builtin_memory_config(cfg),
+            memory_enabled=bool(agent._memory_enabled),
+            user_profile_enabled=bool(agent._user_profile_enabled),
+        )
+    except MemoryOrchestratorConfigError:
+        raise
+    except Exception as _moe:
+        _ra().logger.warning("Memory orchestrator init failed: %s", _moe)
+        agent._memory_orchestrator = None
 
 
 def _apply_agent_section(agent, _agent_cfg):

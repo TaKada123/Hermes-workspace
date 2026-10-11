@@ -141,6 +141,42 @@ def _require(condition: bool, message: str) -> None:
         raise RuntimeError(message)
 
 
+def _backend_is_v2() -> bool:
+    from tools.memory_tool import resolve_memory_backend
+
+    return resolve_memory_backend() == "sqlite_v2"
+
+
+def _require_v2_user_markers(store, home: Path) -> None:
+    """Check #2 on sqlite_v2: markers must live in the CANONICAL store rows.
+
+    The projection files are derived views that may lag behind the store, so
+    the verifier reads the canonical rows through the store's PUBLIC surface
+    (``visible_rows`` + ``managed_import_status`` — never ``_query``) and
+    additionally requires both projections to exist.
+    """
+    contents = [row["content"] for row in store.visible_rows("user")]
+    _require(
+        any("EndeavourOS" in content for content in contents),
+        "USER.md marker 'EndeavourOS' is missing from the sqlite_v2 canonical store",
+    )
+    _require(
+        any("AI, агенты, обвязки и автоматизация" in content for content in contents),
+        "USER.md goals are missing from the sqlite_v2 canonical store",
+    )
+    status = store.managed_import_status()
+    _require(
+        bool(status["markers"]),
+        "managed import sha marker is missing from the sqlite_v2 canonical store",
+    )
+    _require(
+        (home / "memories" / "USER.md").is_file(), "USER.md projection is missing"
+    )
+    _require(
+        (home / "memories" / "MEMORY.md").is_file(), "MEMORY.md projection is missing"
+    )
+
+
 def _load_module(path: Path, name: str):
     spec = importlib.util.spec_from_file_location(name, path)
     _require(spec is not None and spec.loader is not None, f"cannot load module: {path}")
@@ -149,16 +185,36 @@ def _load_module(path: Path, name: str):
     return module
 
 
-def _runtime_memory_store() -> MemoryStore:
+def _runtime_memory_store() -> Any:
+    """Backend-aware runtime memory store (mirrors ``load_on_disk_store``).
+
+    ``memory.backend: sqlite_v2`` → ``MemoryStoreV2`` (canonical SQLite store);
+    anything else → the legacy flat-file ``MemoryStore`` (unchanged contract).
+    """
+    from tools.memory_tool import resolve_memory_backend
+
     cfg = load_config()
     memory = cfg.get("memory") if isinstance(cfg, dict) else {}
     if not isinstance(memory, dict):
         memory = {}
+    limits = (
+        int(memory.get("memory_char_limit", 2200)),
+        int(memory.get("user_char_limit", 1375)),
+    )
+    memory_enabled = bool(memory.get("memory_enabled", True))
+    user_profile_enabled = bool(memory.get("user_profile_enabled", True))
+    if resolve_memory_backend(cfg) == "sqlite_v2":
+        from agent.memory_store_v2 import MemoryStoreV2
+
+        return MemoryStoreV2(
+            *limits,
+            memory_enabled=memory_enabled,
+            user_profile_enabled=user_profile_enabled,
+        )
     return MemoryStore(
-        memory_char_limit=int(memory.get("memory_char_limit", 2200)),
-        user_char_limit=int(memory.get("user_char_limit", 1375)),
-        memory_enabled=bool(memory.get("memory_enabled", True)),
-        user_profile_enabled=bool(memory.get("user_profile_enabled", True)),
+        *limits,
+        memory_enabled=memory_enabled,
+        user_profile_enabled=user_profile_enabled,
     )
 
 
@@ -170,12 +226,20 @@ def main() -> int:
     _require("Главный Hermes" in soul, "SOUL.md was not loaded by Hermes native identity loader")
     _require("Русский язык по умолчанию" in soul, "SOUL.md identity rules are missing")
 
-    # 2) USER.md uses Hermes' native MemoryStore prompt snapshot.
+    # 2) USER.md uses Hermes' native memory store. Legacy: the flat-file
+    # prompt-snapshot check stays byte-identical to the previous contract.
+    # sqlite_v2: the managed markers must live in the CANONICAL store rows
+    # and both derived projections must exist.
+    backend_v2 = _backend_is_v2()
     store = _runtime_memory_store()
     store.load_from_disk()
-    user = store.format_for_system_prompt("user") or ""
-    _require("EndeavourOS" in user, "USER.md was not loaded by Hermes MemoryStore")
-    _require("AI, агенты, обвязки и автоматизация" in user, "USER.md goals are missing")
+    if backend_v2:
+        _require_v2_user_markers(store, home)
+        store.close()
+    else:
+        user = store.format_for_system_prompt("user") or ""
+        _require("EndeavourOS" in user, "USER.md was not loaded by Hermes MemoryStore")
+        _require("AI, агенты, обвязки и автоматизация" in user, "USER.md goals are missing")
 
     cfg = load_config()
     memory_cfg = cfg.get("memory", {}) if isinstance(cfg, dict) else {}
@@ -287,7 +351,10 @@ def main() -> int:
     print("Gumar runtime verification: OK")
     print(f"  HERMES_HOME: {home}")
     print("  SOUL.md: native identity loader OK")
-    print("  USER.md: native MemoryStore prompt snapshot OK")
+    if backend_v2:
+        print("  USER.md: sqlite_v2 canonical store rows + projections OK")
+    else:
+        print("  USER.md: native MemoryStore prompt snapshot OK")
     print("  MASTER_SPEC.md: installed source of truth OK")
     print(f"  plugin: {PLUGIN_ID} enabled, sections {', '.join(SECTION_IDS)}")
     print(f"  tools deferred: {len(defer)} (required {len(REQUIRED_DEFER)} pinned)")

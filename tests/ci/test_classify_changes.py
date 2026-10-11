@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.ci.workflow_fixtures import workflow_path
 
 _PATH = Path(__file__).resolve().parents[2] / "scripts" / "ci" / "classify_changes.py"
 _spec = importlib.util.spec_from_file_location("classify_changes", _PATH)
@@ -391,7 +392,12 @@ def test_every_slow_lane_path_matches_a_tracked_file():
     if tracked.returncode != 0:
         pytest.skip("not a git checkout")
     files = tracked.stdout.splitlines()
-    tables = {**_mod._E2E_LANES, "docker": _mod._DOCKER_PATHS, "nix": _mod._NIX_LANE_PATHS}
+    # The importer deliberately excludes upstream .github/workflows/ from
+    # active downstream CI; it copies them only as inert fixtures. This fork
+    # therefore has no Nix job or nix/flake source tree to trigger the imported
+    # nix lane. Keep checking every supported downstream slow lane, but do not
+    # treat that upstream-only surface as a dead downstream path.
+    tables = {**_mod._E2E_LANES, "docker": _mod._DOCKER_PATHS}
     dead = {
         (lane, prefix)
         for lane, prefixes in tables.items()
@@ -406,7 +412,8 @@ _REPO = Path(__file__).resolve().parents[2]
 
 def _yaml(rel: str) -> dict:
     yaml = pytest.importorskip("hermes_yaml")
-    return yaml.safe_load((_REPO / rel).read_text(encoding="utf-8"))
+    path = workflow_path(Path(rel).name) if rel.startswith(".github/workflows/") else _REPO / rel
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
 def test_every_lane_reaches_the_composite_action():

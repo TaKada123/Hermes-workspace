@@ -1,10 +1,7 @@
 name: Import Hermes Agent
 
+# Manual only: this importer replaces fork source and must not run on merge.
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/import-hermes.yml'
   workflow_dispatch:
 
 permissions:
@@ -31,6 +28,8 @@ jobs:
             --exclude='.git' \
             --exclude='.github/workflows/' \
             /tmp/hermes-agent/ ./
+          mkdir -p tests/ci/fixtures/upstream-workflows
+          rsync -a --delete /tmp/hermes-agent/.github/workflows/ tests/ci/fixtures/upstream-workflows/
           mkdir -p .github/workflows
           cp /tmp/import-hermes.yml .github/workflows/import-hermes.yml
 

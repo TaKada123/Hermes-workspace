@@ -184,6 +184,18 @@ def test_relative_path_metadata_exemption_tracks_working_directory(protected_hom
         guard.check(target, metadata=True)
 
 
+def test_interpreter_inside_protected_home_is_not_exempt(protected_home, monkeypatch):
+    from tests import home_io_guard
+
+    interpreter = protected_home / "tools" / "venv"
+    site_packages = interpreter / "lib" / "python" / "site-packages"
+    monkeypatch.setattr(home_io_guard, "_INTERPRETER_PREFIX_STRS", (os.path.normcase(str(interpreter)),))
+    guard = home_io_guard.HomeIOGuard(lambda: [protected_home])
+
+    with pytest.raises(AssertionError, match="REAL hermes home"):
+        guard.check(site_packages / "pytest.py")
+
+
 def test_checkout_inside_a_guarded_root_is_not_hermes_state():
     """The default install checks the repo out INSIDE the home (install.sh:
     INSTALL_DIR=$HERMES_HOME/hermes-agent): the checkout, its .venv and test

@@ -1310,6 +1310,10 @@ DEFAULT_CONFIG = {
         },
     },
     "memory": {  # Persistent memory — bounded curated memory injected into the system prompt
+        # Built-in store backend: "file" (legacy flat MEMORY.md/USER.md) or "sqlite_v2"
+        # (typed SQLite canonical store, MEMORY.md/USER.md become derived projections).
+        # Any other value behaves as "file" (fail-safe; unknown flags never activate v2).
+        "backend": "file",
         "memory_enabled": True,
         "user_profile_enabled": True,
         # Approval gate for memory writes on BOTH foreground turns and the background review fork.
@@ -1324,6 +1328,37 @@ DEFAULT_CONFIG = {
         # "mem0", "holographic", "retaindb", "byterover", or a catalog-installed one ("honcho",
         # "hindsight", "supermemory").
         "provider": "",
+        # MEM-V2 (#6): context-pack orchestrator — deterministic intent routing + weighted scoring
+        # + token budget over the typed store. Active ONLY when backend == "sqlite_v2"; on the
+        # legacy "file" backend no pack is built and nothing changes. The pack rides the API copy
+        # of the current turn's user message (never the system prompt or persisted history).
+        "orchestrator": {
+            "enabled": True,
+            # Rendered-pack token budget (header + note + section titles are reserved on top).
+            "token_budget": 2500,
+            "max_entries": 20,
+            "weights": {
+                "relevance": 0.35,
+                "importance": 0.20,
+                "project_link": 0.15,
+                "decision_value": 0.15,
+                "recency": 0.10,
+                "confidence": 0.05,
+            },
+        },
+        # Query-expansion aliases (Phase-4 P2): {term: [aliases]}. The store's
+        # in-memory alias cache is populated from here at agent init
+        # (set_alias_cache) — empty by default, so the layer is wired but inert.
+        "aliases": {},
+        # Recall-audit log (Phase-4 P3): every pack build writes one DB row
+        # per enabled recall. Default OFF — observability opt-in, not a
+        # per-turn write tax. Store-level callers keep the method; agent init
+        # threads this flag through.
+        "recall_log": {"enabled": False},
+        # Ticket #8: MemoryBus wiring for the PARENT agent (subagent briefings).
+        # enabled=false removes the bus handle AND disables the delegation
+        # briefing; children never get a bus regardless (structural isolation).
+        "bus": {"enabled": True},
     },
     # Subagent delegation — override the provider:model used by delegate_task so children run on a
     # cheaper/faster model. Uses the same runtime provider resolution as CLI/gateway startup, so
@@ -1393,6 +1428,10 @@ DEFAULT_CONFIG = {
         # notifications to the PARENT; false suppresses them (the child's result is the
         # deliverable). Async-delegation results are NEVER suppressed.
         "surface_child_process_notifications": False,
+        # Ticket #8: parent-recalled read-only memory briefing appended to each child's
+        # goal (one-time copy; only when the parent runs memory.backend: sqlite_v2 with
+        # memory.bus.enabled). false = never attach a briefing — the real kill switch.
+        "memory_briefing": True,
     },
     # Ephemeral prefill messages file — JSON list of {role, content} dicts injected at the start of
     # every API call for few-shot priming. Never saved to sessions/logs/trajectories.

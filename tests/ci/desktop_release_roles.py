@@ -18,7 +18,7 @@ import hermes_yaml
 from scripts.releases.job_groups import JOB_GROUPS
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKFLOW = ROOT / ".github" / "workflows" / "desktop-bundled-release.yml"
+WORKFLOW = ROOT / "tests" / "ci" / "fixtures" / "upstream-workflows" / "desktop-bundled-release.yml"
 SMOKE_WORKFLOW = "./.github/workflows/desktop-bundle-smoke.yml"
 BUILD_CACHE_ACTION = "./.github/actions/desktop-build-cache"
 SHA = "a" * 40
