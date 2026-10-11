@@ -1,5 +1,6 @@
 """Authenticated HTTP executor: provider/model/tool resolution stays in Hermes."""
 import asyncio
+import hashlib
 import json
 import re
 from urllib.parse import quote, urlsplit
@@ -33,6 +34,12 @@ class HermesHTTPExecutor:
     async def __aexit__(self, *args):
         await self.http.aclose()
 
+    @staticmethod
+    def _idempotency_key(request: ExecutionRequest) -> str:
+        identity = json.dumps([request.profile, request.project_id, request.channel_id, request.operation_id],
+                              separators=(",", ":"))
+        return hashlib.sha256(identity.encode()).hexdigest()
+
     async def __call__(self, request: ExecutionRequest) -> ExecutionResult:
         if request.profile != self.profile:
             raise PermissionError("executor cannot execute another profile")
@@ -44,11 +51,21 @@ class HermesHTTPExecutor:
             # retry POST after a lost response or automatically stop live work.
             raise ExecutionUncertain("Hermes API execution unsettled; no automatic retry") from exc
 
+    async def _resolve_session_tip(self, origin_id: str) -> str:
+        response = await self.http.get(f"api/sessions/{origin_id}/messages", params={"limit": 0})
+        response.raise_for_status()
+        tip_id = response.json().get("session_id")
+        if not isinstance(tip_id, str) or not tip_id:
+            raise ExecutionUncertain("Hermes did not resolve a canonical session tip")
+        return tip_id
+
     async def _execute(self, request: ExecutionRequest) -> ExecutionResult:
-        identity = json.dumps([request.profile, request.channel_id, request.operation_id], separators=(",", ":"))
-        session_id = "ag2-" + uuid.uuid5(uuid.NAMESPACE_URL, identity).hex
+        origin_id = request.session_origin_id or request.session_current_id
+        if not origin_id:
+            raise ValueError("durable Hermes session lineage required")
         response = await self.http.post("api/sessions", json={
-            "id": session_id, "source": "api_server", "title": "AG2 network tracer",
+            "id": origin_id, "source": "api_server",
+            "title": f"AG2 {request.channel_id[:12]}",
         })
         if response.status_code != 409:
             response.raise_for_status()
@@ -56,15 +73,18 @@ class HermesHTTPExecutor:
             error = response.json().get("error", {})
             if not isinstance(error, dict) or error.get("code") != "session_exists":
                 response.raise_for_status()
-        # Verify the exact new target, also on a deterministic create conflict.
-        session = await self.http.get(f"api/sessions/{session_id}")
+        # The stored current ID may be stale if Hermes rotated while the
+        # bridge was down. Resolve from the stable origin first, then verify
+        # the canonical current target before sending a new turn.
+        resolved_session_id = await self._resolve_session_tip(origin_id)
+        session = await self.http.get(f"api/sessions/{resolved_session_id}")
         session.raise_for_status()
-        if session.json().get("session", {}).get("id") != session_id:
+        if session.json().get("session", {}).get("id") != resolved_session_id:
             raise ExecutionUncertain("Hermes session identity mismatch")
         run_response = await self.http.post("v1/runs", headers={
-            "Idempotency-Key": request.operation_id,
-            "X-Hermes-Session-Key": "ag2:" + session_id,
-        }, json={"session_id": session_id, "input": request.text})
+            "Idempotency-Key": self._idempotency_key(request),
+            "X-Hermes-Session-Key": "ag2:" + origin_id,
+        }, json={"session_id": resolved_session_id, "input": request.text})
         run_response.raise_for_status()
         run_id = run_response.json()["run_id"]
         while True:
@@ -78,7 +98,8 @@ class HermesHTTPExecutor:
                 output = run.get("output")
                 if not isinstance(output, str):
                     raise ExecutionUncertain("Hermes completed without textual output")
-                return ExecutionResult(output, run.get("session_id") or session_id, run_id)
+                tip_id = await self._resolve_session_tip(origin_id)
+                return ExecutionResult(output, tip_id, run_id)
             if status in {"failed", "cancelled", "interrupted"}:
                 raise ExecutionUncertain("Hermes run ended without completion; no automatic retry")
             await asyncio.sleep(self.poll_interval)

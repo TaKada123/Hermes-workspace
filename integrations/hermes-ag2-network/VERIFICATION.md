@@ -1,4 +1,4 @@
-# Ticket 01 verification receipts
+# AG2 ticket verification receipts
 
 ## Result / scope
 
@@ -78,6 +78,22 @@ The Hermes runtime used its normal provider, tools and profile configuration; it
 
 Before restart, live `gateway_state.json` reported `active_agents=0`, `active_work=null`, and the API port refused connections. Added protected API keys for `default`, `coding`, and `architect` (preserving any usable existing key); kept `.env`/`config.yaml` snapshots with mode 0600. Restarted the authorized user Gateway once; read back `/health` = 200 and confirmed only the loopback API listener on 8642. Post-smoke the Gateway remained active with `active_work=null`, `active_agents=0`. Existing memory backend settings were not changed: Coding/Architect remain legacy file memory.
 
+## Ticket 17: restart and rotation
+
+Canonical suite: `HERMES_PYTHON=/home/vottak/.hermes/cache/scratch/ag2-session-lineage-env/bin/python scripts/run_tests.sh integrations/hermes-ag2-network/tests/ -v --tb=short` — **9 passed across 8 test files, 0 failed**. Ruff and ty pass against that isolated environment.
+
+The session-lineage test performs Hermes HTTP turns across a disk Hub + bridge restart, removes the caller's local channel mapping and verifies the same native channel is rediscovered, checks repeated `open` returns the same channel, checks terminal-channel replacement, and exercises two distinct projects with distinct AG2 channels and Hermes origin sessions. It deliberately reuses `operation_id=request-1` in both projects, verifying the scoped bridge ledger and Hermes idempotency keys remain independent. It also simulates Hermes rotating after the prior result while the bridge's last current-session write is lost; the next request resolves the canonical tip from the stable origin before validating the target session. The fixture models Hermes session creation, `session_exists`, in-run rotation with stale run ID, and `GET /api/sessions/<origin>/messages?limit=0`; only that tip endpoint provides the current ID. The next run resumes it. The real Hermes API contract was verified in source: `hermes_cli/web_routers/sessions.py:get_session_messages` passes the requested origin through `SessionDB.resolve_resume_session_id`; that resolver follows the compression tip and chooses the deepest message-bearing continuation. The session-lineage test models the stale-current-after-downtime case, and the live run confirmed the authenticated endpoint works for the current Coding profile.
+
+The recovery test persists an addressed request in native AG2 WAL while the Hermes recipient is offline, restarts the disk Hub, and reconnects the bridge. WAL reconciliation executes the unseen operation once, replies with matching causation, and history contains exactly one request/reply pair. A terminal-channel test closes a channel with an unanswered request, reconnects twice, confirms the executor is never invoked, and verifies the owning profile sees one durable local-recovery notice in both the old channel history and a newly opened channel in the same project; the caller profile sees no notice. It then deletes the recipient ledger and confirms reconnect reconstructs the notice from terminal AG2 WAL. A migration test confirms legacy operation results are preserved while identical operation IDs remain independent across project channels.
+
+A real Coding Profile E2E exercised two distinct, read-only requests through one channel across a native Hub restart. Both authenticated Hermes Runs completed, invoked the profile's terminal tool, and returned independently verified SHA-256 digests. The session ID remained the same, and the persisted AG2 WAL retained both request/reply pairs:
+
+```json
+{"live":true,"profile":"coding","channel_id":"18dd9169edd028b5755c2d16cba0081b","first_session_id":"ag2-458a674b7bef5d89a49aa89d56594c2a","second_session_id":"ag2-458a674b7bef5d89a49aa89d56594c2a","session_reused":true,"first_run_id":"run_580ea71b821e41e6a9090e24bc7ac6e0","second_run_id":"run_564b1a2732e747b5b81479b04621c66f","first_reply":"AG2-LINEAGE-V8-FIRST 0d5e0549b17d928e401142af63d0f12ddb9f53349a94ec6abff57cf9509b4ee8","second_reply":"AG2-LINEAGE-V8-SECOND 49da15659ef90fa326cc23a15401ba71f6450b5d35628df6f48b4b2709617f3a — продолжение проверки после AG2-LINEAGE-V8-FIRST.","persisted_wal_texts":4,"hub_restarted":true}
+```
+
+This is a fresh network channel/session, not an existing user conversation. The live smoke used two authorized, read-only terminal/hash prompts. It left the service configuration, profile settings and existing sessions unchanged.
+
 ## Independent review and correction
 
-Standards-axis review identified a malformed channel invitation without `project_id` could reach an unchecked mapping access; a fail-closed project scope check is now applied both before invitation ACK and before channel use. The corresponding test was RED (bridge left the invalid channel pending), then GREEN (AG2 closes the handshake with `invite_rejected`; the executor is never invoked). Full network suite after the correction: 5 passed; scoped Ruff and ty checks pass. Spec-axis review's concern about missing real E2E is satisfied by the receipt above. The task is still only the first tracer slice: later session-lineage, specialist tools, project grants, artifacts, budgets and services remain open under tickets 17–21.
+Final Standards review found no hard documented-standard breaches; remaining items are judgement-call design smells. The Spec review's recovery checks are covered by the terminal-WAL test, including reconstruction after deleting the recipient ledger, and the tip contract is confirmed from Hermes source. The review also checked operation-ID scoping and the legacy ledger migration tests. No material scope creep found. Integration-branch merge remains pending.
