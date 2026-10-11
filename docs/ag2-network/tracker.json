@@ -1,0 +1,66 @@
+{
+  "repo": "TaKada123/Hermes-workspace",
+  "spec": {
+    "number": 15,
+    "url": "https://github.com/TaKada123/Hermes-workspace/issues/15"
+  },
+  "tickets": [
+    {
+      "slice": 1,
+      "number": 16,
+      "url": "https://github.com/TaKada123/Hermes-workspace/issues/16",
+      "title": "One real Hermes specialist exchanges a request and reply through AG2"
+    },
+    {
+      "slice": 2,
+      "number": 17,
+      "url": "https://github.com/TaKada123/Hermes-workspace/issues/17",
+      "title": "Project conversations resume Hermes sessions across restart"
+    },
+    {
+      "slice": 3,
+      "number": 18,
+      "url": "https://github.com/TaKada123/Hermes-workspace/issues/18",
+      "title": "Coding and Architect independently consult through network tools"
+    },
+    {
+      "slice": 4,
+      "number": 19,
+      "url": "https://github.com/TaKada123/Hermes-workspace/issues/19",
+      "title": "Project isolation and uncertain-execution safety survive delivery faults"
+    },
+    {
+      "slice": 5,
+      "number": 20,
+      "url": "https://github.com/TaKada123/Hermes-workspace/issues/20",
+      "title": "Specialists exchange artifacts and run as optional user services"
+    },
+    {
+      "slice": 6,
+      "number": 21,
+      "url": "https://github.com/TaKada123/Hermes-workspace/issues/21",
+      "title": "Live multi-turn network acceptance and independent quality review"
+    }
+  ],
+  "blocking_slices": [
+    [],
+    [
+      1
+    ],
+    [
+      2
+    ],
+    [
+      3
+    ],
+    [
+      2
+    ],
+    [
+      4,
+      5
+    ]
+  ],
+  "integration_base": "e0554d9022f4de9cda62bbf63a3af3d0521e49c3",
+  "branch": "feat/ag2-network-bridge"
+}
