@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hermes-ag2-network"
+version = "0.1.0"
+description = "Standalone native AG2 transport for externally executed Hermes Profiles"
+requires-python = ">=3.11"
+dependencies = ["ag2==1.1.2", "watchdog>=6,<7", "websockets>=15,<16", "httpx>=0.28.1,<1"]
+
+[project.scripts]
+hermes-ag2-network = "hermes_ag2_network.cli:main"
+
+[dependency-groups]
+test = ["pytest>=8.4,<10"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hermes_ag2_network"]
+
+# This independent bridge explicitly targets the reviewed release, newer than
+# Hermes core's quarantine. This does not exempt any Hermes core dependency.
+[tool.uv.exclude-newer-package]
+ag2 = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
