@@ -41,6 +41,12 @@ def _message(envelope: Envelope) -> Message:
                    data.get("session_id", ""), data.get("run_id", ""))
 
 
+def _answered_request_ids(envelopes: list[Envelope], sender_id: str) -> set[str]:
+    return {envelope.causation_id for envelope in envelopes
+            if envelope.sender_id == sender_id and envelope.event_type == EV_TEXT
+            and envelope.causation_id and envelope.event_data.get("kind") in {"reply", "status"}}
+
+
 class Network:
     """One enrolled identity. Use connect() as an async context manager.
 
@@ -227,9 +233,7 @@ class Network:
             except (NotFoundError, PermissionError):
                 continue
             wal = await self.hub_client.read_wal(channel.channel_id)
-            answered = {e.causation_id for e in wal if e.sender_id == self.client.agent_id
-                        and e.event_type == EV_TEXT and e.causation_id
-                        and e.event_data.get("kind") in {"reply", "status"}}
+            answered = _answered_request_ids(wal, self.client.agent_id)
             requests = [e for e in wal if e.event_type == EV_TEXT and e.sender_id == peer_id
                         and (e.audience is None or self.client.agent_id in e.audience)
                         and e.event_data.get("kind") == "request" and e.envelope_id not in answered]
@@ -249,9 +253,7 @@ class Network:
             # A concurrently delivered original is redundant if startup replay
             # already posted its durable reply.
             wal = await self.hub_client.read_wal(envelope.channel_id)
-            if any(e.sender_id == self.client.agent_id and e.causation_id == envelope.envelope_id
-                   and e.event_type == EV_TEXT and e.event_data.get("kind") in {"reply", "status"}
-                   for e in wal):
+            if envelope.envelope_id in _answered_request_ids(wal, self.client.agent_id):
                 return
             try:
                 result = self.ledger.admit(request)

@@ -1,5 +1,6 @@
 """Session continuation is observable across operation IDs and Hub/bridge restart."""
 import asyncio
+import sqlite3
 from pathlib import Path
 
 from hermes_ag2_network import Network, network_hub
@@ -49,6 +50,11 @@ def test_session_lineage_survives_restart_and_native_rotation(tmp_path: Path):
                     caller.ledger.forget_channel("caller", "architect", "lineage")
                     assert await caller.open(peer="architect", project_id="lineage") == channel
                 second = await ask_once(hub.url, channel, "request-2", "second")
+                # Simulate a bridge crash after Hermes rotated but before the
+                # updated tip reached the local SQLite ledger.
+                with sqlite3.connect(tmp_path / "architect.sqlite") as db:
+                    db.execute("UPDATE hermes_sessions SET current_id=? WHERE profile=? AND project_id=? AND channel_id=?",
+                               (first.session_id, "architect", "lineage", channel))
                 third = await ask_once(hub.url, channel, "request-3", "third")
                 isolated_channel, isolated = await ask_project_once(hub.url, "project-two", "request-4", "isolated project")
                 replayed = await ask_once(hub.url, channel, "request-1", "first")

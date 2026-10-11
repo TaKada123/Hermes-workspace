@@ -63,7 +63,7 @@ def hermes_api():
                     self.respond(404, {})
             elif self.path.startswith("/p/architect/api/sessions/"):
                 session_id = self.path.removeprefix("/p/architect/api/sessions/")
-                valid_ids = set(session_tips) | set(session_tips.values())
+                valid_ids = set(session_tips.values())
                 if session_id in valid_ids:
                     self.respond(200, {"session": {"id": session_id}})
                 else:
