@@ -1,10 +1,7 @@
 name: Import Hermes Agent
 
+# Manual only: this importer replaces fork source and must not run on merge.
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/import-hermes.yml'
   workflow_dispatch:
 
 permissions:
