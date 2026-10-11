@@ -35,14 +35,17 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 2
+          # Keep real history/tags available; fixture-local repositories remain independent.
+          fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
-      - name: Verify candidate parent and paths
+      - name: Verify unchanged candidate tree and external paths
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-parse HEAD^)" = 57a309a6bab854b83ad52cc322dabf9c4c6844a4
+          git merge-base --is-ancestor 57a309a6bab854b83ad52cc322dabf9c4c6844a4 HEAD
+          test "$(git rev-parse --is-shallow-repository)" = false
           python3 - <<'PY' | tee "$RESULTS/path-audit.json"
           import json, os
           from pathlib import Path
@@ -52,28 +55,74 @@ jobs:
           assert all(not Path(path).is_relative_to(workspace) for path in paths.values())
           print(json.dumps({'workspace': str(workspace), 'external_paths': paths}, indent=2))
           PY
-          git diff --name-only HEAD^ HEAD | tee "$RESULTS/ci-only-diff.txt"
+          git diff --name-only 57a309a6bab854b83ad52cc322dabf9c4c6844a4 HEAD | tee "$RESULTS/ci-only-diff.txt"
           python3 - <<'PY'
           import subprocess
-          changed = set(subprocess.check_output(['git', 'diff', '--name-only', 'HEAD^', 'HEAD'], text=True).splitlines())
+          changed = set(subprocess.check_output(['git', 'diff', '--name-only', '57a309a6bab854b83ad52cc322dabf9c4c6844a4', 'HEAD'], text=True).splitlines())
           assert changed == {'.github/workflows/memv2-canonical-full-suite.yml', 'scripts/ci/memv2_shards.py'}, changed
           PY
-      - name: Set up official Python 3.14
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: '3.14'
-      - name: Set up uv (no shared duration cache)
+      - name: Install and verify native test prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Matches the checked-in upstream tests.yml unit lane, not a blanket apt install.
+          for tool in bash git curl tar sha256sum install uname cut node npm; do command -v "$tool"; done
+          test "$(uname -m)" = x86_64
+          RG_VERSION=15.1.0
+          RG_SHA256=1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599
+          RG_TARBALL="ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          native="$RUNNER_TEMP/memv2-native"
+          mkdir -p "$native"
+          curl -sSfL --retry 3 --retry-delay 5 -o "$native/$RG_TARBALL" \
+            "https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/${RG_TARBALL}"
+          printf '%s  %s\n' "$RG_SHA256" "$native/$RG_TARBALL" | sha256sum -c -
+          tar -xzf "$native/$RG_TARBALL" -C "$native"
+          install -m 0755 "$native/ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl/rg" "$native/rg"
+          printf '%s\n' "$native" >> "$GITHUB_PATH"
+          "$native/rg" --version | tee "$RESULTS/ripgrep-version.txt"
+          git --version | tee "$RESULTS/git-version.txt"
+          node --version | tee "$RESULTS/node-version.txt"
+          npm --version | tee "$RESULTS/npm-version.txt"
+      - name: Set up project-pinned uv (no shared duration cache)
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
+          version: '0.12.3' # pm/lock.json; 0.13 removes _virtualenv.pth used by PM contracts.
           enable-cache: false
+      - name: Install standalone Python and require safe SQLite before tests
+        shell: bash
+        env:
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/memv2-python
+          UV_PYTHON_BIN_DIR: ${{ runner.temp }}/memv2-python-bin
+        run: |
+          set -euo pipefail
+          uv --version | tee "$RESULTS/uv-version.txt"
+          test "$(uv --version | cut -d ' ' -f 2)" = 0.12.3
+          uv python install 3.14.7 2>&1 | tee "$RESULTS/python-install.log"
+          base_python="$(uv python find --managed-python 3.14.7)"
+          "$base_python" - <<'PY' | tee "$RESULTS/base-sqlite.json"
+          import json, sqlite3, sys
+          from hermes_cli.sqlite_runtime import is_sqlite_wal_reset_vulnerable
+          assert sys.version_info[:3] == (3, 14, 7), sys.version
+          print(json.dumps({'python': sys.version, 'executable': sys.executable,
+                            'sqlite': sqlite3.sqlite_version,
+                            'source_id': sqlite3.connect(':memory:').execute('select sqlite_source_id()').fetchone()[0]}))
+          assert not is_sqlite_wal_reset_vulnerable(sqlite3.sqlite_version_info), 'unsafe SQLite: refusing misleading test coverage'
+          PY
+          printf 'HERMES_BASE_PYTHON=%s\n' "$base_python" >> "$GITHUB_ENV"
       - name: Sync locked independent dev and test environment
         shell: bash
         run: |
           set -euo pipefail
-          python -c 'import sys; assert (3, 14) <= sys.version_info[:2] < (3, 15); print(sys.version)'
-          uv sync --locked --group dev --group test --no-install-project --python "$(command -v python)" 2>&1 | tee "$RESULTS/dependency-sync.log"
+          uv sync --locked --group dev --group test --no-install-project --python "$HERMES_BASE_PYTHON" 2>&1 | tee "$RESULTS/dependency-sync.log"
           printf 'HERMES_PYTHON=%s/bin/python\n' "$UV_PROJECT_ENVIRONMENT" >> "$GITHUB_ENV"
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -c 'import sys; assert (3, 14) <= sys.version_info[:2] < (3, 15); print(sys.executable, sys.version)'
+          "$UV_PROJECT_ENVIRONMENT/bin/python" - <<'PY' | tee "$RESULTS/test-sqlite.json"
+          import json, sqlite3, sys
+          from hermes_cli.sqlite_runtime import is_sqlite_wal_reset_vulnerable
+          assert sys.version_info[:3] == (3, 14, 7), sys.version
+          assert not is_sqlite_wal_reset_vulnerable(sqlite3.sqlite_version_info), 'test interpreter has unsafe SQLite'
+          print(json.dumps({'executable': sys.executable, 'base_prefix': sys.base_prefix,
+                            'python': sys.version, 'sqlite': sqlite3.sqlite_version}))
+          PY
       - name: Audit all 20 slices then run canonical default-discovery slice
         shell: bash
         run: |
