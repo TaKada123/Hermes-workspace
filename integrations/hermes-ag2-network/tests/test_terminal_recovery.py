@@ -25,6 +25,7 @@ def test_unanswered_request_on_closed_channel_is_reported_not_replayed(tmp_path:
                 await caller.hub_client.close_channel(channel, reason="simulated terminal channel")
 
         recovered_history = None
+        replacement_channel = None
         async with network_hub(store, keys) as hub:
             for _ in range(2):
                 async with Network.connect(hub.url, name="architect", token="b", allowed_peers={"caller"},
@@ -46,15 +47,25 @@ def test_unanswered_request_on_closed_channel_is_reported_not_replayed(tmp_path:
                         assert history == recovered_history
                     async with Network.connect(hub.url, name="caller", token="a", allowed_peers={"architect"},
                                                ledger_path=tmp_path / "caller.sqlite") as caller:
-                        replacement = await caller.open(peer="architect", project_id="closed-recovery")
-                        assert replacement != channel
-                        assert await caller.open(peer="architect", project_id="closed-recovery") == replacement
-                        new_history = await architect.history(replacement)
+                        replacement_channel = await caller.open(peer="architect", project_id="closed-recovery")
+                        assert replacement_channel != channel
+                        assert await caller.open(peer="architect", project_id="closed-recovery") == replacement_channel
+                        new_history = await architect.history(replacement_channel)
                         assert len(new_history) == 1 and new_history[0].kind == "status"
                         assert new_history[0].causation_id == request_id
                         assert channel in new_history[0].envelope_id
-                        assert await caller.history(replacement) == []
+                        assert await caller.history(replacement_channel) == []
                     assert executions == []
+            # A lost recipient ledger must rebuild its terminal notice from AG2 WAL.
+            assert replacement_channel is not None
+            (tmp_path / "architect.sqlite").unlink()
+            async with Network.connect(hub.url, name="architect", token="b", allowed_peers={"caller"},
+                                       executor=executor, ledger_path=tmp_path / "architect.sqlite") as architect:
+                assert architect.ledger.terminal_requests("architect", "closed-recovery") == [
+                    (channel, request_id, "closed-request-1")]
+                assert any(message.causation_id == request_id and message.kind == "status"
+                           for message in await architect.history(replacement_channel))
+                assert executions == []
         assert executions == []
 
     asyncio.run(scenario())
