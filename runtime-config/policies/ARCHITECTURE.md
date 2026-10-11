@@ -37,6 +37,8 @@ escalation_target: main
 ```text
 Design Agent
   → domain skill
+      → Ecommerce Card Designer (temporary subordinate via delegate_task)
+          → ecommerce-listing-suite + selected ecommerce image skills
       → Superdesign только для исследования концепций
       → Impeccable только для critique/audit/polish
       → browser/computer-use/vision для проверки рендера
@@ -44,6 +46,8 @@ Design Agent
 ```
 
 `engineering-portfolio` — domain skill профиля `design`, а не отдельный постоянный агент. Его зарегистрированные режимы: `engineering_portfolio.create`, `engineering_portfolio.extend`, `engineering_portfolio.edit`.
+
+`ecommerce-card-designer` — временный subordinate-агент под управлением Design Agent, а не отдельный Profile. Design Agent владеет брифом и quality gate, запускает его только через `ecommerce_card.create`, передаёт отдельную инструкцию `agents/ecommerce-card-designer.md`, явные изображения и project context. Исполнитель не получает память профиля автоматически и не делегирует дальше.
 
 ## Временный routing до JEV
 

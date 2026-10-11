@@ -30,7 +30,8 @@
     "todo",
     "memory",
     "clarify",
-    "computer_use"
+    "computer_use",
+    "delegation"
   ],
   "mcp_servers": [],
   "profile_skills_from_default": [
@@ -79,7 +80,38 @@
     "media-use"
   ],
   "profile_local_skills": [
-    "engineering-portfolio"
+    "engineering-portfolio",
+    "amazon-white-background",
+    "lifestyle-scene",
+    "model-try-on",
+    "selling-point-infographic",
+    "amazon-a-plus",
+    "size-chart",
+    "multi-angle-set",
+    "sale-banner",
+    "batch-background-swap",
+    "xiaohongshu-cover",
+    "taobao-detail-long-image",
+    "ecommerce-listing-suite"
+  ],
+  "subordinate_agents": [
+    {
+      "id": "ecommerce-card-designer",
+      "instruction": "agents/ecommerce-card-designer.md",
+      "action_id": "ecommerce_card.create",
+      "parent": "design",
+      "lifecycle": "temporary-subagent",
+      "may_delegate": false
+    }
+  ],
+  "third_party_sources": [
+    {
+      "repository": "https://github.com/xianyu110/ecommerce-image-skills",
+      "commit": "f4566fdc812584425728862ad8e08c90883d81ee",
+      "license": "MIT",
+      "license_path": "runtime-config/profiles/design/skills/ecommerce-image-skills-LICENSE",
+      "installed_skills": 12
+    }
   ],
   "memory_namespaces": [
     "design/global",
