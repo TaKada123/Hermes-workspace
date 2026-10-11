@@ -1,0 +1,13 @@
+{
+  "model": {
+    "provider": "openai-codex",
+    "default": "gpt-6-luna-900k",
+    "base_url": "https://chatgpt.com/backend-api/codex"
+  },
+  "plugins": {
+    "enabled": [
+      "tguser-platform"
+    ],
+    "disabled": []
+  }
+}

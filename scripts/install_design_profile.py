@@ -104,11 +104,64 @@ def _copy_file(src: Path, dst: Path, backup: Path, root: Path) -> bool:
     return True
 
 
-def _copy_tree(src: Path, dst: Path, backup: Path, root: Path) -> int:
+def _tree_files(root: Path) -> set[Path]:
+    return {
+        path.relative_to(root)
+        for path in root.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
+    }
+
+
+def _reject_symlink_path(path: Path, label: str) -> None:
+    """Fail closed if any existing component of a managed tree traverses a symlink."""
+    for component in reversed((path, *path.parents)):
+        if component.is_symlink():
+            raise ValueError(f"refusing {label} through symlink: {component}")
+
+
+def _assert_contained(path: Path, root: Path, label: str) -> None:
+    resolved_root = root.resolve()
+    resolved_path = path.resolve()
+    try:
+        resolved_path.relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError(f"{label} escapes managed root {root}: {path}") from exc
+
+
+def _copy_tree(src: Path, dst: Path, backup: Path, root: Path, *, prune: bool = False) -> int:
     if not src.is_dir():
         raise FileNotFoundError(src)
+    _reject_symlink_path(src, "source")
+    _reject_symlink_path(root, "managed root")
+    _reject_symlink_path(dst, "destination")
+    _reject_symlink_path(backup, "backup")
+    _assert_contained(dst, root, "destination")
+    _assert_contained(backup, root, "backup")
+    source_paths = list(src.rglob("*"))
+    if any(path.is_symlink() for path in source_paths):
+        raise ValueError(f"refusing source tree containing symlinks: {src}")
+    destination_paths = list(dst.rglob("*")) if dst.is_dir() else []
+    if any(path.is_symlink() for path in destination_paths):
+        raise ValueError(f"refusing destination tree containing symlinks: {dst}")
     changed = 0
-    for path in sorted(p for p in src.rglob("*") if p.is_file()):
+    source_files = _tree_files(src)
+    if prune and dst.is_dir():
+        current_paths = destination_paths
+        for path in sorted((p for p in current_paths if p.is_file()), reverse=True):
+            if path.relative_to(dst) in source_files:
+                continue
+            target = backup / path.relative_to(root)
+            _reject_symlink_path(target, "backup target")
+            _assert_contained(target, root, "backup target")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
+            path.unlink()
+            changed += 1
+        for path in sorted((p for p in dst.rglob("*") if p.is_dir()), reverse=True):
+            if not any(path.iterdir()):
+                path.rmdir()
+    for rel in sorted(source_files):
+        path = src / rel
         changed += int(_copy_file(path, dst / path.relative_to(src), backup, root))
     return changed
 
@@ -139,7 +192,24 @@ def _install_profile_files(contract: dict[str, Any], root: Path, profile_home: P
     for rel in ("SOUL.md", "memories/USER.md", "memories/MEMORY.md"):
         changed += int(_copy_file(source / rel, profile_home / rel, backup, root))
     changed += _copy_tree(source / "memories" / "design", profile_home / "memories" / "design", backup, root)
-    changed += _copy_tree(source / "skills", profile_home / "skills", backup, root)
+    changed += _copy_tree(source / "agents", profile_home / "agents", backup, root, prune=True)
+    for skill in contract["profile_local_skills"]:
+        changed += _copy_tree(
+            source / "skills" / skill,
+            profile_home / "skills" / skill,
+            backup,
+            root,
+            prune=True,
+        )
+
+    for third_party in contract["third_party_sources"]:
+        license_source = REPO_ROOT / third_party["license_path"]
+        changed += int(_copy_file(
+            license_source,
+            profile_home / "skills" / license_source.name,
+            backup,
+            root,
+        ))
 
     for rel in contract["profile_skills_from_default"]:
         changed += _copy_tree(root / "skills" / rel, profile_home / "skills" / rel, backup, root)
@@ -191,6 +261,7 @@ def _configure_design(contract: dict[str, Any], root: Path) -> None:
     _set(PROFILE_NAME, "memory.memory_char_limit", 5000)
     _set(PROFILE_NAME, "memory.user_char_limit", 2000)
     _set(PROFILE_NAME, "memory.write_approval", False)
+    _set(PROFILE_NAME, "delegation.max_spawn_depth", 1)
     _set(PROFILE_NAME, "plugins.enabled", [contract["policies"]["plugin"]])
     _set(PROFILE_NAME, "platform_toolsets.cli", contract["toolsets"])
 

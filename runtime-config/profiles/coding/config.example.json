@@ -1,0 +1,44 @@
+{
+  "model": {
+    "provider": "openai-codex",
+    "default": "gpt-6-sol-900k",
+    "base_url": "https://chatgpt.com/backend-api/codex"
+  },
+  "agent": {
+    "max_turns": 150,
+    "reasoning_effort": "medium"
+  },
+  "skills": {
+    "disabled": [
+      "superdesign",
+      "impeccable",
+      "design-production-pipeline",
+      "design-md",
+      "popular-web-designs",
+      "claude-design",
+      "architecture-diagram",
+      "baoyu-infographic",
+      "p5js",
+      "powerpoint",
+      "creative/hyperframes",
+      "hyperframes-animation",
+      "hyperframes-audio",
+      "hyperframes-cli",
+      "hyperframes-core",
+      "hyperframes-creative",
+      "hyperframes-keyframes",
+      "hyperframes-registry",
+      "hyperframes-studio",
+      "media-use"
+    ]
+  },
+  "delegation": {
+    "provider": "deepseek",
+    "model": "deepseek-flash"
+  },
+  "plugins": {
+    "enabled": [
+      "gumar-runtime-policy"
+    ]
+  }
+}

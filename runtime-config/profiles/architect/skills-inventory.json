@@ -1,0 +1,378 @@
+[
+  {
+    "name": "apple-notes",
+    "category": "apple"
+  },
+  {
+    "name": "apple-reminders",
+    "category": "apple"
+  },
+  {
+    "name": "findmy",
+    "category": "apple"
+  },
+  {
+    "name": "imessage",
+    "category": "apple"
+  },
+  {
+    "name": "claude-code",
+    "category": "autonomous-ai-agents"
+  },
+  {
+    "name": "codex",
+    "category": "autonomous-ai-agents"
+  },
+  {
+    "name": "computer-use",
+    "category": "autonomous-ai-agents"
+  },
+  {
+    "name": "hermes-agent",
+    "category": "autonomous-ai-agents"
+  },
+  {
+    "name": "hermes-runtime-audit",
+    "category": "autonomous-ai-agents"
+  },
+  {
+    "name": "opencode",
+    "category": "autonomous-ai-agents"
+  },
+  {
+    "name": "architecture-diagram",
+    "category": "creative"
+  },
+  {
+    "name": "ascii-video",
+    "category": "creative"
+  },
+  {
+    "name": "baoyu-infographic",
+    "category": "creative"
+  },
+  {
+    "name": "claude-design",
+    "category": "creative"
+  },
+  {
+    "name": "design-md",
+    "category": "creative"
+  },
+  {
+    "name": "design-production-pipeline",
+    "category": "creative"
+  },
+  {
+    "name": "humanizer",
+    "category": "creative"
+  },
+  {
+    "name": "hyperframes",
+    "category": "creative"
+  },
+  {
+    "name": "impeccable",
+    "category": "creative"
+  },
+  {
+    "name": "manim-video",
+    "category": "creative"
+  },
+  {
+    "name": "p5js",
+    "category": "creative"
+  },
+  {
+    "name": "popular-web-designs",
+    "category": "creative"
+  },
+  {
+    "name": "portfolio-demo-sites",
+    "category": "creative"
+  },
+  {
+    "name": "songwriting-and-ai-music",
+    "category": "creative"
+  },
+  {
+    "name": "stock-footage-reel",
+    "category": "creative"
+  },
+  {
+    "name": "superdesign",
+    "category": "creative"
+  },
+  {
+    "name": "sdlc-review",
+    "category": "devops"
+  },
+  {
+    "name": "email-inbox-triage",
+    "category": "email"
+  },
+  {
+    "name": "himalaya",
+    "category": "email"
+  },
+  {
+    "name": "ask-matt",
+    "category": "matt-pocock-engineering"
+  },
+  {
+    "name": "code-review",
+    "category": "matt-pocock-engineering"
+  },
+  {
+    "name": "codebase-design",
+    "category": "matt-pocock-engineering"
+  },
+  {
+    "name": "diagnosing-bugs",
+    "category": "matt-pocock-engineering"
+  },
+  {
+    "name": "domain-modeling",
+    "category": "matt-pocock-engineering"
+  },
+  {
+    "name": "grill-with-docs",
+    "category": "matt-pocock-engineering"
+  },
+  {
+    "name": "implement",
+    "category": "matt-pocock-engineering"
+  },
+  {
+    "name": "implement-spec",
+    "category": "matt-pocock-engineering"
+  },
+  {
+    "name": "improve-codebase-architecture",
+    "category": "matt-pocock-engineering"
+  },
+  {
+    "name": "pr",
+    "category": "matt-pocock-engineering"
+  },
+  {
+    "name": "prototype",
+    "category": "matt-pocock-engineering"
+  },
+  {
+    "name": "research",
+    "category": "matt-pocock-engineering"
+  },
+  {
+    "name": "retro",
+    "category": "matt-pocock-engineering"
+  },
+  {
+    "name": "setup-matt-pocock-skills",
+    "category": "matt-pocock-engineering"
+  },
+  {
+    "name": "tdd",
+    "category": "matt-pocock-engineering"
+  },
+  {
+    "name": "to-spec",
+    "category": "matt-pocock-engineering"
+  },
+  {
+    "name": "to-tickets",
+    "category": "matt-pocock-engineering"
+  },
+  {
+    "name": "triage",
+    "category": "matt-pocock-engineering"
+  },
+  {
+    "name": "wayfinder",
+    "category": "matt-pocock-engineering"
+  },
+  {
+    "name": "wizard",
+    "category": "matt-pocock-engineering"
+  },
+  {
+    "name": "grill-me",
+    "category": "matt-pocock-productivity"
+  },
+  {
+    "name": "grilling",
+    "category": "matt-pocock-productivity"
+  },
+  {
+    "name": "handoff",
+    "category": "matt-pocock-productivity"
+  },
+  {
+    "name": "teach",
+    "category": "matt-pocock-productivity"
+  },
+  {
+    "name": "to-questionnaire",
+    "category": "matt-pocock-productivity"
+  },
+  {
+    "name": "wait-what",
+    "category": "matt-pocock-productivity"
+  },
+  {
+    "name": "writing-for-agents",
+    "category": "matt-pocock-productivity"
+  },
+  {
+    "name": "gif-search",
+    "category": "media"
+  },
+  {
+    "name": "songsee",
+    "category": "media"
+  },
+  {
+    "name": "youtube-content",
+    "category": "media"
+  },
+  {
+    "name": "obsidian",
+    "category": "note-taking"
+  },
+  {
+    "name": "airtable",
+    "category": "productivity"
+  },
+  {
+    "name": "box",
+    "category": "productivity"
+  },
+  {
+    "name": "document-to-action-items",
+    "category": "productivity"
+  },
+  {
+    "name": "docx",
+    "category": "productivity"
+  },
+  {
+    "name": "google-workspace",
+    "category": "productivity"
+  },
+  {
+    "name": "maps",
+    "category": "productivity"
+  },
+  {
+    "name": "meeting-action-items",
+    "category": "productivity"
+  },
+  {
+    "name": "notion",
+    "category": "productivity"
+  },
+  {
+    "name": "pdf",
+    "category": "productivity"
+  },
+  {
+    "name": "powerpoint",
+    "category": "productivity"
+  },
+  {
+    "name": "product-price-monitor",
+    "category": "productivity"
+  },
+  {
+    "name": "teams-meeting-pipeline",
+    "category": "productivity"
+  },
+  {
+    "name": "weekly-review-planning",
+    "category": "productivity"
+  },
+  {
+    "name": "xlsx",
+    "category": "productivity"
+  },
+  {
+    "name": "arxiv",
+    "category": "research"
+  },
+  {
+    "name": "competitor-news-monitor",
+    "category": "research"
+  },
+  {
+    "name": "grounded-citations",
+    "category": "research"
+  },
+  {
+    "name": "llm-wiki",
+    "category": "research"
+  },
+  {
+    "name": "telegram-client-sourcing",
+    "category": "research"
+  },
+  {
+    "name": "design-router",
+    "category": "routing"
+  },
+  {
+    "name": "xurl",
+    "category": "social-media"
+  },
+  {
+    "name": "codebase-inspection",
+    "category": "software-development"
+  },
+  {
+    "name": "dogfood",
+    "category": "software-development"
+  },
+  {
+    "name": "github",
+    "category": "software-development"
+  },
+  {
+    "name": "hermes-agent-skill-authoring",
+    "category": "software-development"
+  },
+  {
+    "name": "inspecting-hermes-desktop-dom",
+    "category": "software-development"
+  },
+  {
+    "name": "node-inspect-debugger",
+    "category": "software-development"
+  },
+  {
+    "name": "python-debugpy",
+    "category": "software-development"
+  },
+  {
+    "name": "requesting-code-review",
+    "category": "software-development"
+  },
+  {
+    "name": "simplify-code",
+    "category": "software-development"
+  },
+  {
+    "name": "spike",
+    "category": "software-development"
+  },
+  {
+    "name": "systematic-debugging",
+    "category": "software-development"
+  },
+  {
+    "name": "test-driven-development",
+    "category": "software-development"
+  },
+  {
+    "name": "blocked-page-recovery",
+    "category": "web"
+  }
+]

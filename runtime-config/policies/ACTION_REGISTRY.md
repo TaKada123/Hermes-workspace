@@ -66,6 +66,28 @@ route_type: profile
 route_id: design
 ```
 
+## Ecommerce card design
+
+```yaml
+id: ecommerce_card.create
+type: agent
+description: Создать и проверить карточку товара или комплект изображений для маркетплейса через subordinate-агента Design Agent.
+when_to_use: Карточка товара, листинг, маркетплейс, Amazon A+, инфографика товара, size chart, lifestyle, banner или комплект ecommerce-изображений.
+input_schema: Original request; platform/market/language; explicit product references; verified product facts and exact copy; output path; explicit USER approval and stated maximum budget for any paid generation or external upload.
+profile: design
+permissions: Design profile contract; project-scoped files; paid generation or external upload only after explicit USER approval and a stated maximum budget; otherwise NEEDS_APPROVAL.
+risk: medium
+verification: Every output file exists and is visually checked for product identity, exact text, platform dimensions/rules and unsupported claims; Design Agent performs the final quality gate.
+version: 1.0.0
+status: stable
+parent_agent: design
+subagent_instruction: agents/ecommerce-card-designer.md
+domain_skill: ecommerce-listing-suite
+lifecycle: temporary-subagent
+may_delegate: false
+approval_gate: paid_generation|external_upload require approver=USER and budget_required=true; missing_status=NEEDS_APPROVAL
+```
+
 ## Engineering portfolio workflows
 
 ```yaml

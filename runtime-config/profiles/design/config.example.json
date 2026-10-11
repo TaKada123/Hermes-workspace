@@ -1,0 +1,74 @@
+{
+  "model": {
+    "provider": "openai-codex",
+    "default": "gpt-6-luna-900k",
+    "base_url": "https://chatgpt.com/backend-api/codex"
+  },
+  "agent": {
+    "max_turns": 150,
+    "reasoning_effort": "medium"
+  },
+  "memory": {
+    "backend": "sqlite_v2",
+    "memory_enabled": true,
+    "user_profile_enabled": true,
+    "memory_char_limit": 5000,
+    "user_char_limit": 2000,
+    "write_approval": false
+  },
+  "delegation": {
+    "max_spawn_depth": 1
+  },
+  "plugins": {
+    "enabled": [
+      "gumar-runtime-policy"
+    ]
+  },
+  "platform_toolsets": {
+    "cli": [
+      "web",
+      "browser",
+      "terminal",
+      "file",
+      "code_execution",
+      "vision",
+      "image_gen",
+      "skills",
+      "todo",
+      "memory",
+      "clarify",
+      "computer_use",
+      "delegation"
+    ]
+  },
+  "tools": {
+    "tool_search": {
+      "defer": [
+        "computer_use",
+        "session_search",
+        "image_generate",
+        "todo_list",
+        "process_manage",
+        "cronjob_manage",
+        "drive_preview",
+        "gui_tour",
+        "desktop_preview",
+        "annotate_preview",
+        "show_tip",
+        "desktop_project",
+        "close_terminal",
+        "apply_layout",
+        "read_terminal",
+        "read_window_below",
+        "focus_pane",
+        "skill_manage",
+        "text_to_speech",
+        "browser_vault_list",
+        "browser_vault_fill",
+        "browser_vault_save_login",
+        "browser_vault_enter_code",
+        "browser_vault_unlock"
+      ]
+    }
+  }
+}

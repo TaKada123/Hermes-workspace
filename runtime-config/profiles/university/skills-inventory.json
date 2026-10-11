@@ -1,0 +1,238 @@
+[
+  {
+    "name": "apple-notes",
+    "category": "apple"
+  },
+  {
+    "name": "apple-reminders",
+    "category": "apple"
+  },
+  {
+    "name": "findmy",
+    "category": "apple"
+  },
+  {
+    "name": "imessage",
+    "category": "apple"
+  },
+  {
+    "name": "claude-code",
+    "category": "autonomous-ai-agents"
+  },
+  {
+    "name": "codex",
+    "category": "autonomous-ai-agents"
+  },
+  {
+    "name": "computer-use",
+    "category": "autonomous-ai-agents"
+  },
+  {
+    "name": "hermes-agent",
+    "category": "autonomous-ai-agents"
+  },
+  {
+    "name": "opencode",
+    "category": "autonomous-ai-agents"
+  },
+  {
+    "name": "architecture-diagram",
+    "category": "creative"
+  },
+  {
+    "name": "ascii-video",
+    "category": "creative"
+  },
+  {
+    "name": "baoyu-infographic",
+    "category": "creative"
+  },
+  {
+    "name": "claude-design",
+    "category": "creative"
+  },
+  {
+    "name": "design-md",
+    "category": "creative"
+  },
+  {
+    "name": "humanizer",
+    "category": "creative"
+  },
+  {
+    "name": "manim-video",
+    "category": "creative"
+  },
+  {
+    "name": "p5js",
+    "category": "creative"
+  },
+  {
+    "name": "popular-web-designs",
+    "category": "creative"
+  },
+  {
+    "name": "songwriting-and-ai-music",
+    "category": "creative"
+  },
+  {
+    "name": "sdlc-review",
+    "category": "devops"
+  },
+  {
+    "name": "email-inbox-triage",
+    "category": "email"
+  },
+  {
+    "name": "himalaya",
+    "category": "email"
+  },
+  {
+    "name": "gif-search",
+    "category": "media"
+  },
+  {
+    "name": "songsee",
+    "category": "media"
+  },
+  {
+    "name": "youtube-content",
+    "category": "media"
+  },
+  {
+    "name": "obsidian",
+    "category": "note-taking"
+  },
+  {
+    "name": "airtable",
+    "category": "productivity"
+  },
+  {
+    "name": "box",
+    "category": "productivity"
+  },
+  {
+    "name": "document-to-action-items",
+    "category": "productivity"
+  },
+  {
+    "name": "docx",
+    "category": "productivity"
+  },
+  {
+    "name": "google-workspace",
+    "category": "productivity"
+  },
+  {
+    "name": "maps",
+    "category": "productivity"
+  },
+  {
+    "name": "meeting-action-items",
+    "category": "productivity"
+  },
+  {
+    "name": "notion",
+    "category": "productivity"
+  },
+  {
+    "name": "pdf",
+    "category": "productivity"
+  },
+  {
+    "name": "powerpoint",
+    "category": "productivity"
+  },
+  {
+    "name": "product-price-monitor",
+    "category": "productivity"
+  },
+  {
+    "name": "teams-meeting-pipeline",
+    "category": "productivity"
+  },
+  {
+    "name": "weekly-review-planning",
+    "category": "productivity"
+  },
+  {
+    "name": "xlsx",
+    "category": "productivity"
+  },
+  {
+    "name": "arxiv",
+    "category": "research"
+  },
+  {
+    "name": "competitor-news-monitor",
+    "category": "research"
+  },
+  {
+    "name": "grounded-citations",
+    "category": "research"
+  },
+  {
+    "name": "llm-wiki",
+    "category": "research"
+  },
+  {
+    "name": "xurl",
+    "category": "social-media"
+  },
+  {
+    "name": "codebase-inspection",
+    "category": "software-development"
+  },
+  {
+    "name": "dogfood",
+    "category": "software-development"
+  },
+  {
+    "name": "github",
+    "category": "software-development"
+  },
+  {
+    "name": "hermes-agent-skill-authoring",
+    "category": "software-development"
+  },
+  {
+    "name": "inspecting-hermes-desktop-dom",
+    "category": "software-development"
+  },
+  {
+    "name": "node-inspect-debugger",
+    "category": "software-development"
+  },
+  {
+    "name": "python-debugpy",
+    "category": "software-development"
+  },
+  {
+    "name": "requesting-code-review",
+    "category": "software-development"
+  },
+  {
+    "name": "simplify-code",
+    "category": "software-development"
+  },
+  {
+    "name": "spike",
+    "category": "software-development"
+  },
+  {
+    "name": "systematic-debugging",
+    "category": "software-development"
+  },
+  {
+    "name": "test-driven-development",
+    "category": "software-development"
+  },
+  {
+    "name": "esu-srsp-assignments",
+    "category": "study"
+  },
+  {
+    "name": "blocked-page-recovery",
+    "category": "web"
+  }
+]
