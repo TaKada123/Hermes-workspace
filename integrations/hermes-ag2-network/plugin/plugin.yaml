@@ -1,0 +1,25 @@
+name: agent-network
+version: 0.1.0
+description: >
+  Optional profile-scoped tools for native AG2 Network. Every request reaches
+  only the loopback bridge authenticated for the active Hermes profile; no
+  profile selector or token is exposed to the model.
+provides_tools:
+  - agent_network_peers
+  - agent_network_open
+  - agent_network_send
+  - agent_network_ask
+  - agent_network_history
+requires_env:
+  - name: AGENT_NETWORK_TOOLS_KEY
+    description: Per-profile bearer credential for the local AG2 bridge tool API.
+    secret: true
+config_schema:
+  bridge_url:
+    type: str
+    default: http://127.0.0.1:8766
+    description: Loopback-only URL of this profile's bridge tool API.
+  timeout_seconds:
+    type: int
+    default: 310
+    description: Client deadline for a correlated network ask.

@@ -53,6 +53,20 @@ async with Network.connect(
 
 An enrolled recipient adds `executor=HermesHTTPExecutor(...)` (an async callable; controlled fixtures are permitted in deterministic tests). `open` waits for the native invite ACK; disallowed invites receive a native rejection. `send` posts an explicitly addressed request. `ask` adapts native send into a correlated wait; it is **not** a fictional `Channel.ask`. `history` returns request/reply/status text from native WAL plus recipient-local recovery notices for unanswered terminal-channel requests anywhere in the same project (their IDs only; these are marked with `local-recovery:` envelope IDs). Other profiles cannot see those local notices. Each outbound request has a distinct operation ID. Request/reply/status tags are explicit: receipt of a reply never invokes the executor, so there is no automatic ping-pong.
 
+## Optional Hermes tool plugin
+
+`plugin/` is a standalone general Hermes plugin; it does not add or monkeypatch Hermes core. Copy it into the specific profile's `plugins/agent-network` directory, enable it only for that profile, and configure a loopback URL for that profile's bridge. The plugin registers provider-safe names `agent_network_peers`, `agent_network_open`, `agent_network_send`, `agent_network_ask`, and `agent_network_history` (dots are not valid provider tool names). Each request goes to the authenticated local bridge API; the active profile name is attached by the plugin, never supplied by the model. The model sees no credentials or profile selector. The secret `AGENT_NETWORK_TOOLS_KEY` belongs in the owning profile's `.env` (through the owner's secret workflow); the network bridge uses the same value from an owner-only key file. Other Hermes profiles must have different credentials.
+
+```sh
+PROFILE_HOME="$(dirname "$(hermes -p coding config path)")"
+mkdir -p "$PROFILE_HOME/plugins"
+cp -a integrations/hermes-ag2-network/plugin "$PROFILE_HOME/plugins/agent-network"
+hermes -p coding config set plugins.entries.agent-network.settings.bridge_url http://127.0.0.1:8766
+hermes -p coding plugins enable agent-network
+```
+
+Run that per enrolled profile, using a different loopback port and key for each. Add `--tool-api-port 8766 --tool-api-key-file "$HERMES_HOME/agent-network/secrets/agent-network-tools.key"` to that profile's `bridge` command. The API listener binds **only** `127.0.0.1`, is disabled by default, caps JSON bodies at 64 KiB, verifies a constant-time bearer token plus the expected profile name, and exposes only peers/open/send/ask/history. The owner-only key file must be mode `0600`; the bridge refuses insecure permissions. `ask` caps its wait at 300 seconds. A visited-profile ancestry travels in native request metadata; a repeated profile in the current chain is rejected before delivery, so nested consultation returns a useful tool error instead of locking an active Hermes session. No polling occurs: when the plugin is idle it makes no requests and causes no model activity.
+
 ## Real-runtime smoke
 
 This command generates ephemeral **network** credentials in memory, starts a real native disk/WS hub, enrolls one existing Hermes Profile with the supplied **Hermes API** credential, asks it to run a read-only terminal SHA256 probe, verifies the digest, reads the native WAL and reads back the exact completed Hermes run/session tool receipts. It does not configure profiles, gateways or providers. API must already be enabled/authenticated by the operator. It creates only a new API session, a run and the chosen bridge state directory; the model may still perform its normal runtime housekeeping.

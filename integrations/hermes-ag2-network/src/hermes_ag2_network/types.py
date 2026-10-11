@@ -46,5 +46,9 @@ class Peer:
     agent_id: str
 
 
+class NetworkCycleError(ValueError):
+    """A request would re-enter a specialist already waiting in its ancestry."""
+
+
 class ExecutionUncertain(RuntimeError):
     """No automatic retry: the run may already have executed side effects."""

@@ -14,6 +14,7 @@ import uuid
 from .executor import HermesHTTPExecutor
 from .hub import network_hub
 from .network import Network
+from .tool_api import ToolAPI
 
 
 PROBE_TEXT = "AG2-HERMES-TRACER"
@@ -65,9 +66,19 @@ async def serve_hub(args):
 async def serve_bridge(args):
     async with HermesHTTPExecutor(args.api_url, profile=args.name, token=token(args, "api"), deadline=args.timeout) as executor:
         async with Network.connect(args.hub_url, name=args.name, token=token(args, "hub"),
-            allowed_peers=set(args.allow_peer), executor=executor, ledger_path=Path(args.ledger)):
-            print(json.dumps({"ready": "bridge", "profile": args.name}), flush=True)
-            await until_stopped()
+            allowed_peers=set(args.allow_peer), executor=executor, ledger_path=Path(args.ledger)) as network:
+            if args.tool_api_port is None:
+                if args.tool_api_key_file:
+                    raise ValueError("--tool-api-key-file requires --tool-api-port")
+                print(json.dumps({"ready": "bridge", "profile": args.name}), flush=True)
+                await until_stopped()
+            else:
+                if not args.tool_api_key_file:
+                    raise ValueError("--tool-api-port requires an owner-only --tool-api-key-file")
+                async with ToolAPI(network, protected_file(args.tool_api_key_file), port=args.tool_api_port) as tool_api:
+                    print(json.dumps({"ready": "bridge", "profile": args.name,
+                                      "tool_api_url": tool_api.url}), flush=True)
+                    await until_stopped()
 
 
 async def smoke(args):
@@ -129,6 +140,9 @@ def main():
     bridge.add_argument("--ledger", required=True)
     bridge.add_argument("--api-url", required=True, help="multiplex base URL, without /p/profile")
     bridge.add_argument("--timeout", type=float, default=300)
+    bridge.add_argument("--tool-api-port", type=int,
+                        help="optional authenticated loopback tool API port (0 selects an ephemeral port)")
+    bridge.add_argument("--tool-api-key-file", help="owner-only bearer key file for the optional Hermes plugin")
     credential_options(bridge, "hub")
     credential_options(bridge, "api")
     probe = commands.add_parser("smoke", help="run a real Hermes tool through a native AG2 request/reply")

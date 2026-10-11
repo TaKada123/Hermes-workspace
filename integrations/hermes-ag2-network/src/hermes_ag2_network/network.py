@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from ag2.agent import Agent
 
 from .ledger import Ledger
-from .types import ExecutionRequest, ExecutionUncertain, Executor, Message, Peer
+from .types import ExecutionRequest, ExecutionUncertain, Executor, Message, NetworkCycleError, Peer
 
 
 class ExternalIdentity:
@@ -74,6 +74,10 @@ class Network:
         self._open_lock = asyncio.Lock()
         self._ready = asyncio.Event()
         self._waiters: dict[tuple[str, str], asyncio.Future[Message]] = {}
+        # The current external execution's specialist ancestry. Tool API calls made while
+        # Hermes is answering an inbound request inherit this chain and cannot recurse back
+        # into a profile whose run is already waiting on them.
+        self._active_trace: tuple[str, ...] = ()
 
     @classmethod
     @asynccontextmanager
@@ -213,8 +217,14 @@ class Network:
         operation_id = operation_id or uuid.uuid4().hex
         if not isinstance(operation_id, str) or not operation_id.strip():
             raise ValueError("nonempty operation_id required")
+        peer = await self.hub_client.get_agent(peer_id)
+        trace = self._active_trace or (self.name,)
+        if self.name not in trace:
+            trace = (*trace, self.name)
+        if peer.name in trace:
+            raise NetworkCycleError(f"network cycle detected: {peer.name} is already in the request ancestry")
         return await channel.send(text, audience=[peer_id], event_data={
-            "kind": "request", "text": text, "operation_id": operation_id,
+            "kind": "request", "text": text, "operation_id": operation_id, "trace": list(trace),
         }, depth=0)
 
     async def ask(self, channel_id: str, text: str, *, operation_id: str | None = None,
@@ -279,7 +289,24 @@ class Network:
                 if result is None:
                     if self.executor is None:
                         raise ExecutionUncertain("no executor enrolled")
-                    result = await self.executor(request)
+                    peer_name = (await self.hub_client.get_agent(peer_id)).name
+                    trace = data.get("trace", [])
+                    if (not isinstance(trace, list)
+                            or any(not isinstance(name, str) or not name.strip() for name in trace)
+                            or len(trace) != len(set(trace))):
+                        raise ValueError("invalid network request ancestry")
+                    if not trace:
+                        trace = [peer_name]
+                    elif peer_name not in trace:
+                        trace = [peer_name, *trace]
+                    if self.name in trace:
+                        raise ValueError("network cycle detected: recipient is already in the request ancestry")
+                    previous_trace = self._active_trace
+                    self._active_trace = (*trace, self.name)
+                    try:
+                        result = await self.executor(request)
+                    finally:
+                        self._active_trace = previous_trace
                     self.ledger.advance_session(request.profile, request.project_id, request.channel_id, result.session_id)
                     self.ledger.finish(request, result)
                 reply_data: dict[str, Any] = {"kind": "reply", "text": result.text,
