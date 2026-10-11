@@ -182,7 +182,7 @@ scripts/run_tests.sh --include-integration -m integration \
 
 Import smoke: exit 0, `import-smoke.log`; environment audits: exit 0. Не добавлять local totals к CI totals: suites пересекаются. Эти 2 local skips относятся к prepared/packaging/PM gate и не смешиваются с двумя compiler skips в CI.
 
-Ранее падавшие локально файлы в данном CI выполнены без skips: `tests/agent/test_run_agent.py` — **281 passed/0 failed/0 skipped**, shard 5; `tests/gateway/test_clarify_delivery_fallback.py` — **7 passed/0 failed/0 skipped**, shard 7. Источники — соответствующие `canonical.log` и `per_file_results` aggregate manifest. Parent отдельно подтвердил локальные reruns 281/7 с 0 skips; это parent-provided evidence, не новые запуски acceptance-агента и не доказательство зелёного завершения всего локального full-suite процесса. Действующий локальный процесс не остановлен и не изменён.
+Ранее падавшие локально файлы в данном CI выполнены без skips: `tests/agent/test_run_agent.py` — **281 passed/0 failed/0 skipped**, shard 5; `tests/gateway/test_clarify_delivery_fallback.py` — **7 passed/0 failed/0 skipped**, shard 7. Источники — соответствующие `canonical.log` и `per_file_results` aggregate manifest. Эти 281/7 — результаты CI, не успешные локальные reruns: диагностический локальный повтор под продолжающейся нагрузкой воспроизвёл timing-падения. Локальный full-suite не используется как основное приёмочное доказательство. Действующий локальный процесс не остановлен и не изменён.
 
 ### Remote main, PR scope и безопасный следующий шаг
 
