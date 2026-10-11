@@ -118,7 +118,7 @@ def test_native_network_executes_only_new_input_via_authenticated_profile_runs(t
                             assert requests[0][0] == "/p/architect/api/sessions"
                             assert requests[0][2]["id"] == reply.session_id
                             assert requests[1][0] == "/p/architect/v1/runs"
-                            assert requests[1][1]["Idempotency-Key"] == "http-tracer-01"
+                            assert len(requests[1][1]["Idempotency-Key"]) == 64
                             assert requests[1][1]["Authorization"] == "Bearer fixture-secret"
                             assert requests[1][2] == {"session_id": reply.session_id, "input": "Only this new message."}
         asyncio.run(scenario())

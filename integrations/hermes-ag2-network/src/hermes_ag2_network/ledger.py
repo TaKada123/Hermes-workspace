@@ -15,7 +15,10 @@ class Ledger:
         self.db = sqlite3.connect(path)
         path.chmod(0o600)
         self.db.execute("CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, payload TEXT NOT NULL, result TEXT)")
-        # CREATE TABLE and schema migration share SQLite's transaction boundary.
+        self.db.execute("""CREATE TABLE IF NOT EXISTS scoped_operations (
+            profile TEXT NOT NULL, project_id TEXT NOT NULL, channel_id TEXT NOT NULL,
+            operation_id TEXT NOT NULL, payload TEXT NOT NULL, result TEXT,
+            PRIMARY KEY (profile, project_id, channel_id, operation_id))""")
         self.db.execute("""CREATE TABLE IF NOT EXISTS hermes_sessions (
             profile TEXT NOT NULL, project_id TEXT NOT NULL, channel_id TEXT NOT NULL,
             origin_id TEXT NOT NULL, current_id TEXT NOT NULL,
@@ -27,6 +30,15 @@ class Ledger:
             profile TEXT NOT NULL, project_id TEXT NOT NULL, channel_id TEXT NOT NULL,
             request_id TEXT NOT NULL, operation_id TEXT NOT NULL,
             PRIMARY KEY (profile, project_id, channel_id, request_id))""")
+        with self.db:
+            legacy_rows = self.db.execute("SELECT payload,result FROM operations").fetchall()
+            for payload, result in legacy_rows:
+                scope = json.loads(payload)
+                self.db.execute(
+                    "INSERT OR IGNORE INTO scoped_operations "
+                    "(profile,project_id,channel_id,operation_id,payload,result) VALUES (?,?,?,?,?,?)",
+                    (scope["profile"], scope["project_id"], scope["channel_id"],
+                     scope["operation_id"], payload, result))
         self.db.commit()
 
     def channel(self, profile: str, peer: str, project_id: str) -> str | None:
@@ -51,11 +63,11 @@ class Ledger:
             self.db.execute("INSERT OR IGNORE INTO terminal_recovery_notices VALUES (?,?,?,?,?)",
                             (profile, project_id, channel_id, request_id, operation_id))
 
-    def terminal_requests(self, profile: str, channel_id: str) -> list[tuple[str, str]]:
+    def terminal_requests(self, profile: str, project_id: str) -> list[tuple[str, str, str]]:
         rows = self.db.execute(
-            "SELECT request_id,operation_id FROM terminal_recovery_notices "
-            "WHERE profile=? AND channel_id=? ORDER BY rowid", (profile, channel_id)).fetchall()
-        return [(row[0], row[1]) for row in rows]
+            "SELECT channel_id,request_id,operation_id FROM terminal_recovery_notices "
+            "WHERE profile=? AND project_id=? ORDER BY rowid", (profile, project_id)).fetchall()
+        return [(row[0], row[1], row[2]) for row in rows]
 
     def session(self, profile: str, project_id: str, channel_id: str) -> tuple[str, str]:
         """Return stable origin/current IDs, creating the durable lineage once."""
@@ -80,20 +92,26 @@ class Ledger:
         payload = json.dumps({key: getattr(request, key) for key in (
             "profile", "project_id", "channel_id", "operation_id", "text",
         )}, sort_keys=True)
+        scope = (request.profile, request.project_id, request.channel_id, request.operation_id)
         with self.db:
-            row = self.db.execute("SELECT payload,result FROM operations WHERE id=?", (request.operation_id,)).fetchone()
+            row = self.db.execute(
+                "SELECT payload,result FROM scoped_operations "
+                "WHERE profile=? AND project_id=? AND channel_id=? AND operation_id=?", scope).fetchone()
             if row:
                 if row[0] != payload:
-                    raise ValueError("operation_id reused with different input")
+                    raise ValueError("operation_id reused with different input in this project channel")
                 if row[1] is None:
                     raise ExecutionUncertain("prior execution unsettled; explicit operator reconciliation required")
                 return ExecutionResult(**json.loads(row[1]))
-            self.db.execute("INSERT INTO operations VALUES (?,?,NULL)", (request.operation_id, payload))
+            self.db.execute("INSERT INTO scoped_operations VALUES (?,?,?,?,?,NULL)", (*scope, payload))
         return None
 
-    def finish(self, operation_id: str, result: ExecutionResult):
+    def finish(self, request: ExecutionRequest, result: ExecutionResult):
         with self.db:
-            self.db.execute("UPDATE operations SET result=? WHERE id=?", (json.dumps(asdict(result)), operation_id))
+            self.db.execute(
+                "UPDATE scoped_operations SET result=? WHERE profile=? AND project_id=? AND channel_id=? AND operation_id=?",
+                (json.dumps(asdict(result)), request.profile, request.project_id,
+                 request.channel_id, request.operation_id))
 
     def close(self):
         self.db.close()

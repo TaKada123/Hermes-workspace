@@ -56,7 +56,7 @@ def test_session_lineage_survives_restart_and_native_rotation(tmp_path: Path):
                     db.execute("UPDATE hermes_sessions SET current_id=? WHERE profile=? AND project_id=? AND channel_id=?",
                                (first.session_id, "architect", "lineage", channel))
                 third = await ask_once(hub.url, channel, "request-3", "third")
-                isolated_channel, isolated = await ask_project_once(hub.url, "project-two", "request-4", "isolated project")
+                isolated_channel, isolated = await ask_project_once(hub.url, "project-two", "request-1", "isolated project")
                 replayed = await ask_once(hub.url, channel, "request-1", "first")
                 assert first.session_id.startswith("ag2-")
                 assert second.session_id == f"rotated-{first.session_id}"
@@ -72,8 +72,12 @@ def test_session_lineage_survives_restart_and_native_rotation(tmp_path: Path):
                 assert [body["session_id"] for body in run_posts] == [
                     first.session_id, first.session_id, f"rotated-{first.session_id}", isolated.session_id]
                 assert [body["input"] for body in run_posts] == ["first", "second", "third", "isolated project"]
-                assert [requests[index][1]["Idempotency-Key"] for index in (1, 3, 5, 7)] == [
-                    "request-1", "request-2", "request-3", "request-4"]
+                idempotency_keys = [requests[index][1]["Idempotency-Key"] for index in (1, 3, 5, 7)]
+                assert len(set(idempotency_keys)) == 4
+                assert all(len(key) == 64 for key in idempotency_keys)
+                # The first and isolated-project requests intentionally reuse
+                # an operation ID; their external keys remain scope-specific.
+                assert idempotency_keys[0] != idempotency_keys[3]
                 async with HermesHTTPExecutor(url, profile="architect", token="fixture-secret") as executor:
                     async with Network.connect(hub.url, name="architect", token="b", allowed_peers={"caller"},
                                                executor=executor, ledger_path=tmp_path / "architect.sqlite"):

@@ -1,5 +1,6 @@
 """Authenticated HTTP executor: provider/model/tool resolution stays in Hermes."""
 import asyncio
+import hashlib
 import json
 import re
 from urllib.parse import quote, urlsplit
@@ -32,6 +33,12 @@ class HermesHTTPExecutor:
 
     async def __aexit__(self, *args):
         await self.http.aclose()
+
+    @staticmethod
+    def _idempotency_key(request: ExecutionRequest) -> str:
+        identity = json.dumps([request.profile, request.project_id, request.channel_id, request.operation_id],
+                              separators=(",", ":"))
+        return hashlib.sha256(identity.encode()).hexdigest()
 
     async def __call__(self, request: ExecutionRequest) -> ExecutionResult:
         if request.profile != self.profile:
@@ -75,7 +82,7 @@ class HermesHTTPExecutor:
         if session.json().get("session", {}).get("id") != resolved_session_id:
             raise ExecutionUncertain("Hermes session identity mismatch")
         run_response = await self.http.post("v1/runs", headers={
-            "Idempotency-Key": request.operation_id,
+            "Idempotency-Key": self._idempotency_key(request),
             "X-Hermes-Session-Key": "ag2:" + origin_id,
         }, json={"session_id": resolved_session_id, "input": request.text})
         run_response.raise_for_status()

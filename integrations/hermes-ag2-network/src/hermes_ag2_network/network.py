@@ -281,7 +281,7 @@ class Network:
                         raise ExecutionUncertain("no executor enrolled")
                     result = await self.executor(request)
                     self.ledger.advance_session(request.profile, request.project_id, request.channel_id, result.session_id)
-                    self.ledger.finish(request.operation_id, result)
+                    self.ledger.finish(request, result)
                 reply_data: dict[str, Any] = {"kind": "reply", "text": result.text,
                     "session_id": result.session_id, "run_id": result.run_id}
             except Exception as exc:  # health: allow BLE001 -- external executor boundary: ACK held work instead of native NACK/replay; exception text may contain secrets
@@ -291,16 +291,18 @@ class Network:
                                causation_id=envelope.envelope_id, event_data=reply_data, depth=envelope.depth)
 
     async def history(self, channel_id: str) -> list[Message]:
-        await self._channel(channel_id)
+        channel, _ = await self._channel(channel_id)
+        project_id = channel.metadata.labels["project_id"]
         envelopes = await self.hub_client.read_wal(channel_id)
         messages = [_message(e) for e in envelopes
                     if e.event_type == EV_TEXT and e.event_data.get("kind") in {"request", "reply", "status"}]
         messages.extend(Message(
-            envelope_id=f"local-recovery:{request_id}", sender_id=self.client.agent_id,
-            kind="status", text="Unanswered request is in a terminal AG2 channel; it was not replayed automatically. "
-            "Operator reconciliation is required.", operation_id=operation_id,
-            causation_id=request_id,
-        ) for request_id, operation_id in self.ledger.terminal_requests(self.name, channel_id))
+            envelope_id=f"local-recovery:{source_channel}:{request_id}", sender_id=self.client.agent_id,
+            kind="status", text=f"Unanswered request is stranded in terminal AG2 channel {source_channel}; "
+            "it was not replayed automatically. Operator reconciliation is required.",
+            operation_id=operation_id, causation_id=request_id,
+        ) for source_channel, request_id, operation_id
+          in self.ledger.terminal_requests(self.name, project_id))
         return messages
 
     async def _on_envelope(self, envelope: Envelope):
