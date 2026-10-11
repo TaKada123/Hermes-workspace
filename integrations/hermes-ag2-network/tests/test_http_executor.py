@@ -12,59 +12,74 @@ from hermes_ag2_network.executor import HermesHTTPExecutor
 
 @contextmanager
 def hermes_api():
+    session_tips = {}
+    run_numbers = {}
+    run_records = {}
     requests = []
-    origin_session = ""
-    current_tip = ""
-    run_number = 0
-    session_created = False
+    run_counter = 0
 
     class API(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
             pass
 
         def do_POST(self):
-            nonlocal origin_session, current_tip, run_number, session_created
+            nonlocal run_counter
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             requests.append((self.path, dict(self.headers), body))
             if self.headers.get("Authorization") != "Bearer fixture-secret":
                 self.respond(401, {"error": "unauthorized"})
             elif self.path == "/p/architect/api/sessions":
-                if session_created:
+                session_id = body["id"]
+                if session_id in session_tips:
                     self.respond(409, {"error": {"code": "session_exists"}})
                 else:
-                    origin_session = body["id"]
-                    current_tip = origin_session
-                    session_created = True
-                    self.respond(201, {"id": origin_session})
+                    session_tips[session_id] = session_id
+                    run_numbers[session_id] = 0
+                    self.respond(201, {"id": session_id})
             elif self.path == "/p/architect/v1/runs":
-                run_number += 1
-                # Simulate in-run Hermes rotation: the final run response will
-                # still report its old id, while the canonical messages API
-                # resolves the new tip after the second turn.
-                current_tip = origin_session if run_number == 1 else "rotated-session"
-                self.respond(202, {"run_id": f"http-controlled-run-{run_number}", "status": "queued"})
+                posted_session = body["session_id"]
+                origin = next((origin for origin, tip in session_tips.items()
+                               if tip == posted_session or origin == posted_session), None)
+                if origin is None:
+                    self.respond(404, {"error": "unknown session"})
+                    return
+                run_numbers[origin] += 1
+                session_tips[origin] = origin if run_numbers[origin] == 1 else f"rotated-{origin}"
+                run_counter += 1
+                run_id = f"http-controlled-run-{run_counter}"
+                run_records[run_id] = (origin, posted_session)
+                self.respond(202, {"run_id": run_id, "status": "queued"})
             else:
                 self.respond(404, {})
 
         def do_GET(self):
             if self.headers.get("Authorization") != "Bearer fixture-secret":
                 self.respond(401, {"error": "unauthorized"})
-            elif self.path.startswith("/p/architect/api/sessions/") and "/messages?" not in self.path:
+            elif "/messages?" in self.path:
+                session_id = self.path.removeprefix("/p/architect/api/sessions/").split("/messages", 1)[0]
+                if session_id in session_tips:
+                    self.respond(200, {"session_id": session_tips[session_id], "data": []})
+                else:
+                    self.respond(404, {})
+            elif self.path.startswith("/p/architect/api/sessions/"):
                 session_id = self.path.removeprefix("/p/architect/api/sessions/")
-                self.respond(200, {"session": {"id": session_id}})
-            elif self.path.startswith(f"/p/architect/api/sessions/{origin_session}/messages?"):
-                assert self.path.endswith("limit=0")
-                self.respond(200, {"session_id": current_tip, "data": []})
+                valid_ids = set(session_tips) | set(session_tips.values())
+                if session_id in valid_ids:
+                    self.respond(200, {"session": {"id": session_id}})
+                else:
+                    self.respond(404, {})
             elif self.path.startswith("/p/architect/v1/runs/http-controlled-run-"):
-                run_id = self.path.rsplit("-", 1)[-1]
-                run_posts = [body for path, _, body in requests if path == "/p/architect/v1/runs"]
-                posted = run_posts[int(run_id) - 1]
-                stale_id = origin_session
-                self.respond(200, {"run_id": self.path.rsplit("/", 1)[-1], "status": "completed",
+                run_id = self.path.rsplit("/", 1)[-1]
+                if run_id not in run_records:
+                    self.respond(404, {})
+                    return
+                _, posted_session = run_records[run_id]
+                self.respond(200, {"run_id": run_id, "status": "completed",
                                    "output": "HTTP runtime replied.", "completed": True,
-                                   "session_id": stale_id, "posted_session_id": posted["session_id"]})
+                                   "session_id": posted_session, "posted_session_id": posted_session})
             else:
                 self.respond(404, {})
+
 
         def respond(self, code, body):
             data = json.dumps(body).encode()

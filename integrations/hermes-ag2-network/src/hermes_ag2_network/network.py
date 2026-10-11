@@ -8,7 +8,7 @@ import uuid
 
 from ag2.network import (
     AuthBlock, ChannelState, Envelope, EV_CHANNEL_INVITE, EV_CHANNEL_INVITE_ACK,
-    EV_CHANNEL_INVITE_REJECT, EV_TEXT, HubClient, Passport, Resume, WsLink,
+    EV_CHANNEL_INVITE_REJECT, EV_TEXT, HubClient, NotFoundError, Passport, Resume, WsLink,
 )
 from ag2.network.client.agent_client import AgentClient
 from ag2.network.client.channel import Channel
@@ -57,6 +57,8 @@ class Network:
         self.executor = executor
         self.ledger = Ledger(ledger_path)
         self._run_lock = asyncio.Lock()
+        self._open_lock = asyncio.Lock()
+        self._ready = asyncio.Event()
         self._waiters: dict[tuple[str, str], asyncio.Future[Message]] = {}
 
     @classmethod
@@ -78,12 +80,15 @@ class Network:
             await hub_client.open()
             passport = Passport(name=name, owner="hermes-profile",
                                 auth=AuthBlock(scheme="api_key", claim={"token": token}))
-            # No replay before the custom handler is installed. Automatic
-            # pending-turn replay is intentionally deferred, not made up.
+            # Attach without trusting AG2's pre-handler replay; install the
+            # external callback, then reconcile persisted requests from native
+            # WAL before exposing this Network to callers.
             network.client = await hub_client.attach(cast("Agent", ExternalIdentity(name)), name,
                 passport=passport, resume=Resume(summary="External Hermes runtime"),
                 attach_plugin=False, since_envelope_id=None)
             network.client.on_envelope(network._on_envelope)
+            await network._reconcile_inbound()
+            network._ready.set()
             yield network
         finally:
             # close disconnects; AgentClient.close/shutdown would unregister.
@@ -98,21 +103,76 @@ class Network:
         return [Peer(p.name, p.agent_id) for p in await self.hub_client.list_agents()
                 if p.name in self.allowed_peers and p.agent_id]
 
-    async def open(self, *, peer: str, project_id: str, timeout: float = 10) -> str:
-        if peer not in self.allowed_peers:
-            raise PermissionError("peer is not enrolled in this identity's allowlist")
-        if not project_id:
-            raise ValueError("project_id required")
-        channel = await self.client.open(type="conversation", target=peer,
-                                         labels={"project_id": project_id, "protocol": "hermes-tracer-v1"})
+    async def _active_channels(self):
+        metadata = await self.hub_client.list_channels(agent_id=self.client.agent_id, limit=500)
+        if len(metadata) == 500:
+            raise RuntimeError("channel recovery limit reached; operator reconciliation required")
+        return [item for item in metadata if item.state == ChannelState.ACTIVE]
+
+    async def _find_active_channel(self, peer_name: str, project_id: str) -> str | None:
+        matches = []
+        for metadata in await self._active_channels():
+            if metadata.labels.get("project_id") != project_id:
+                continue
+            try:
+                _, peer_id = await self._channel(metadata.channel_id)
+            except (NotFoundError, PermissionError):
+                continue
+            peer = await self.hub_client.get_agent(peer_id)
+            if peer.name == peer_name:
+                matches.append(metadata.channel_id)
+        if len(matches) > 1:
+            raise RuntimeError("multiple active channels match this project and peer; operator reconciliation required")
+        return matches[0] if matches else None
+
+    async def _wait_for_channel(self, channel: Channel, timeout: float):
         async with asyncio.timeout(timeout):
             while True:
                 metadata = await channel.info()
-                if metadata.state == ChannelState.ACTIVE:
-                    return channel.channel_id
-                if metadata.is_terminal():
-                    raise PermissionError("channel invitation rejected or expired")
+                if metadata.state == ChannelState.ACTIVE or metadata.is_terminal():
+                    return metadata
                 await asyncio.sleep(0.01)
+
+    async def _stored_channel(self, peer: str, project_id: str, timeout: float) -> str | None:
+        channel_id = self.ledger.channel(self.name, peer, project_id)
+        if channel_id is None:
+            return None
+        try:
+            channel, peer_id = await self._channel(channel_id)
+        except NotFoundError:
+            self.ledger.forget_channel(self.name, peer, project_id)
+            return None
+        metadata = await channel.info()
+        existing_peer = await self.hub_client.get_agent(peer_id)
+        if existing_peer.name != peer or metadata.labels.get("project_id") != project_id:
+            raise PermissionError("stored project-channel mapping does not match its scope")
+        if not metadata.is_terminal() and metadata.state != ChannelState.ACTIVE:
+            metadata = await self._wait_for_channel(channel, timeout)
+        if metadata.state == ChannelState.ACTIVE:
+            return channel_id
+        self.ledger.forget_channel(self.name, peer, project_id)
+        return None
+
+    async def open(self, *, peer: str, project_id: str, timeout: float = 10) -> str:
+        if peer not in self.allowed_peers:
+            raise PermissionError("peer is not enrolled in this identity's allowlist")
+        if not isinstance(project_id, str) or not project_id.strip():
+            raise ValueError("project_id required")
+        async with self._open_lock:
+            existing_id = await self._stored_channel(peer, project_id, timeout)
+            if existing_id is not None:
+                return existing_id
+            recovered_id = await self._find_active_channel(peer, project_id)
+            if recovered_id is not None:
+                self.ledger.remember_channel(self.name, peer, project_id, recovered_id)
+                return recovered_id
+            channel = await self.client.open(type="conversation", target=peer,
+                                             labels={"project_id": project_id, "protocol": "hermes-tracer-v1"})
+            metadata = await self._wait_for_channel(channel, timeout)
+            if metadata.state != ChannelState.ACTIVE:
+                raise PermissionError("channel invitation rejected or expired")
+            self.ledger.remember_channel(self.name, peer, project_id, channel.channel_id)
+            return channel.channel_id
 
     async def _channel(self, channel_id: str) -> tuple[Channel, str]:
         metadata = await self.hub_client.get_channel(channel_id)
@@ -158,6 +218,57 @@ class Network:
         finally:
             self._waiters.pop(key, None)
 
+    async def _reconcile_inbound(self) -> None:
+        """Recover addressed requests from AG2 WAL without resending past context."""
+        metadata = await self._active_channels()
+        for channel_metadata in metadata:
+            try:
+                channel, peer_id = await self._channel(channel_metadata.channel_id)
+            except (NotFoundError, PermissionError):
+                continue
+            wal = await self.hub_client.read_wal(channel.channel_id)
+            answered = {e.causation_id for e in wal if e.sender_id == self.client.agent_id
+                        and e.event_type == EV_TEXT and e.causation_id
+                        and e.event_data.get("kind") in {"reply", "status"}}
+            requests = [e for e in wal if e.event_type == EV_TEXT and e.sender_id == peer_id
+                        and (e.audience is None or self.client.agent_id in e.audience)
+                        and e.event_data.get("kind") == "request" and e.envelope_id not in answered]
+            for envelope in requests:
+                await self._process_request(envelope, channel, peer_id)
+
+    async def _process_request(self, envelope: Envelope, channel: Channel, peer_id: str) -> None:
+        data = envelope.event_data
+        if not isinstance(data.get("operation_id"), str) or not data["operation_id"].strip():
+            return
+        if not isinstance(data.get("text"), str) or not data["text"].strip():
+            return
+        request = ExecutionRequest(self.name, channel.metadata.labels["project_id"],
+                                   envelope.channel_id, data["operation_id"], data["text"],
+                                   *self.ledger.session(self.name, channel.metadata.labels["project_id"], envelope.channel_id))
+        async with self._run_lock:
+            # A concurrently delivered original is redundant if startup replay
+            # already posted its durable reply.
+            wal = await self.hub_client.read_wal(envelope.channel_id)
+            if any(e.sender_id == self.client.agent_id and e.causation_id == envelope.envelope_id
+                   and e.event_type == EV_TEXT and e.event_data.get("kind") in {"reply", "status"}
+                   for e in wal):
+                return
+            try:
+                result = self.ledger.admit(request)
+                if result is None:
+                    if self.executor is None:
+                        raise ExecutionUncertain("no executor enrolled")
+                    result = await self.executor(request)
+                    self.ledger.advance_session(request.profile, request.project_id, request.channel_id, result.session_id)
+                    self.ledger.finish(request.operation_id, result)
+                reply_data: dict[str, Any] = {"kind": "reply", "text": result.text,
+                    "session_id": result.session_id, "run_id": result.run_id}
+            except Exception as exc:  # health: allow BLE001 -- external executor boundary: ACK held work instead of native NACK/replay; exception text may contain secrets
+                reply_data = {"kind": "status", "text": f"execution unsettled or refused ({type(exc).__name__}); explicit operator reconciliation required"}
+            reply_data["operation_id"] = request.operation_id
+            await channel.send(reply_data["text"], audience=[peer_id],
+                               causation_id=envelope.envelope_id, event_data=reply_data, depth=envelope.depth)
+
     async def history(self, channel_id: str) -> list[Message]:
         await self._channel(channel_id)
         return [_message(e) for e in await self.hub_client.read_wal(channel_id)
@@ -178,41 +289,16 @@ class Network:
             return
         if envelope.event_type != EV_TEXT:
             return
+        # Hold live deliveries until durable WAL reconciliation completes.
+        await self._ready.wait()
         channel, peer_id = await self._channel(envelope.channel_id)
         if envelope.sender_id != peer_id:
             return
-        data = envelope.event_data
-        kind = data.get("kind")
+        kind = envelope.event_data.get("kind")
         if kind in {"reply", "status"}:
-            waiter = self._waiters.get((envelope.channel_id, data.get("operation_id")))
+            waiter = self._waiters.get((envelope.channel_id, envelope.event_data.get("operation_id")))
             if waiter is not None and not waiter.done():
                 waiter.set_result(_message(envelope))
             return  # Replies never trigger another runtime turn.
-        if kind != "request":
-            return
-        if not isinstance(data.get("operation_id"), str) or not data["operation_id"].strip():
-            return
-        if not isinstance(data.get("text"), str) or not data["text"].strip():
-            return
-        request = ExecutionRequest(self.name, channel.metadata.labels["project_id"],
-                                   envelope.channel_id, data["operation_id"], data["text"],
-                                   *self.ledger.session(self.name, channel.metadata.labels["project_id"], envelope.channel_id))
-        async with self._run_lock:
-            # A failed handler would be NACKed and immediately replayed by
-            # native AG2. Catch execution errors after durable admission to
-            # ACK safely with a status, never automatically re-execute.
-            try:
-                result = self.ledger.admit(request)
-                if result is None:
-                    if self.executor is None:
-                        raise ExecutionUncertain("no executor enrolled")
-                    result = await self.executor(request)
-                    self.ledger.advance_session(request.profile, request.project_id, request.channel_id, result.session_id)
-                    self.ledger.finish(request.operation_id, result)
-                reply_data: dict[str, Any] = {"kind": "reply", "text": result.text,
-                    "session_id": result.session_id, "run_id": result.run_id}
-            except Exception as exc:  # health: allow BLE001 -- external executor boundary: ACK held work instead of native NACK/replay; exception text may contain secrets
-                reply_data = {"kind": "status", "text": f"execution unsettled or refused ({type(exc).__name__}); explicit operator reconciliation required"}
-            reply_data["operation_id"] = request.operation_id
-            await channel.send(reply_data["text"], audience=[peer_id],
-                               causation_id=envelope.envelope_id, event_data=reply_data, depth=envelope.depth)
+        if kind == "request":
+            await self._process_request(envelope, channel, peer_id)

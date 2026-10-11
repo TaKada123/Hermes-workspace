@@ -20,7 +20,26 @@ class Ledger:
             profile TEXT NOT NULL, project_id TEXT NOT NULL, channel_id TEXT NOT NULL,
             origin_id TEXT NOT NULL, current_id TEXT NOT NULL,
             PRIMARY KEY (profile, project_id, channel_id))""")
+        self.db.execute("""CREATE TABLE IF NOT EXISTS project_channels (
+            profile TEXT NOT NULL, peer TEXT NOT NULL, project_id TEXT NOT NULL,
+            channel_id TEXT NOT NULL, PRIMARY KEY (profile, peer, project_id))""")
         self.db.commit()
+
+    def channel(self, profile: str, peer: str, project_id: str) -> str | None:
+        row = self.db.execute("SELECT channel_id FROM project_channels WHERE profile=? AND peer=? AND project_id=?",
+                              (profile, peer, project_id)).fetchone()
+        return row[0] if row else None
+
+    def remember_channel(self, profile: str, peer: str, project_id: str, channel_id: str):
+        with self.db:
+            self.db.execute("INSERT INTO project_channels VALUES (?,?,?,?) "
+                            "ON CONFLICT(profile,peer,project_id) DO UPDATE SET channel_id=excluded.channel_id",
+                            (profile, peer, project_id, channel_id))
+
+    def forget_channel(self, profile: str, peer: str, project_id: str):
+        with self.db:
+            self.db.execute("DELETE FROM project_channels WHERE profile=? AND peer=? AND project_id=?",
+                            (profile, peer, project_id))
 
     def session(self, profile: str, project_id: str, channel_id: str) -> tuple[str, str]:
         """Return stable origin/current IDs, creating the durable lineage once."""
