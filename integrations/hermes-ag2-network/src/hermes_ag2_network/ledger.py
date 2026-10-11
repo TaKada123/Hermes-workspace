@@ -23,6 +23,10 @@ class Ledger:
         self.db.execute("""CREATE TABLE IF NOT EXISTS project_channels (
             profile TEXT NOT NULL, peer TEXT NOT NULL, project_id TEXT NOT NULL,
             channel_id TEXT NOT NULL, PRIMARY KEY (profile, peer, project_id))""")
+        self.db.execute("""CREATE TABLE IF NOT EXISTS terminal_recovery_notices (
+            profile TEXT NOT NULL, project_id TEXT NOT NULL, channel_id TEXT NOT NULL,
+            request_id TEXT NOT NULL, operation_id TEXT NOT NULL,
+            PRIMARY KEY (profile, project_id, channel_id, request_id))""")
         self.db.commit()
 
     def channel(self, profile: str, peer: str, project_id: str) -> str | None:
@@ -40,6 +44,18 @@ class Ledger:
         with self.db:
             self.db.execute("DELETE FROM project_channels WHERE profile=? AND peer=? AND project_id=?",
                             (profile, peer, project_id))
+
+    def note_terminal_request(self, profile: str, project_id: str, channel_id: str,
+                              request_id: str, operation_id: str):
+        with self.db:
+            self.db.execute("INSERT OR IGNORE INTO terminal_recovery_notices VALUES (?,?,?,?,?)",
+                            (profile, project_id, channel_id, request_id, operation_id))
+
+    def terminal_requests(self, profile: str, channel_id: str) -> list[tuple[str, str]]:
+        rows = self.db.execute(
+            "SELECT request_id,operation_id FROM terminal_recovery_notices "
+            "WHERE profile=? AND channel_id=? ORDER BY rowid", (profile, channel_id)).fetchall()
+        return [(row[0], row[1]) for row in rows]
 
     def session(self, profile: str, project_id: str, channel_id: str) -> tuple[str, str]:
         """Return stable origin/current IDs, creating the durable lineage once."""

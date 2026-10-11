@@ -44,6 +44,14 @@ class HermesHTTPExecutor:
             # retry POST after a lost response or automatically stop live work.
             raise ExecutionUncertain("Hermes API execution unsettled; no automatic retry") from exc
 
+    async def _resolve_session_tip(self, origin_id: str) -> str:
+        response = await self.http.get(f"api/sessions/{origin_id}/messages", params={"limit": 0})
+        response.raise_for_status()
+        tip_id = response.json().get("session_id")
+        if not isinstance(tip_id, str) or not tip_id:
+            raise ExecutionUncertain("Hermes did not resolve a canonical session tip")
+        return tip_id
+
     async def _execute(self, request: ExecutionRequest) -> ExecutionResult:
         origin_id = request.session_origin_id or request.session_current_id
         if not origin_id:
@@ -61,11 +69,7 @@ class HermesHTTPExecutor:
         # The stored current ID may be stale if Hermes rotated while the
         # bridge was down. Resolve from the stable origin first, then verify
         # the canonical current target before sending a new turn.
-        tip_response = await self.http.get(f"api/sessions/{origin_id}/messages", params={"limit": 0})
-        tip_response.raise_for_status()
-        resolved_session_id = tip_response.json().get("session_id")
-        if not isinstance(resolved_session_id, str) or not resolved_session_id:
-            raise ExecutionUncertain("Hermes did not resolve a canonical session tip")
+        resolved_session_id = await self._resolve_session_tip(origin_id)
         session = await self.http.get(f"api/sessions/{resolved_session_id}")
         session.raise_for_status()
         if session.json().get("session", {}).get("id") != resolved_session_id:
@@ -87,11 +91,7 @@ class HermesHTTPExecutor:
                 output = run.get("output")
                 if not isinstance(output, str):
                     raise ExecutionUncertain("Hermes completed without textual output")
-                tip_response = await self.http.get(f"api/sessions/{origin_id}/messages", params={"limit": 0})
-                tip_response.raise_for_status()
-                tip_id = tip_response.json().get("session_id")
-                if not isinstance(tip_id, str) or not tip_id:
-                    raise ExecutionUncertain("Hermes did not resolve a canonical session tip")
+                tip_id = await self._resolve_session_tip(origin_id)
                 return ExecutionResult(output, tip_id, run_id)
             if status in {"failed", "cancelled", "interrupted"}:
                 raise ExecutionUncertain("Hermes run ended without completion; no automatic retry")

@@ -47,11 +47,19 @@ def _answered_request_ids(envelopes: list[Envelope], sender_id: str) -> set[str]
             and envelope.causation_id and envelope.event_data.get("kind") in {"reply", "status"}}
 
 
-class Network:
-    """One enrolled identity. Use connect() as an async context manager.
+def _unanswered_requests(envelopes: list[Envelope], recipient_id: str, peer_id: str) -> list[Envelope]:
+    answered = _answered_request_ids(envelopes, recipient_id)
+    return [envelope for envelope in envelopes if envelope.event_type == EV_TEXT
+            and envelope.sender_id == peer_id
+            and (envelope.audience is None or recipient_id in envelope.audience)
+            and envelope.event_data.get("kind") == "request" and envelope.envelope_id not in answered]
 
-    open/send/ask/history/peers are the externally callable seam. This first
-    slice creates fresh native channels, not named continuing Hermes sessions.
+
+class Network:
+    """One enrolled Hermes identity backed by native AG2 channels and WAL.
+
+    Project-scoped channel reuse, durable Hermes session lineage, and restart
+    reconciliation sit behind open/send/ask/history/peers.
     """
     client: AgentClient  # Initialized by the async connect factory.
 
@@ -109,11 +117,15 @@ class Network:
         return [Peer(p.name, p.agent_id) for p in await self.hub_client.list_agents()
                 if p.name in self.allowed_peers and p.agent_id]
 
-    async def _active_channels(self):
-        metadata = await self.hub_client.list_channels(agent_id=self.client.agent_id, limit=500)
+    async def _channels(self, *, include_terminal: bool = False):
+        metadata = await self.hub_client.list_channels(agent_id=self.client.agent_id,
+                                                       include_terminal=include_terminal, limit=500)
         if len(metadata) == 500:
             raise RuntimeError("channel recovery limit reached; operator reconciliation required")
-        return [item for item in metadata if item.state == ChannelState.ACTIVE]
+        return metadata
+
+    async def _active_channels(self):
+        return [item for item in await self._channels() if item.state == ChannelState.ACTIVE]
 
     async def _find_active_channel(self, peer_name: str, project_id: str) -> str | None:
         matches = []
@@ -225,18 +237,25 @@ class Network:
             self._waiters.pop(key, None)
 
     async def _reconcile_inbound(self) -> None:
-        """Recover addressed requests from AG2 WAL without resending past context."""
-        metadata = await self._active_channels()
+        """Recover active work and durably flag requests stranded on terminal channels."""
+        metadata = await self._channels(include_terminal=True)
         for channel_metadata in metadata:
+            if channel_metadata.state != ChannelState.ACTIVE and not channel_metadata.is_terminal():
+                continue
             try:
                 channel, peer_id = await self._channel(channel_metadata.channel_id)
             except (NotFoundError, PermissionError):
                 continue
             wal = await self.hub_client.read_wal(channel.channel_id)
-            answered = _answered_request_ids(wal, self.client.agent_id)
-            requests = [e for e in wal if e.event_type == EV_TEXT and e.sender_id == peer_id
-                        and (e.audience is None or self.client.agent_id in e.audience)
-                        and e.event_data.get("kind") == "request" and e.envelope_id not in answered]
+            requests = _unanswered_requests(wal, self.client.agent_id, peer_id)
+            if channel_metadata.is_terminal():
+                project_id = channel.metadata.labels["project_id"]
+                for envelope in requests:
+                    operation_id = envelope.event_data.get("operation_id")
+                    if isinstance(operation_id, str) and operation_id.strip():
+                        self.ledger.note_terminal_request(self.name, project_id, channel.channel_id,
+                                                          envelope.envelope_id, operation_id)
+                continue
             for envelope in requests:
                 await self._process_request(envelope, channel, peer_id)
 
@@ -273,8 +292,16 @@ class Network:
 
     async def history(self, channel_id: str) -> list[Message]:
         await self._channel(channel_id)
-        return [_message(e) for e in await self.hub_client.read_wal(channel_id)
-                if e.event_type == EV_TEXT and e.event_data.get("kind") in {"request", "reply", "status"}]
+        envelopes = await self.hub_client.read_wal(channel_id)
+        messages = [_message(e) for e in envelopes
+                    if e.event_type == EV_TEXT and e.event_data.get("kind") in {"request", "reply", "status"}]
+        messages.extend(Message(
+            envelope_id=f"local-recovery:{request_id}", sender_id=self.client.agent_id,
+            kind="status", text="Unanswered request is in a terminal AG2 channel; it was not replayed automatically. "
+            "Operator reconciliation is required.", operation_id=operation_id,
+            causation_id=request_id,
+        ) for request_id, operation_id in self.ledger.terminal_requests(self.name, channel_id))
+        return messages
 
     async def _on_envelope(self, envelope: Envelope):
         if envelope.event_type == EV_CHANNEL_INVITE:
