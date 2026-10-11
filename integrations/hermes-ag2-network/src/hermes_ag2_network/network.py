@@ -121,8 +121,11 @@ class Network:
             raise PermissionError("channel is not this identity's two-party channel")
         peer_id = next(i for i in ids if i != self.client.agent_id)
         peer = await self.hub_client.get_agent(peer_id)
-        if peer.name not in self.allowed_peers or metadata.labels.get("protocol") != "hermes-tracer-v1":
-            raise PermissionError("channel peer or protocol is not enrolled")
+        if (peer.name not in self.allowed_peers
+                or metadata.labels.get("protocol") != "hermes-tracer-v1"
+                or not isinstance(metadata.labels.get("project_id"), str)
+                or not metadata.labels["project_id"].strip()):
+            raise PermissionError("channel peer, protocol, or project scope is invalid")
         return Channel(metadata=metadata, client=self.client), peer_id
 
     async def send(self, channel_id: str, text: str, *, operation_id: str | None = None) -> str:
@@ -164,7 +167,10 @@ class Network:
         if envelope.event_type == EV_CHANNEL_INVITE:
             metadata = await self.hub_client.get_channel(envelope.channel_id)
             inviter = await self.hub_client.get_agent(metadata.creator_id)
-            allowed = inviter.name in self.allowed_peers and metadata.labels.get("protocol") == "hermes-tracer-v1"
+            allowed = (inviter.name in self.allowed_peers
+                       and metadata.labels.get("protocol") == "hermes-tracer-v1"
+                       and isinstance(metadata.labels.get("project_id"), str)
+                       and bool(metadata.labels["project_id"].strip()))
             await self.client.send_envelope(Envelope(channel_id=envelope.channel_id,
                 sender_id=self.client.agent_id, audience=[metadata.creator_id],
                 event_type=EV_CHANNEL_INVITE_ACK if allowed else EV_CHANNEL_INVITE_REJECT,

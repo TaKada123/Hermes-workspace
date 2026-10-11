@@ -2,7 +2,7 @@
 
 ## Result / scope
 
-The standalone tracer works through real native AG2 1.1.2 disk/WS/channel/WAL and the public `Network` seam. Controlled-executor tests are **not** a live Hermes receipt. Live criterion is **blocked**: parent reports the authenticated multiplex API listener is disabled; no live endpoint/credential pointer was supplied to this worker. Parent explicitly instructed not to wait or alter the gateway. No live Profile/gateway/service/secret was changed here.
+The standalone tracer works through real native AG2 1.1.2 disk/WS/channel/WAL and the public `Network` seam. A real Coding Hermes Profile E2E now passed (receipt below). No existing user session was reused. API keys live in owner-only files under `$HERMES_HOME/agent-network/secrets/`; original `.env`/`config.yaml` snapshots are owner-only under `deployment-backup/`.
 
 ## Actual RED → GREEN
 
@@ -66,8 +66,18 @@ The complete root `scripts/check --staged --base 1ae1f384` was attempted: unrela
 
 Built `hermes_ag2_network-0.1.0-py3-none-any.whl` with PM-isolated `build`/`hatchling`; inspected ZIP and metadata. Wheel has only seven `hermes_ag2_network` source modules and its dist-info, exact `Requires-Dist: ag2==1.1.2`, explicit disk/WS dependencies and an executable `hermes-ag2-network` entry point. No AG2 or Hermes source was copied. Artifact: `/home/vottak/.hermes/cache/scratch/ag2-tracer-dist/hermes_ag2_network-0.1.0-py3-none-any.whl`.
 
-## Two-axis worker review
+## Real Hermes Runtime E2E
 
-**Standards:** core unchanged; standalone distribution/lock; approved public-seam tests; real PM build; narrow pinned external identity/type-adapter limitation documented; secret-safe authenticated HTTP/WS; scoped canonical tests/checks. Independent parallel reviewer agents were not available to this focused worker; parent must run the final independent Standards/Spec review.
+Executed the published `smoke` command through the running multiplex API at `127.0.0.1:8642`, authenticated with Coding's owner-only key. The smoke created a fresh native AG2 hub/channel and a deterministic new Coding Hermes API session; it did not resume a pre-existing user session.
 
-**Spec:** pin/native custom handler/invite ACK/native request/reply/WAL/public facade/HTTP executor/executable live smoke implemented. Ticket 01's real existing-Profile acceptance is pending credentials and must not be marked done. Named native continuing channels/session lineage, enrollment plugin, project grants/budgets/artifacts/recovery/deployment remain later tickets. No speculative implementations of those features were added.
+```json
+{"live":true,"profile":"coding","channel_id":"18dd8ca736e24f0c6621c529005aa8ed","request_envelopes":1,"reply_envelopes":1,"session_id":"ag2-ea151c140929529a928c409107b7c023","run_id":"run_f339770eb477454f88526e4adaa3cb1b","run_status":"completed","runtime":{"provider":"openai-codex","model":"gpt-6-sol-900k","route_source":"global"},"tool_results":1,"sha256":"b3ed69c98444d20097dd8ce0bdf524c27e8a4fb122945be8c73e96f015f5a872"}
+```
+
+The Hermes runtime used its normal provider, tools and profile configuration; its actual terminal tool computed the expected SHA-256. The bridge read back the completed Run and exact session messages before emitting the receipt. No API key or private memory contents were emitted.
+
+Before restart, live `gateway_state.json` reported `active_agents=0`, `active_work=null`, and the API port refused connections. Added protected API keys for `default`, `coding`, and `architect` (preserving any usable existing key); kept `.env`/`config.yaml` snapshots with mode 0600. Restarted the authorized user Gateway once; read back `/health` = 200 and confirmed only the loopback API listener on 8642. Post-smoke the Gateway remained active with `active_work=null`, `active_agents=0`. Existing memory backend settings were not changed: Coding/Architect remain legacy file memory.
+
+## Independent review and correction
+
+Standards-axis review identified a malformed channel invitation without `project_id` could reach an unchecked mapping access; a fail-closed project scope check is now applied both before invitation ACK and before channel use. The corresponding test was RED (bridge left the invalid channel pending), then GREEN (AG2 closes the handshake with `invite_rejected`; the executor is never invoked). Full network suite after the correction: 5 passed; scoped Ruff and ty checks pass. Spec-axis review's concern about missing real E2E is satisfied by the receipt above. The task is still only the first tracer slice: later session-lineage, specialist tools, project grants, artifacts, budgets and services remain open under tickets 17–21.

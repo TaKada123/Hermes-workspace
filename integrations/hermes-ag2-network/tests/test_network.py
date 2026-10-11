@@ -2,7 +2,27 @@
 import asyncio
 from pathlib import Path
 
+import pytest
+from ag2.network import ProtocolError
 from hermes_ag2_network import ExecutionResult, Network, network_hub
+
+
+def test_incomplete_project_invitation_is_rejected_without_running_executor(tmp_path: Path):
+    async def scenario():
+        async def forbidden_executor(request):
+            raise AssertionError("untrusted channel metadata must not reach the executor")
+
+        async with network_hub(tmp_path / "hub", {"caller": "caller-key", "architect": "architect-key"}) as hub:
+            async with Network.connect(hub.url, name="architect", token="architect-key",
+                                       allowed_peers={"caller"}, executor=forbidden_executor,
+                                       ledger_path=tmp_path / "architect.sqlite"):
+                async with Network.connect(hub.url, name="caller", token="caller-key",
+                                           allowed_peers={"architect"}, ledger_path=tmp_path / "caller.sqlite") as caller:
+                    with pytest.raises(ProtocolError, match="invite_rejected"):
+                        await caller.client.open(type="conversation", target="architect",
+                                                 labels={"protocol": "hermes-tracer-v1"})
+
+    asyncio.run(scenario())
 
 
 def test_request_reply_is_durable_without_reply_ping_pong(tmp_path: Path):
