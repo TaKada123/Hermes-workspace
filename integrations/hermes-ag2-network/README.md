@@ -115,6 +115,36 @@ and requires owning-runtime/operator evidence; **no automatic resend or successf
 is claimed**. Crash gaps between the admission authority and delivery ledger fail closed and
 may require operator repair. Arbitrary deletion/corruption of either database is not supported.
 
+## systemd user services (Linux)
+
+The packaged templates are optional. They do not modify Hermes core or any profile configuration. Build the isolated distribution through PM as in the Install section, then link its executable to the unit's fixed path and install the units:
+
+```sh
+mkdir -p ~/.local/share/hermes-ag2-network/bin
+ln -sf "$ENV/bin/hermes-ag2-network" ~/.local/share/hermes-ag2-network/bin/hermes-ag2-network
+mkdir -p ~/.config/systemd/user ~/.config/hermes-ag2-network/bridges ~/.local/state/hermes-ag2-network
+install -m 0644 integrations/hermes-ag2-network/systemd/hermes-ag2-hub.service ~/.config/systemd/user/
+install -m 0644 integrations/hermes-ag2-network/systemd/hermes-ag2-bridge@.service ~/.config/systemd/user/
+```
+
+Create `~/.config/hermes-ag2-network/identity-keys.json` as an owner-only JSON map of every enrolled network identity to its distinct AG2 token. Configure the hub unit's `--keys-file` path if storing it elsewhere. Create `~/.config/hermes-ag2-network/bridges/coding.env` (mode `0600`) with `HUB_URL=ws://127.0.0.1:8765`, `API_URL=http://127.0.0.1:8642`, `PROJECT_PEER=demo=architect`, and an unused loopback `TOOL_API_PORT`. Put distinct owner-only API, hub and tool API key files beside it, using the exact `%i` filenames referenced by the unit. Add one explicit `--project-peer` grant per project/peer by extending that instance's `ExecStart`; discovery alone never enrolls or authorizes execution. Check the unit with `systemd-analyze --user verify` before enabling.
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now hermes-ag2-hub.service
+systemctl --user enable --now hermes-ag2-bridge@coding.service
+systemctl --user status hermes-ag2-hub hermes-ag2-bridge@coding
+journalctl --user -u hermes-ag2-bridge@coding
+```
+
+New Profiles need no source edit: inspect `~/.hermes/profiles/` (and the profile-aware `hermes -p NAME config path`), then create an explicit per-profile bridge env/credentials and enable `hermes-ag2-bridge@NAME`. Do not copy private profile data into the Hub. Stop/disable with `systemctl --user disable --now hermes-ag2-bridge@NAME`; disable the hub only after all bridges are stopped. Roll back by disabling both units, removing these unit copies and running `systemctl --user daemon-reload`; Hermes runs normally without either service. Keep or deliberately archive the operational WAL/ledger databases before removal if you need channel recovery. Units use `Restart=on-failure` for process reconnect after failure; systemd restart is not a claim of crash-atomic WAL or exactly-once execution.
+
+### Artifact references and real limits
+
+`hermes_ag2_network.artifacts.ArtifactRef` is the typed descriptor model for file/image/check-report/Git-reference/result/error/status artifacts. It carries a URI, media type, byte count and SHA-256; `verify_local_file` rejects files outside explicitly granted roots and files over the caller's byte cap. Local file bytes are never implicitly read, and private memory is not searched or attached. A URI does not grant access: consumers must independently authorize it. The current `send`/`ask` text API and Hermes tool plugin do not yet transfer or dereference artifact descriptors, nor do they provide authenticated artifact serving. Treat these types as validation primitives, not end-to-end artifact exchange. Git references must be supplied as explicit metadata rather than triggering repository reads.
+
+AG2/hub API limitations remain: registration lacks a public external-runtime handler attach (the tested name-only shim and attach race are documented above); JSONL WAL is not crash-transactional; and Hermes Runs has no project cwd/sandbox binding. These controls do not provide multi-host shared admission or limit arbitrary native AG2 clients.
+
 ## Optional Hermes tool plugin
 
 `plugin/` is a standalone general Hermes plugin; it does not add or monkeypatch Hermes core. Copy it into the specific profile's `plugins/agent-network` directory, enable it only for that profile, and configure a loopback URL for that profile's bridge. The plugin registers provider-safe names `agent_network_peers`, `agent_network_open`, `agent_network_send`, `agent_network_ask`, and `agent_network_history` (dots are not valid provider tool names). Each request goes to the authenticated local bridge API; the active profile name is attached by the plugin, never supplied by the model. The model sees no credentials or profile selector. The secret `AGENT_NETWORK_TOOLS_KEY` belongs in the owning profile's `.env` (through the owner's secret workflow); the network bridge uses the same value from an owner-only key file. Other Hermes profiles must have different credentials.

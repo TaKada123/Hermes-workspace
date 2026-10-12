@@ -1,0 +1,19 @@
+[Unit]
+Description=Hermes AG2 bridge for enrolled Profile %i
+After=hermes-ag2-hub.service
+Requires=hermes-ag2-hub.service
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/hermes-ag2-network/bridges/%i.env
+ExecStart=%h/.local/share/hermes-ag2-network/bin/hermes-ag2-network bridge --hub-url ${HUB_URL} --name %i --project-peer ${PROJECT_PEER} --ledger %h/.local/state/hermes-ag2-network/%i.sqlite --control-db %h/.local/state/hermes-ag2-network/network-admission.sqlite --api-url ${API_URL} --hub-key-file %h/.config/hermes-ag2-network/bridges/%i-hub.key --api-key-file %h/.config/hermes-ag2-network/bridges/%i-api.key --tool-api-port ${TOOL_API_PORT} --tool-api-key-file %h/.config/hermes-ag2-network/bridges/%i-tools.key
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/state/hermes-ag2-network
+
+[Install]
+WantedBy=default.target

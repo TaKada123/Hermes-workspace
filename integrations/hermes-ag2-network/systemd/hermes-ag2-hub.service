@@ -1,0 +1,17 @@
+[Unit]
+Description=Hermes AG2 durable specialist hub
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/hermes-ag2-network/bin/hermes-ag2-network hub --store %h/.local/state/hermes-ag2-network/hub --keys-file %h/.config/hermes-ag2-network/identity-keys.json --port 8765
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/state/hermes-ag2-network
+
+[Install]
+WantedBy=default.target
