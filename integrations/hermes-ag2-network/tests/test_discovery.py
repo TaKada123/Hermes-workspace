@@ -110,3 +110,29 @@ def test_enrollment_rejects_symlink_directory_and_file(tmp_path: Path):
     with pytest.raises(PermissionError):
         enroll_profile("coding", tmp_path)
     assert target.read_text(encoding="utf-8") == '[]'
+
+
+@pytest.mark.parametrize("linked_component", ["home", "ancestor"])
+@pytest.mark.parametrize("action", [enrolled_profiles, enroll_profile, revoke_profile])
+def test_enrollment_rejects_symlink_ancestors_without_reading_or_writing_target(
+    tmp_path: Path, linked_component: str, action,
+):
+    real_home = tmp_path / "real" / "home"
+    (real_home / "profiles" / "coding").mkdir(parents=True)
+    assert enroll_profile("coding", real_home) == ["coding"]
+    enrollment = real_home / "agent-network" / "enrolled-profiles.json"
+    before = enrollment.read_bytes()
+    link = tmp_path / "linked"
+    link.symlink_to(real_home if linked_component == "home" else real_home.parent, target_is_directory=True)
+    home = link if linked_component == "home" else link / "home"
+    with pytest.raises(PermissionError, match="symlink"):
+        if action is enrolled_profiles:
+            action(home)
+        else:
+            action("default", home)
+    assert enrollment.read_bytes() == before
+    # Reject before creating enrollment storage through a linked ancestor too.
+    missing_home = link / "new-home"
+    with pytest.raises(PermissionError, match="symlink"):
+        revoke_profile("default", missing_home)
+    assert not missing_home.exists()

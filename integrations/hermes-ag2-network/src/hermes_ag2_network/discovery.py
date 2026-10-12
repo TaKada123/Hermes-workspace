@@ -31,6 +31,13 @@ def discover_profiles(hermes_home: Path | None = None) -> list[str]:
     return sorted(names)
 
 
+def _reject_symlink_ancestors(path: Path) -> None:
+    """Enrollment never follows symlinks, including above Hermes home."""
+    absolute = path.absolute()
+    if any(component.is_symlink() for component in (absolute, *absolute.parents)):
+        raise PermissionError("enrollment path and all ancestors must not be symlinks")
+
+
 def _owner_only(path: Path, *, directory: bool = False) -> None:
     metadata = path.lstat()
     valid_type = stat.S_ISDIR(metadata.st_mode) if directory else stat.S_ISREG(metadata.st_mode)
@@ -41,6 +48,7 @@ def _owner_only(path: Path, *, directory: bool = False) -> None:
 def enrolled_profiles(hermes_home: Path | None = None) -> list[str]:
     """Return explicitly authorized names; never read profile configuration."""
     path = profile_root(hermes_home) / "agent-network" / "enrolled-profiles.json"
+    _reject_symlink_ancestors(path)
     if not path.parent.exists() and not path.parent.is_symlink():
         return []
     _owner_only(path.parent, directory=True)
@@ -57,6 +65,7 @@ def _update_enrollment(name: str, hermes_home: Path | None, *, revoke: bool) -> 
     if not isinstance(name, str) or not _NAME.fullmatch(name):
         raise ValueError("invalid profile name")
     home = profile_root(hermes_home)
+    _reject_symlink_ancestors(home / "agent-network" / "enrolled-profiles.json")
     if not revoke and name not in discover_profiles(home):
         raise ValueError("profile is not available in Hermes home")
     path = home / "agent-network" / "enrolled-profiles.json"

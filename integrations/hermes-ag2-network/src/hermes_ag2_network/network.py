@@ -601,7 +601,15 @@ class Network:
                 self._release_execution(request)
                 self.admission.reconcile_transport(context.network_context_id)
                 raise
-            self._finish_execution(request, result)
+            try:
+                self._finish_execution(request, result)
+            except (ValueError, OSError) as exc:
+                # Completion is terminal even when its output cannot be trusted.
+                # Preserve the admitted operation so retries never execute it again.
+                self.ledger.terminate(context.network_context_id)
+                self._release_execution(request)
+                self.admission.reconcile_transport(context.network_context_id)
+                raise ExecutionTerminated("completed execution returned invalid artifact output") from exc
             self.admission.reconcile_transport(context.network_context_id)
             return result
 

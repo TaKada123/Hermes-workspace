@@ -115,16 +115,14 @@ def test_cli_rejects_unsafe_or_malformed_behavior_config_before_network(tmp_path
     approved = tmp_path / "approved"
     approved.mkdir()
     config = {"artifact_store_root": str(tmp_path / "artifacts"), "artifact_project_roots": {"p": [str(approved)]}}
-    if bad == "unknown":
-        config["api_token"] = "do-not-print-secret"
-    elif bad == "image_without_root":
-        config["artifact_image_projects"] = ["other"]
-    elif bad == "roots_string":
-        config["artifact_project_roots"]["p"] = str(approved)
-    elif bad == "bool_limit":
-        config["artifact_max_bytes"] = True
-    elif bad == "relative_root":
-        config["artifact_store_root"] = "relative"
+    overrides = {
+        "unknown": {"api_token": "do-not-print-secret"},
+        "image_without_root": {"artifact_image_projects": ["other"]},
+        "roots_string": {"artifact_project_roots": {"p": str(approved)}},
+        "bool_limit": {"artifact_max_bytes": True},
+        "relative_root": {"artifact_store_root": "relative"},
+    }
+    config.update(overrides.get(bad, {}))
     config_file = Path(protected(tmp_path / "behavior.json", json.dumps(config)))
     if bad == "permissions":
         config_file.chmod(0o644)

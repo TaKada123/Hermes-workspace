@@ -205,6 +205,15 @@ Add `--config-file /protected/coding-network.json` to the bridge command. This f
 
 Both peers need the **same store directory and matching explicit project artifact grants**, as well as reciprocal peer/project network grants. Artifact grants do not enroll peers or authorize execution; `--project-peer` does not authorize filesystem reads. A library caller supplies `ArtifactStore(..., project_roots={...})` to `Network.connect(artifact_store=store)`; an executing peer supplies that same store to `HermesHTTPExecutor(artifact_store=store, image_projects={...})`. For systemd, extend the intended instance's `ExecStart` with the config flag, preserving its other arguments, then verify the override, daemon-reload and restart that bridge. Existing units keep sharing disabled until explicitly configured.
 
+The packaged unit uses `ProtectSystem=strict` and `ProtectHome=read-only`. Its only writable state directory is `%h/.local/state/hermes-ag2-network`. Prefer an absolute `artifact_store_root` beneath that directory, for example `/home/YOUR_USER/.local/state/hermes-ag2-network/artifacts`, and use that same path in both peers' JSON configs (JSON does not expand `%h` or `~`). Prepare the directory with mode `0700` before starting either bridge. Approved source directories only need read access. If the store must instead be `/approved/state/network-artifacts`, prepare that directory owned by the service user with mode `0700` and add a narrowly scoped instance drop-in:
+
+```ini
+[Service]
+ReadWritePaths=/approved/state/network-artifacts
+```
+
+Keep the original writable state path and sandbox settings; do not make an entire home/project tree writable. Apply the store override to both sharing instances, then daemon-reload and restart them. Without the writable-store path, adding `--config-file` alone will fail under the sandbox.
+
 `agent_network_artifact_publish(channel_id, path, kind?, media_type?, label?)` snapshots an explicitly authorized regular bounded file and returns a typed `urn:hermes-artifact:<sha256>` without its source path. `agent_network_artifact_read(channel_id, artifact_ref)` reads that project's snapshot, verifies its size/digest again, and returns text or base64 binary. Source edits do not change published snapshots. Verification also occurs before incoming execution and when saved output refs are reused. No remote artifact server or remote fetch exists: HTTPS/Git/other URNs remain **metadata only**, and their declared digests are not claimed to be verified. Git references must be supplied explicitly; they do not trigger repository reads. Private memory is never searched or attached.
 
 Default per-file limit is 1 MiB (`artifact_max_bytes`); the hard ceiling is 4 MiB/file and 4 MiB aggregate Run input. Inline text/JSON is capped at 64 KiB; larger text remains reference-only and can be explicitly read through the tool. Descriptor count/metadata size and existing transport limits still apply.

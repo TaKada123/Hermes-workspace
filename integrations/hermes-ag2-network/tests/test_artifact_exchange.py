@@ -227,3 +227,73 @@ def test_held_artifact_request_reconciles_after_restart_without_reexecution(tmp_
                                 await caller.ask(channel, "Check", operation_id="once", artifact_refs=(ref,), timeout=5)
         assert executions == ["once"]
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("invalid_output", ["corrupt", "ungranted"])
+def test_reconciled_invalid_output_releases_capacity_without_reexecution(tmp_path: Path, invalid_output: str):
+    import json
+    from test_http_executor import hermes_api
+    from hermes_ag2_network import NetworkBudgetExceeded, NetworkLimits
+    from hermes_ag2_network.executor import HermesHTTPExecutor
+    from hermes_ag2_network.types import ExecutionTerminated
+
+    approved = tmp_path / "approved"
+    approved.mkdir()
+    report = approved / "report.txt"
+    report.write_bytes(b"verified")
+    runtime_store = ArtifactStore(tmp_path / "runtime-store", project_roots={"project": (approved,)})
+    ref = runtime_store.publish("project", report, media_type="text/plain")
+    receiver_project = "other" if invalid_output == "ungranted" else "project"
+    receiver_store = ArtifactStore(tmp_path / "receiver-store", project_roots={receiver_project: (approved,)})
+    receiver_store.publish("other" if invalid_output == "ungranted" else "project", report,
+                           media_type="text/plain")
+    snapshot = next((tmp_path / "receiver-store").glob("*/*"))
+    if invalid_output == "corrupt":
+        snapshot.write_bytes(b"tampered")
+    output = json.dumps({"network_result": {"text": "Verified", "artifact_refs": [ref.to_wire()]}})
+    terminal = {"ready": False}
+    with hermes_api(terminal=terminal, output=output) as (url, posts):
+        async def scenario():
+            limits = NetworkLimits(max_active=1, max_pending=1, request_timeout=2)
+            async with HermesHTTPExecutor(url, profile="architect", token="fixture-secret",
+                                          artifact_store=runtime_store) as runtime:
+                async with network_hub(tmp_path / "hub", {"caller": "a", "architect": "b"}) as hub:
+                    async with Network.connect(hub.url, name="caller", token="a", allowed_peers={"architect"},
+                                               ledger_path=tmp_path / "caller.sqlite", artifact_store=runtime_store,
+                                               limits=NetworkLimits(max_active=1, max_pending=1)) as caller:
+                        async with Network.connect(hub.url, name="architect", token="b", allowed_peers={"caller"},
+                                                   executor=runtime, ledger_path=tmp_path / "architect.sqlite",
+                                                   artifact_store=receiver_store, limits=limits) as architect:
+                            channel = await caller.open(peer="architect", project_id="project")
+                            with pytest.raises(ExecutionUncertain):
+                                await caller.ask(channel, "stay queued", operation_id="once", timeout=5)
+                            runs = [post for post in posts if post[0].endswith("/v1/runs")]
+                            assert len(runs) == 1
+                            context_id = runs[0][1]["X-Hermes-Run-Context-Id"]
+                            with pytest.raises(NetworkBudgetExceeded):
+                                await caller.ask(channel, "fresh", operation_id="fresh", timeout=5)
+                            terminal["ready"] = True
+                            # HTTP readback verifies its valid store; Network independently
+                            # rejects the completed output against its own project grant.
+                            with pytest.raises(ExecutionTerminated, match="invalid artifact output"):
+                                await architect.reconcile(context_id)
+                            with pytest.raises(NetworkBudgetExceeded) as stale:
+                                await architect.reconcile(context_id)
+                            assert stale.value.code == "stale_context"
+                            snapshot.write_bytes(b"verified")
+                            repaired_store = ArtifactStore(tmp_path / "receiver-store",
+                                                           project_roots={"project": (approved,)})
+                            repaired_store.publish("project", report, media_type="text/plain")
+                        # Terminal marking and lease release must survive a reconnect.
+                        async with Network.connect(hub.url, name="architect", token="b", allowed_peers={"caller"},
+                                                   executor=runtime, ledger_path=tmp_path / "architect.sqlite",
+                                                   artifact_store=repaired_store, limits=limits):
+                            with pytest.raises(ExecutionUncertain):
+                                await caller.ask(channel, "stay queued", operation_id="once", timeout=5)
+                            assert len([post for post in posts if post[0].endswith("/v1/runs")]) == 1
+                            # One shared execution/transport slot proves both leases freed.
+                            reply = await caller.ask(channel, "fresh", operation_id="fresh", timeout=5)
+                            assert reply.text == "Verified"
+                            assert reply.artifact_refs == (ref,)
+                            assert len([post for post in posts if post[0].endswith("/v1/runs")]) == 2
+        asyncio.run(scenario())
