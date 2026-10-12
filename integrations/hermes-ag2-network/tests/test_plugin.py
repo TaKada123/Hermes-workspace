@@ -56,7 +56,8 @@ def test_plugin_registers_five_profile_bound_tools_and_uses_real_bridge(tmp_path
                 executor=architect, ledger_path=tmp_path / "architect.sqlite",
             ):
                 async with Network.connect(
-                    hub.url, name="caller", token=keys["caller"], allowed_peers={"architect"},
+                    hub.url, name="caller", token=keys["caller"], allowed_peers=set(),
+                    project_peers={"plugin-test": {"architect"}},
                     ledger_path=tmp_path / "caller.sqlite",
                 ) as caller:
                     async with ToolAPI(caller, "profile-tool-secret", port=0) as tool_api:
@@ -84,6 +85,11 @@ def test_plugin_registers_five_profile_bound_tools_and_uses_real_bridge(tmp_path
                         peers = await call("agent_network_peers")
                         assert peers["ok"] is True
                         assert [peer["name"] for peer in peers["result"]] == ["architect"]
+                        project_peers = await call("agent_network_peers", {"project_id": "plugin-test"})
+                        assert [peer["name"] for peer in project_peers["result"]] == ["architect"]
+                        assert await call("agent_network_peers", {"project_id": "other-project"}) == {
+                            "ok": True, "result": [],
+                        }
 
                         opened = await call("agent_network_open", {"peer": "architect", "project_id": "plugin-test"})
                         channel_id = opened["result"]["channel_id"]
@@ -132,5 +138,19 @@ def test_plugin_registers_five_profile_bound_tools_and_uses_real_bridge(tmp_path
                         invalid_endpoint = PluginContext("caller", "https://example.org")
                         plugin.register(invalid_endpoint)
                         assert not invalid_endpoint.tools["agent_network_peers"]["check_fn"]()
+
+                        captured = {}
+                        def capture_request(_ctx, _method, _path, **options):
+                            captured.update(options)
+                            return {"ok": True, "profile": "caller", "result": []}
+
+                        monkeypatch.setattr(plugin, "request", capture_request)
+                        task_scoped = json.loads(await asyncio.to_thread(
+                            context.tools["agent_network_peers"]["handler"], {}, task_id="run-session-id",
+                            run_context_id="a" * 64,
+                        ))
+                        assert task_scoped["ok"] is True
+                        assert "task_id" not in captured
+                        assert captured["run_context_id"] == "a" * 64
 
     asyncio.run(scenario())

@@ -1,19 +1,25 @@
 """Authenticated HTTP executor: provider/model/tool resolution stays in Hermes."""
 import asyncio
-import hashlib
-import json
+import math
 import re
 from urllib.parse import quote, urlsplit
+import time
 import uuid
 
 import httpx
 
-from .types import ExecutionRequest, ExecutionResult, ExecutionUncertain
+from .types import ExecutionRequest, ExecutionResult, ExecutionTerminated, ExecutionUncertain, network_execution_context_id
 
 
 class HermesHTTPExecutor:
     def __init__(self, url: str, *, profile: str, token: str, deadline: float = 300,
                  poll_interval: float = 0.2):
+        if (isinstance(deadline, bool) or not isinstance(deadline, (int, float))
+                or not math.isfinite(deadline) or not 0 < deadline <= 300):
+            raise ValueError("executor deadline must be greater than zero and at most 300 seconds")
+        if (isinstance(poll_interval, bool) or not isinstance(poll_interval, (int, float))
+                or not math.isfinite(poll_interval) or poll_interval <= 0):
+            raise ValueError("poll interval must be finite and positive")
         parsed = urlsplit(url)
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("API URL must not contain credentials/query/fragment")
@@ -36,15 +42,22 @@ class HermesHTTPExecutor:
 
     @staticmethod
     def _idempotency_key(request: ExecutionRequest) -> str:
-        identity = json.dumps([request.profile, request.project_id, request.channel_id, request.operation_id],
-                              separators=(",", ":"))
-        return hashlib.sha256(identity.encode()).hexdigest()
+        return network_execution_context_id(
+            request.profile, request.project_id, request.channel_id, request.operation_id,
+        )
 
     async def __call__(self, request: ExecutionRequest) -> ExecutionResult:
         if request.profile != self.profile:
             raise PermissionError("executor cannot execute another profile")
+        deadline = self.deadline
+        if request.deadline_at:
+            if isinstance(request.deadline_at, bool) or not math.isfinite(request.deadline_at):
+                raise ExecutionUncertain("network request deadline is invalid")
+            deadline = min(deadline, request.deadline_at - time.time())
+        if deadline <= 0:
+            raise ExecutionUncertain("network request deadline expired; no automatic retry")
         try:
-            async with asyncio.timeout(self.deadline):
+            async with asyncio.timeout(deadline):
                 return await self._execute(request)
         except (httpx.HTTPError, TimeoutError) as exc:
             # Do not echo response bodies or secrets in the exception; do not
@@ -73,20 +86,35 @@ class HermesHTTPExecutor:
             error = response.json().get("error", {})
             if not isinstance(error, dict) or error.get("code") != "session_exists":
                 response.raise_for_status()
-        # The stored current ID may be stale if Hermes rotated while the
-        # bridge was down. Resolve from the stable origin first, then verify
-        # the canonical current target before sending a new turn.
+        # Resolve from the stable origin first, then verify the canonical current
+        # target before sending a new turn.
         resolved_session_id = await self._resolve_session_tip(origin_id)
         session = await self.http.get(f"api/sessions/{resolved_session_id}")
         session.raise_for_status()
         if session.json().get("session", {}).get("id") != resolved_session_id:
             raise ExecutionUncertain("Hermes session identity mismatch")
+        network_context_id = self._idempotency_key(request)
+        if request._task_context is not None and request._task_context.network_context_id != network_context_id:
+            raise ExecutionUncertain("network execution context identity mismatch")
         run_response = await self.http.post("v1/runs", headers={
-            "Idempotency-Key": self._idempotency_key(request),
+            "Idempotency-Key": network_context_id,
+            "X-Hermes-Run-Context-Id": network_context_id,
             "X-Hermes-Session-Key": "ag2:" + origin_id,
         }, json={"session_id": resolved_session_id, "input": request.text})
         run_response.raise_for_status()
         run_id = run_response.json()["run_id"]
+        if request._task_context is not None:
+            request._task_context.run_id = run_id
+        return await self._read_run(request, run_id, wait=True)
+
+    async def reconcile(self, request: ExecutionRequest) -> ExecutionResult:
+        context = request._task_context
+        if context is None or not context.run_id:
+            raise ExecutionUncertain("Run ID unavailable; runtime/operator evidence required")
+        return await self._read_run(request, context.run_id, wait=False)
+
+    async def _read_run(self, request: ExecutionRequest, run_id: str, *, wait: bool) -> ExecutionResult:
+        origin_id = request.session_origin_id or request.session_current_id
         while True:
             response = await self.http.get(f"v1/runs/{quote(run_id, safe='')}")
             response.raise_for_status()
@@ -94,12 +122,14 @@ class HermesHTTPExecutor:
             status = run["status"]
             if status == "completed":
                 if run.get("completed") is False or run.get("partial") or run.get("interrupted"):
-                    raise ExecutionUncertain("Hermes returned an incomplete terminal run")
+                    raise ExecutionTerminated("Hermes returned an incomplete terminal run")
                 output = run.get("output")
                 if not isinstance(output, str):
-                    raise ExecutionUncertain("Hermes completed without textual output")
+                    raise ExecutionTerminated("Hermes completed without textual output")
                 tip_id = await self._resolve_session_tip(origin_id)
                 return ExecutionResult(output, tip_id, run_id)
             if status in {"failed", "cancelled", "interrupted"}:
-                raise ExecutionUncertain("Hermes run ended without completion; no automatic retry")
+                raise ExecutionTerminated("Hermes run ended without completion; no automatic retry")
+            if not wait:
+                raise ExecutionUncertain("Hermes run is not terminal; admission remains held")
             await asyncio.sleep(self.poll_interval)

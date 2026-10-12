@@ -9,12 +9,12 @@ from pathlib import Path
 import secrets
 import signal
 import stat
-import uuid
 
 from .executor import HermesHTTPExecutor
 from .hub import network_hub
 from .network import Network
 from .tool_api import ToolAPI
+from .types import NetworkLimits
 
 
 PROBE_TEXT = "AG2-HERMES-TRACER"
@@ -63,10 +63,28 @@ async def serve_hub(args):
         await until_stopped()
 
 
+def project_peer_grants(values: list[str]) -> dict[str, set[str]]:
+    grants: dict[str, set[str]] = {}
+    for value in values:
+        project_id, separator, peer = value.partition("=")
+        if not separator or not project_id.strip() or not peer.strip():
+            raise ValueError("project peer grant must use PROJECT=PEER")
+        grants.setdefault(project_id.strip(), set()).add(peer.strip())
+    return grants
+
+
 async def serve_bridge(args):
+    limits = NetworkLimits(
+        max_hops=args.max_hops, max_turns=args.max_turns, max_pending=args.max_pending,
+        request_timeout=args.timeout, max_active=args.max_active,
+    )
+    project_peers = project_peer_grants(args.project_peer)
+    if not args.allow_peer and not project_peers:
+        raise ValueError("at least one --allow-peer or --project-peer grant is required")
     async with HermesHTTPExecutor(args.api_url, profile=args.name, token=token(args, "api"), deadline=args.timeout) as executor:
         async with Network.connect(args.hub_url, name=args.name, token=token(args, "hub"),
-            allowed_peers=set(args.allow_peer), executor=executor, ledger_path=Path(args.ledger)) as network:
+            allowed_peers=set(args.allow_peer), executor=executor, ledger_path=Path(args.ledger),
+            project_peers=project_peers, limits=limits, control_path=Path(args.control_db)) as network:
             if args.tool_api_port is None:
                 if args.tool_api_key_file:
                     raise ValueError("--tool-api-key-file requires --tool-api-port")
@@ -86,7 +104,7 @@ async def smoke(args):
     caller_name = "tracer-caller"
     if args.profile == caller_name:
         raise ValueError("profile conflicts with smoke caller")
-    operation_id = args.operation_id or "smoke-" + uuid.uuid4().hex
+    operation_id = args.operation_id
     keys = {caller_name: secrets.token_urlsafe(32), args.profile: secrets.token_urlsafe(32)}
     root = Path(args.store)
     async with HermesHTTPExecutor(args.api_url, profile=args.profile, token=token(args, "api"), deadline=args.timeout) as executor:
@@ -136,10 +154,21 @@ def main():
     bridge = commands.add_parser("bridge", help="one enrolled Hermes profile, no AG2 model")
     bridge.add_argument("--hub-url", required=True)
     bridge.add_argument("--name", required=True)
-    bridge.add_argument("--allow-peer", action="append", required=True)
+    bridge.add_argument("--allow-peer", action="append", default=[],
+                        help="profile-wide enrolled peer; project grants override this list")
+    bridge.add_argument("--project-peer", action="append", default=[], metavar="PROJECT=PEER",
+                        help="peer grant for one project; repeat for additional peers")
     bridge.add_argument("--ledger", required=True)
+    bridge.add_argument("--control-db", required=True,
+                        help="same shared admission SQLite path for every controlled participant (same host)")
+    bridge.add_argument("--max-active", type=int, default=16,
+                        help="global active/uncertain Run capacity; identical for every participant")
     bridge.add_argument("--api-url", required=True, help="multiplex base URL, without /p/profile")
-    bridge.add_argument("--timeout", type=float, default=300)
+    bridge.add_argument("--timeout", type=float, default=300,
+                        help="maximum request/executor deadline in seconds (0 < value <= 300)")
+    bridge.add_argument("--max-hops", type=int, default=8)
+    bridge.add_argument("--max-turns", type=int, default=16)
+    bridge.add_argument("--max-pending", type=int, default=16)
     bridge.add_argument("--tool-api-port", type=int,
                         help="optional authenticated loopback tool API port (0 selects an ephemeral port)")
     bridge.add_argument("--tool-api-key-file", help="owner-only bearer key file for the optional Hermes plugin")
@@ -149,7 +178,8 @@ def main():
     probe.add_argument("--api-url", required=True)
     probe.add_argument("--profile", required=True)
     probe.add_argument("--store", required=True)
-    probe.add_argument("--operation-id")
+    probe.add_argument("--operation-id", required=True,
+                       help="stable ID; reuse it with the same payload if retrying an uncertain request")
     probe.add_argument("--timeout", type=float, default=300)
     credential_options(probe, "api")
     args = parser.parse_args()

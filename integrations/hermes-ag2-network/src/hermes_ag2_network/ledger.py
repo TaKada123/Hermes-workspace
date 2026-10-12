@@ -5,7 +5,8 @@ from pathlib import Path
 import sqlite3
 import uuid
 
-from .types import ExecutionRequest, ExecutionResult, ExecutionUncertain
+from .types import (ExecutionBudget, ExecutionRequest, ExecutionResult, ExecutionTaskContext,
+                    ExecutionUncertain, RequestNotAdmitted, network_execution_context_id)
 
 
 class Ledger:
@@ -39,6 +40,8 @@ class Ledger:
                     "(profile,project_id,channel_id,operation_id,payload,result) VALUES (?,?,?,?,?,?)",
                     (scope["profile"], scope["project_id"], scope["channel_id"],
                      scope["operation_id"], payload, result))
+        self.db.execute("CREATE TABLE IF NOT EXISTS held_execution (profile TEXT PRIMARY KEY, request TEXT NOT NULL)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS terminated_operations (context_id TEXT PRIMARY KEY)")
         self.db.commit()
 
     def channel(self, profile: str, peer: str, project_id: str) -> str | None:
@@ -85,10 +88,30 @@ class Ledger:
             self.db.execute("UPDATE hermes_sessions SET current_id=? WHERE profile=? AND project_id=? AND channel_id=?",
                             (current_id, profile, project_id, channel_id))
 
+    def cached(self, request: ExecutionRequest) -> ExecutionResult | None:
+        payload = json.dumps({key: getattr(request, key) for key in (
+            "profile", "project_id", "channel_id", "operation_id", "text",
+        )}, sort_keys=True)
+        scope = (request.profile, request.project_id, request.channel_id, request.operation_id)
+        row = self.db.execute(
+            "SELECT payload,result FROM scoped_operations "
+            "WHERE profile=? AND project_id=? AND channel_id=? AND operation_id=?", scope,
+        ).fetchone()
+        if not row:
+            return None
+        if row[0] != payload:
+            raise RequestNotAdmitted("operation_id reused with different input in this project channel")
+        if row[1] is None:
+            raise ExecutionUncertain("prior execution unsettled; explicit operator reconciliation required")
+        return ExecutionResult(**json.loads(row[1]))
+
     def admit(self, request: ExecutionRequest) -> ExecutionResult | None:
         # Session IDs are derived from the durable channel lineage, not from
         # the operation payload. Exclude them so replaying an already-finished
         # operation after rotation remains an idempotent read of its result.
+        cached = self.cached(request)
+        if cached is not None:
+            return cached
         payload = json.dumps({key: getattr(request, key) for key in (
             "profile", "project_id", "channel_id", "operation_id", "text",
         )}, sort_keys=True)
@@ -99,7 +122,7 @@ class Ledger:
                 "WHERE profile=? AND project_id=? AND channel_id=? AND operation_id=?", scope).fetchone()
             if row:
                 if row[0] != payload:
-                    raise ValueError("operation_id reused with different input in this project channel")
+                    raise RequestNotAdmitted("operation_id reused with different input in this project channel")
                 if row[1] is None:
                     raise ExecutionUncertain("prior execution unsettled; explicit operator reconciliation required")
                 return ExecutionResult(**json.loads(row[1]))
@@ -112,6 +135,49 @@ class Ledger:
                 "UPDATE scoped_operations SET result=? WHERE profile=? AND project_id=? AND channel_id=? AND operation_id=?",
                 (json.dumps(asdict(result)), request.profile, request.project_id,
                  request.channel_id, request.operation_id))
+
+    def hold(self, request: ExecutionRequest):
+        with self.db:
+            self.db.execute("INSERT INTO held_execution VALUES (?,?) ON CONFLICT(profile) "
+                            "DO UPDATE SET request=excluded.request",
+                            (request.profile, json.dumps(asdict(request))))
+
+    def held(self, profile: str) -> ExecutionRequest | None:
+        row = self.db.execute("SELECT request FROM held_execution WHERE profile=?", (profile,)).fetchone()
+        if row is None:
+            rows = self.db.execute("SELECT payload FROM scoped_operations WHERE profile=? AND result IS NULL "
+                                   "ORDER BY rowid", (profile,)).fetchall()
+            terminal = {row[0] for row in self.db.execute("SELECT context_id FROM terminated_operations")}
+            data = next((payload for payload in (json.loads(row[0]) for row in rows)
+                         if network_execution_context_id(profile, payload["project_id"], payload["channel_id"],
+                                                         payload["operation_id"]) not in terminal), None)
+            if data is None:
+                return None
+            origin, current = self.session(profile, data["project_id"], data["channel_id"])
+            context = ExecutionTaskContext(
+                network_execution_context_id(profile, data["project_id"], data["channel_id"], data["operation_id"]),
+                (profile,), ExecutionBudget(0.0, 0, 0))
+            request = ExecutionRequest(**data, session_origin_id=origin, session_current_id=current,
+                                       _task_context=context)
+            self.hold(request)
+            return request
+        data = json.loads(row[0])
+        context = data.pop("_task_context")
+        data["_task_context"] = ExecutionTaskContext(
+            context["network_context_id"], tuple(context["trace"]),
+            ExecutionBudget(**context["budget"]), context.get("run_id", ""))
+        return ExecutionRequest(**data)
+
+    def is_terminated(self, context_id: str) -> bool:
+        return self.db.execute("SELECT 1 FROM terminated_operations WHERE context_id=?", (context_id,)).fetchone() is not None
+
+    def terminate(self, context_id: str):
+        with self.db:
+            self.db.execute("INSERT OR IGNORE INTO terminated_operations VALUES (?)", (context_id,))
+
+    def release(self, profile: str):
+        with self.db:
+            self.db.execute("DELETE FROM held_execution WHERE profile=?", (profile,))
 
     def close(self):
         self.db.close()

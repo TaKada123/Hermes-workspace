@@ -7,6 +7,9 @@ import select
 import subprocess
 import sys
 
+import pytest
+from ag2.network import ProtocolError
+
 from hermes_ag2_network import Network
 from test_http_executor import hermes_api
 
@@ -42,7 +45,10 @@ def test_separate_hub_and_profile_bridge_cli(tmp_path: Path):
     api_token.chmod(0o600)
     with hermes_api() as (url, _):
         with command("hub", "--store", str(tmp_path / "hub"), "--keys-file", str(keys), "--port", "0") as hub:
-            with command("bridge", "--hub-url", hub["url"], "--name", "architect", "--allow-peer", "caller",
+            with command("bridge", "--hub-url", hub["url"], "--name", "architect",
+                         "--project-peer", "cli-tracer=caller", "--max-hops", "1",
+                         "--max-turns", "1", "--max-pending", "1", "--timeout", "5",
+                         "--control-db", str(tmp_path / "network-admission.sqlite"),
                          "--ledger", str(tmp_path / "architect.sqlite"), "--api-url", url,
                          "--api-key-file", str(api_token), "--hub-key-file", str(hub_token)) as bridge:
                 assert bridge == {"ready": "bridge", "profile": "architect"}
@@ -54,4 +60,6 @@ def test_separate_hub_and_profile_bridge_cli(tmp_path: Path):
                         reply = await caller.ask(channel, "Only this new message.", operation_id="cli-01", timeout=5)
                         assert reply.text == "HTTP runtime replied."
                         assert len(await caller.history(channel)) == 2
+                        with pytest.raises(ProtocolError, match="invite_rejected"):
+                            await caller.open(peer="architect", project_id="not-granted")
                 asyncio.run(scenario())

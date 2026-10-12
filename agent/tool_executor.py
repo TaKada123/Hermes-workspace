@@ -1686,6 +1686,7 @@ def _resolve_sequential_dispatch(agent, ref: _ToolCallRef, messages: list) -> _S
                 function_name,
                 next_args,
                 effective_task_id,
+                run_context_id=getattr(agent, "_active_run_context_id", None),
                 tool_call_id=tool_call_id,
                 session_id=agent.session_id or "",
                 turn_id=getattr(agent, "_current_turn_id", "") or "",

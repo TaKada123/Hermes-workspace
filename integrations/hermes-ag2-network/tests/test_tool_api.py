@@ -27,7 +27,8 @@ def test_local_tool_api_authenticates_and_exposes_network_operations(tmp_path: P
                 executor=architect, ledger_path=tmp_path / "architect.sqlite",
             ):
                 async with Network.connect(
-                    hub.url, name="caller", token=keys["caller"], allowed_peers={"architect"},
+                    hub.url, name="caller", token=keys["caller"], allowed_peers=set(),
+                    project_peers={"api-test": {"architect"}},
                     ledger_path=tmp_path / "caller.sqlite",
                 ) as caller:
                     async with ToolAPI(caller, "caller-tools-key", port=0) as tool_api:
@@ -40,6 +41,16 @@ def test_local_tool_api_authenticates_and_exposes_network_operations(tmp_path: P
                             peers = await client.get(tool_api.url + "/v1/peers", headers=headers)
                             assert peers.status_code == 200
                             assert [peer["name"] for peer in peers.json()["result"]] == ["architect"]
+                            project_peers = await client.get(
+                                tool_api.url + "/v1/peers", headers=headers,
+                                params={"project_id": "api-test"},
+                            )
+                            assert [peer["name"] for peer in project_peers.json()["result"]] == ["architect"]
+                            denied_peers = await client.get(
+                                tool_api.url + "/v1/peers", headers=headers,
+                                params={"project_id": "ungranted-project"},
+                            )
+                            assert denied_peers.json()["result"] == []
 
                             denied = await client.post(tool_api.url + "/v1/open", headers=headers,
                                                        json={"peer": "unknown", "project_id": "api-test"})
@@ -53,6 +64,12 @@ def test_local_tool_api_authenticates_and_exposes_network_operations(tmp_path: P
                                                        json={"peer": "architect", "project_id": "api-test"})
                             assert opened.status_code == 200
                             channel_id = opened.json()["result"]["channel_id"]
+
+                            missing_operation = await client.post(tool_api.url + "/v1/send", headers=headers, json={
+                                "channel_id": channel_id, "text": "Must supply a stable operation ID.",
+                            })
+                            assert missing_operation.status_code == 400
+                            assert received == []
 
                             asked = await client.post(tool_api.url + "/v1/ask", headers=headers, json={
                                 "channel_id": channel_id,

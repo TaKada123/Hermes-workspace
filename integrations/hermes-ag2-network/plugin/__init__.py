@@ -24,9 +24,11 @@ _STRING = {"type": "string"}
 TOOLS = (
     (
         "agent_network_peers",
-        "List specialists enrolled for this Hermes profile.",
-        _schema("agent_network_peers", "List specialists enrolled for this Hermes profile.", {}, []),
-        "GET", "/v1/peers", None, None,
+        "List specialists enrolled for this Hermes profile or project.",
+        _schema("agent_network_peers", "List specialists enrolled for this Hermes profile or project.", {
+            "project_id": {**_STRING, "description": "Optional project scope to apply its peer grants."},
+        }, []),
+        "GET", "/v1/peers", ["project_id"], None,
     ),
     (
         "agent_network_open",
@@ -72,13 +74,14 @@ TOOLS = (
 def register(ctx) -> None:
     """Register five optional network tools using only public PluginContext methods."""
     def handler_for(method: str, path: str, fields: list[str] | None, timeout_field: str | None):
-        def handler(args: dict | None = None, **_kwargs: Any) -> str:
+        def handler(args: dict | None = None, **kwargs: Any) -> str:
             args = args if isinstance(args, dict) else {}
             body = {key: args[key] for key in fields or [] if key in args} if method == "POST" else {}
             query = {key: args[key] for key in fields or [] if key in args} if method == "GET" else {}
             if timeout_field and timeout_field in args:
                 body[timeout_field] = args[timeout_field]
-            result = request(ctx, method, path, payload=body or None, query=query or None)
+            result = request(ctx, method, path, payload=body or None, query=query or None,
+                             run_context_id=kwargs.get("run_context_id"))
             return json.dumps(result, ensure_ascii=False)
         return handler
 

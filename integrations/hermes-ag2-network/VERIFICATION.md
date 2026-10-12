@@ -108,4 +108,330 @@ A real Coding profile made two completed API Runs in one newly created Coding se
 {"live":true,"coding_session_id":"ag2-fb461bd21d8b43418bc5ba9d06c95091","channel_id":"18dd9b4d5f313ba85f89ff7f45b630b7","coding_network_tool_calls":["agent_network_peers","agent_network_open","agent_network_ask","agent_network_ask"],"operation_ids":["ticket18-live-design-review-context-boundary","ticket18-live-design-review-context-gap-followup-20261012"],"request_count":2,"reply_count":2,"reply_session_ids":["ag2-a041939b7e13503baedccbe258685eee"],"reply_run_ids":["run_4974f46430364f1d8eae2df219184078","run_378e9a1ef64744fa95b0267df4c67dd3"],"architect_run_statuses":["completed","completed"],"correlated_pairs":true,"coding_messages_count":21,"coding_final_answer_chars":672}
 ```
 
-Profile-scoped plugin copies/configuration and distinct owner-only tool API credentials are in place for Coding and Architect, as authorized. The Gateway was not restarted; it reloaded the plugin and deferred the new tool schema to fresh sessions, which the live run used. Temporary Hub/Bridge processes were stopped after verification. Until ticket #20 installs/starts the optional services, the enabled network tools will report the bridge unavailable. Ticket #18 still needs independent Standards/Spec review, fixes if any, and a commit; no push or main change has occurred.
+Profile-scoped plugin copies/configuration and distinct owner-only tool API credentials are in place for Coding and Architect, as authorized. The Gateway was not restarted; it reloaded the plugin and deferred the new tool schema to fresh sessions, which the live run used. Temporary Hub/Bridge processes were stopped after verification. Until ticket #20 installs/starts the optional services, the enabled network tools will report the bridge unavailable. Ticket #18 is complete: review passed, commit `e98dd057` is on the integration branch, and issue #18 is closed; no push or main change occurred.
+
+## Ticket 19: pre-independent-review receipts (superseded acceptance assessment)
+
+Current local receipts are from `/home/vottak/Проекты/Hermes-workspace-wt/ag2-network-bridge`, branch `feat/ag2-network-bridge`, uncommitted work on base `e98dd05728e2a3d09d9a2e26d5d21edc6c6f83c3`. They do not claim remote CI or new live-model E2E acceptance.
+
+### Deadline diagnosis: actual RED → GREEN
+
+The original `test_propagated_deadline_holds_timed_out_run_without_reposting` passed in isolation and in a 12-worker baseline run during this follow-up; its exact historical failure was not reproduced. Its 0.2-second wall-clock bound violated the project's timing-test policy. A deterministic public-seam regression, `test_caller_deadline_after_admission_is_uncertain_and_retry_does_not_execute`, first failed with **TimeoutError** at `Network.ask` after the executor's admission event. Command:
+
+```sh
+HERMES_PYTHON=/home/vottak/.hermes/cache/scratch/ag2-ticket18-env/bin/python \
+  TMPDIR=/home/vottak/.hermes/cache/scratch scripts/run_tests.sh -j2 --file-retries 0 \
+  integrations/hermes-ag2-network/tests/test_safety_limits.py -k caller_deadline --tb=short
+```
+
+Actual RED: **1 failed, 7 deselected**, exit 1; `/home/vottak/.hermes/cache/scratch/ag2-ticket19-caller-red.log`. Converting post-submission timeout to `ExecutionUncertain` exposed a second actual failure: a late status from the first delivery incorrectly satisfied the retry waiter and failed causation validation. Per-operation reply queues now discard receipts for other delivery IDs and await the exact posted request's `causation_id`. Final targeted GREEN: **1 passed, 7 deselected**, exit 0; `ag2-ticket19-caller-green.log` in the same scratch directory. The regression keeps the assertion that the operation executes once.
+
+The HTTP deadline fixture now uses a 2-second recipient cap and 5-second caller cap, following the project's minimum wall-clock bound; it still requires `ExecutionUncertain` on both attempts and exactly one admitted HTTP Run POST. A second parameter closes the HTTP connection after admitting the Run but before returning its ID: this uncertain submit also stays held, with no second POST. The reconnect test's former `(ExecutionUncertain, TimeoutError)` allowance was tightened to **ExecutionUncertain only**.
+
+### Current canonical verification
+
+```sh
+HERMES_PYTHON=/home/vottak/.hermes/cache/scratch/ag2-ticket18-env/bin/python \
+  TMPDIR=/home/vottak/.hermes/cache/scratch scripts/run_tests.sh -j2 --file-retries 0 \
+  integrations/hermes-ag2-network/tests/ --tb=short
+
+HERMES_PYTHON="$PWD/.venv-network-tests/bin/python" \
+  TMPDIR=/home/vottak/.hermes/cache/scratch scripts/run_tests.sh -j4 --file-retries 0 \
+  tests/test_dispatch_session_id.py tests/gateway/test_api_server_run_context.py \
+  tests/gateway/test_api_server_runs.py tests/hermes_cli/test_profiles.py \
+  tests/agent/test_memory_store_v2.py --tb=short
+```
+
+- Complete standalone integration suite: **12 files, 23 passed, 0 failed**, no retries. Actual output: `/home/vottak/.hermes/cache/scratch/ag2-ticket19-integration-final.log`.
+- Core regression slice: **5 files, 273 passed, 0 failed, 3 Windows-only skipped**, 47.3 seconds. Actual output: `/home/vottak/.hermes/cache/scratch/ag2-ticket19-core-final.log`.
+- Final repeat of the three dispatch/API-run regression files with `-j2 --file-retries 0`: **78 passed, 0 failed**, 27.6 seconds; `ag2-ticket19-run-context-final.log` in scratch.
+- Before adding the second memory-config parameter, the corrected suite also passed with **12 workers: 22 passed, 0 failed**, no retries (`ag2-ticket19-integration-stress.log`). This is a separate stress receipt, not the final suite count.
+- Initial use of the old `ag2-session-lineage-env` failed collection because its editable package pointed at a different worktree. It was not counted as a test verdict; the commands above use the interpreter verified to import this checkout.
+
+### Pre-review evidence (does not establish AC4/AC5; see follow-up below)
+
+| Ticket criterion | Current evidence |
+| --- | --- |
+| Simultaneous projects have disjoint sessions and controlled history | `test_projects_have_disjoint_channels_sessions_and_history_access`: concurrent distinct channels/session IDs; peer/project grant denial; foreign Hub history denied. |
+| Same operation does not run twice, including reconnect and uncertain submit | Saved-result reconnect replay, unsettled reconnect, caller-deadline retry and HTTP lost-submit-response tests; same scoped ID retains one execution/Run POST. |
+| Potentially executed interrupted work is not automatically resubmitted | Held ledger survives retries/reconnect; terminal-WAL recovery does not execute stranded work; HTTP queued deadline and lost response both produce held status. |
+| Auth, allowlists, hop/turn/concurrency and timeout limits | Tool API/plugin authorization tests; project grants; nested-cycle and hop/turn tests; pending-cap rejection and serialized execution; deadline regressions. |
+| Backend settings and private stores remain unchanged | Private-profile fixture runs with both `memory.backend: file` and `sqlite_v2`; configuration, MEMORY.md, USER.md and SQLite sentinel bytes remain unchanged, absent from WAL/ledgers/history. Core SQLite V2/profile regressions pass. Read-only live config lookup plus the canonical `resolve_memory_backend` returned `coding=file`, `architect=file`; no live private stores were read or copied. |
+
+Opaque `run_context_id` remains separate from session-scoped `task_id`; API-run binding/restoration and handler dispatch are covered by the core slice. Core header parsing/context propagation is generic to authenticated Runs, not an import of the bridge. Stable caller-supplied operation IDs are required; conflicting input under a reused scoped ID is refused.
+
+### Static checks and review boundaries
+
+```sh
+PATH="$PWD/.venv-network-tests/bin:$PATH" .venv-network-tests/bin/python scripts/check \
+  --only health,ruff --base e98dd05728e2a3d09d9a2e26d5d21edc6c6f83c3
+.venv-network-tests/bin/python -m ruff check integrations/hermes-ag2-network
+.venv-network-tests/bin/python -m ty check \
+  --python /home/vottak/.hermes/cache/scratch/ag2-ticket18-env \
+  --project integrations/hermes-ag2-network integrations/hermes-ag2-network/src \
+  integrations/hermes-ag2-network/tests --output-format concise
+```
+
+All scoped checks passed. The working-tree health ratchet reports **0 blocking, 0 advisory** against the stated base. Both working-tree and staged `git diff --check` passed. The complete `scripts/check --base <same base>` was also run and failed on unrelated existing findings: BOM-intolerant read at `agent/memory_downgrade.py:207`, literal system-temp paths at `docs/memv2-integration-report.md:11,79`, and the profile-archive guard scanning `.venv-network-tests/.../dateutil-zoneinfo.tar.gz`. No suppression or unrelated file edits were made; actual output is `ag2-ticket19-check-baseline.log` in scratch.
+
+The full previous two-axis review was retrieved from session `20261011_194919_fb6b15`, message 19247. Its claimed unchecked criteria at VERIFICATION lines 9–20 refer in fact to the ticket source, not this receipt document; the ticket/remote checkboxes remain intentionally unchanged pending final acceptance. Fresh read-only backend evidence above addresses the historical-only verification concern. The Standards objection about in-tree third-party integration placement remains a policy decision: `CONTRIBUTING.md:88–107` requires a separate plugin repository. This follow-up neither invents an exception nor moves/deletes the existing integration; final review must resolve that placement question. The data-clump/shotgun-surgery observations remain judgement calls, not verified behavior defects.
+
+No live profiles, backend flags, private memory stores, credentials, existing sessions, Gateway, services or runtime configuration were changed. No commit, push, PR or issue mutation was performed. Remote workflow inspection returned only the existing import/MEMV2/Dependabot workflows and **no runs on `feat/ag2-network-bridge`**; the local AG2 workflow has not been published. GitHub CI on these uncommitted changes cannot run without an authorized publication step. The monorepo full suite is not claimed; final independent review, placement decision, commit and remote CI remain outstanding.
+
+## Ticket 19: prior independent-review correction — pre-transport-cap evidence
+
+Scope: same worktree and unchanged HEAD `e98dd05728e2a3d09d9a2e26d5d21edc6c6f83c3`.
+The complete available review logs `deleg_80d3734c/task-0.log` and `task-1.log`, spec,
+ticket and root/test/plugin guides were read. Their embedded tool-output summaries are
+truncated by the original logger; no fuller review text is invented here. Existing dirty
+changes were preserved. No core runtime code, live home/profile, secret or memory was
+modified by this correction; no commit, push or issue mutation was performed.
+
+### Tight feedback loops and actual failures
+
+Matt `tdd` + `diagnosing-bugs` at the already agreed public Network/ToolAPI, HTTP Run,
+and production memory store/config boundaries:
+
+- Retained-context RED, before its fix: canonical `test_retained_context.py` failed
+  **DID NOT RAISE NetworkBudgetExceeded** on a foreign supplied context immediately
+  after an uncertain execution. Receipt `ag2-review-retained-red.log`; GREEN
+  `ag2-review-retained-green.log`. Context cleanup in `finally`, await-only serialization,
+  and accepting supplied IDs while idle were the verified causes. Held request/context
+  metadata now persist and fresh admissions fail closed until explicit terminal readback.
+- Branching RED, before its fix: `test_shared_bounds.py` failed **DID NOT RAISE
+  NetworkBudgetExceeded** inside the root executor after a child and grandchild spent
+  three turns; the caller subsequently timed out. Receipt `ag2-review-branch-red.log`.
+  Copied descendant balances, not an independent shared debit, were the cause. GREEN
+  `ag2-review-branch-green-final.log`: only profiles `a`, `b`, `c` execute for a three-turn
+  tree; a second root branch is refused.
+- Global admission has a separate red-capability **negative control**, not a claimed
+  historical pre-fix TDD run. A scratch-only copy of `admission.py` removed exactly the
+  global capacity check; the different-profile public seam then failed **DID NOT RAISE
+  NetworkBudgetExceeded**. `ag2-review-global-negative-control.diff` proves the mutation;
+  `ag2-review-global-negative-control.log` is RED, and the unchanged production source
+  passes in `ag2-review-global-positive-control.log`. The production worktree was not
+  mutated for this control. Separate Hub plus two CLI bridge processes additionally
+  prove the second profile cannot POST a Run while the first is live/uncertain, including
+  first-bridge disconnect/reconnect (`test_shared_bounds.py`).
+- The initial global-process fixture blocked an in-process Hub's event loop during
+  synchronous child readiness: `ag2-review-bounds-http.log` failed CLI readiness. It was
+  corrected to a separate Hub process; no timeout bound/assertion was weakened.
+- Replacing the generic SQLite sentinel with the real store initially failed because
+  the standalone interpreter lacks core `ruamel.yaml` (`ag2-review-integration-first.log`).
+  A custom pytest `--hermes-core-python` option now runs the owning fixture in the existing
+  PM-built core interpreter. The canonical runner requires an explicit `--` before this
+  custom option; the first missing-separator attempt is `ag2-review-memory-first.log`.
+- Reopening V2 for each fixture request changed its own SQLite transaction metadata;
+  the strict private-store byte assertion failed (`ag2-review-memory-green.log`, despite
+  that early filename). The fixture now keeps one actual owning runtime/store alive
+  throughout the bridge scenario, matching a session-start snapshot. Both file and V2
+  pass **without dropping the byte assertion** (`ag2-review-memory-green-final.log`).
+
+All receipt names above resolve under `/home/vottak/.hermes/cache/scratch/`.
+
+### Final commands and results
+
+```sh
+HERMES_PYTHON=/home/vottak/.hermes/cache/scratch/ag2-ticket18-env/bin/python \
+  TMPDIR=/home/vottak/.hermes/cache/scratch scripts/run_tests.sh -j2 --file-retries 0 \
+  integrations/hermes-ag2-network/tests/ -- \
+  --hermes-core-python "$PWD/.venv-network-tests/bin/python" --tb=short
+
+HERMES_PYTHON="$PWD/.venv-network-tests/bin/python" \
+  TMPDIR=/home/vottak/.hermes/cache/scratch scripts/run_tests.sh -j4 --file-retries 0 \
+  tests/test_dispatch_session_id.py tests/gateway/test_api_server_run_context.py \
+  tests/gateway/test_api_server_runs.py tests/hermes_cli/test_profiles.py \
+  tests/agent/test_memory_store_v2.py --tb=short
+
+PATH="$PWD/.venv-network-tests/bin:$PATH" .venv-network-tests/bin/python scripts/check \
+  --only health,ruff --base e98dd05728e2a3d09d9a2e26d5d21edc6c6f83c3
+.venv-network-tests/bin/python -m ruff check integrations/hermes-ag2-network
+.venv-network-tests/bin/python -m ty check \
+  --python /home/vottak/.hermes/cache/scratch/ag2-ticket18-env \
+  --project integrations/hermes-ag2-network integrations/hermes-ag2-network/src \
+  integrations/hermes-ag2-network/tests --output-format concise
+```
+
+- Full integration: **14 files, 31 passed, 0 failed**, 37.7 seconds, zero retries;
+  `ag2-review-integration-final-receipt.log`. The runner's `~25` is a static discovery
+  estimate, not the actual parametrized total; the terminal summary is 31.
+- Relevant core: **5 files, 273 passed, 0 failed, 3 Windows-only skips**, 42.3 seconds;
+  `ag2-review-core-check.log`. Core code was not changed after that run.
+- Ruff, ty, health pass; health **0 blocking, 0 advisory**, untracked files included;
+  `ag2-review-static-verified.log`. Initial nullable-pipe ty errors were fixed by local
+  narrowing, not suppressed. `git diff --check` and `git diff --cached --check` pass.
+- Full root check still fails only on previously recorded BOM read, two literal system-temp
+  paths, and the existing environment's dateutil archive. Receipt
+  `ag2-review-baseline-check-check.log`. No unrelated fixes or exemptions were added.
+
+### What the corrected evidence establishes
+
+- An actual queued HTTP Run survives timeout independently of the bridge await. Its
+  context/ancestry and observed Run ID remain held across bridge reconnect. Unknown,
+  stale and missing supplied contexts cannot turn into fresh roots or join another Run.
+- Explicit GET-only reconciliation refuses live work and releases completed or unsuccessful
+  terminal work. Completed results are cached; unsuccessful terminal operations remain
+  non-retryable. Tests cover `completed`, `failed`, `cancelled`, `interrupted`, fresh work
+  afterwards, and another reconnect without reviving a terminal hold.
+- A same-host shared SQLite authority, not per-profile counters, atomically debits descendant
+  turns and caps active/uncertain admissions across controlled participants/processes.
+  CLI requires `--control-db`; all participants use the same file and `max_active` value.
+- AC5 uses `load_on_disk_store()` with the actual temporary config, asserts the selected
+  `MemoryStoreV2` type, seeds/recalls real typed V2 entries, loads its session-start snapshot,
+  and serves the bridge execution scenario from that owning process. Config and all private
+  store/projection/sidecar bytes remain identical during bridge activity; private fixture
+  contents are absent from response/history/Hub/ledgers/**shared admission DB**. This is a
+  deterministic production-store fixture, not live-model acceptance or a generic facts table.
+- `X-Hermes-Task-Id` had no consumer and was removed from client signature, validation,
+  handler forwarding, header construction and nested tests. Generic core `task_id` remains
+  untouched for terminal/browser continuity. Only the consumed opaque Run-context header
+  is forwarded by this plugin.
+
+### Limits / still not a closure receipt
+
+- At this preceding review, shared authority bounded only Hermes admissions. Reviewer
+  `deleg_ac8ea8d8/task-1.log` then demonstrated that controlled `Network.send` still appended
+  five requests while capacity was held. That material spec-line-45 gap is corrected by
+  the final transport-cap receipt below. Same-host cooperation remains the supported scope;
+  neither arbitrary native traffic nor a fictional multi-host semaphore is claimed.
+- Missing Run ID after lost submit response/crash remains fail-closed and needs authenticated
+  owning-runtime/operator evidence. `reconcile()` cannot discover that ID via its current
+  GET-by-ID seam; it does not resend. Crash gaps across the two bookkeeping databases can
+  leave safe but orphaned leases. There is no automated orphan repair or CLI/ToolAPI
+  reconciliation command in this slice; the explicit seam is `Network.reconcile()`.
+- No new live profile/model run or remote Actions run occurred. Remote CI must use the
+  parent-approved publication path after re-review. The workflow now passes the explicit
+  core fixture interpreter. The complete monorepo suite is not claimed.
+- Separate-plugin-repository placement is a **baseline** policy conflict predating #19;
+  this ticket did not create the existing integration. It was neither moved nor granted
+  an invented exception. Final Standards/Spec review and the parent acceptance decision
+  remain required; no issue checkbox/closure is claimed.
+
+
+## Ticket 19: final controlled-transport correction — current local receipt
+
+Worktree `/home/vottak/Проекты/Hermes-workspace-wt/ag2-network-bridge`; unchanged HEAD
+`e98dd05728e2a3d09d9a2e26d5d21edc6c6f83c3`. Both final reviewer logs
+`deleg_ac8ea8d8/task-{0,1}.log` and the actual scratch transport probe were read. Their
+embedded summaries are truncated by the logger; no missing review text is invented.
+Matt `tdd` / `diagnosing-bugs` were used at the agreed public Network/native transport
+and ToolAPI seams. Spec text and architectural placement were not changed.
+
+### Actual RED → GREEN and lifecycle behavior
+
+- Before implementation, the probe-derived crossparticipant regression failed
+  **DID NOT RAISE NetworkBudgetExceeded** on its first saturated `send`. Canonical runner
+  `-j1 --file-retries 0 .../test_transport_bounds.py --tb=short`, exit 1, receipt
+  `ag2-final-transport-red.log`. Its final completed/failed reconciliation variants pass:
+  five other-participant sends are refused before WAL append, history has no new requests,
+  and only the originally held operation executed. Authenticated terminal reconciliation
+  then permits fresh work without ever re-executing the held operation.
+- The original unmodified reviewer probe was also rerun after the fix. Its expectation
+  that five sends succeed is now invalid: it stops at **line 25, first additional send**,
+  with `NetworkBudgetExceeded: Global controlled network capacity is full`. Expected
+  negative probe exit 1 is recorded in `ag2-final-reviewer-probe-after.log`; it is not
+  counted as a passing suite. The corrected behavioral regression is GREEN.
+- SQLite reserves controlled pending transport **before native submission**, atomically
+  with a fresh root's interaction metadata. Saturated sends and local validation failures
+  do not grow WAL or create root-budget rows. Occupancy is the union of transport and execution context IDs,
+  so converting a submitted request to a Hermes admission does not double-count a slot.
+  `max_active` remains common to all cooperating participants; shared pending capacity is
+  the strictest enrolled `max_pending`, cannot be lowered below current outstanding work,
+  and does not expand when a participant disconnects.
+- A real native ACK with an offline recipient retains capacity across caller reconnect.
+  Identical pending/uncertain retries are refused locally, not appended as more requests.
+  Recipient recovery executes unseen work once; terminal reply/refusal releases the exact
+  transport token. Replies/status bypass request admission so completion can make progress.
+- AG2 1.1.2 **always replaces supplied envelope IDs**. The first implementation discovered
+  empty-ID uniqueness failures, then unreleased reservations when using a proposed ID.
+  Receipts `ag2-final-transport-first-green.log`, `ag2-final-integration-first.log` and
+  `ag2-final-integration-second.log` are actual intermediate failures, not acceptance.
+  A separate UUID `transport_id` now crosses request/receipt metadata; late receipts cannot
+  release a newer reservation. Reconnect scans durable terminal receipts for cleanup.
+- Completion, definite pre-execution refusal (including payload conflict and no executor),
+  and authenticated terminal Run readback release protection appropriately. Uncertain
+  submit, lost ACK, deadline, cancellation, unsettled status and disconnect retain it.
+  Terminal unsuccessful operations remain non-retryable; their later status does not leak
+  another transport slot. Admission bookkeeping failure before executor invocation releases
+  its execution lease, while uncertain transport remains fail-closed.
+- A lost-ACK fixture actually posts through native WS/disk, then withholds only the ACK.
+  The two-second submission deadline returns `ExecutionUncertain`, blocks fresh work, and
+  retry leaves exactly one WAL request. This is explicit fault injection, not a fabricated
+  Hub response or live Hermes/model acceptance.
+- Saturation rejects immediately instead of waiting for a nested parent's slot. Two root
+  operations at capacity one complete despite refused child calls; no child request is
+  persisted. The existing branching-turn and recursive-cycle regressions still pass.
+- Allowlisted structured cause/remediation survives remote rejection, `Network.ask`, history
+  and ToolAPI: global capacity, pending capacity, held profile, stale context and absent
+  executor are distinguished. Arbitrary exception text stays private. The nested-cycle
+  API regression now checks the specific stale-context cause rather than the former
+  identical generic error. The held-retry history assertion is strengthened to one request
+  plus status, since retry is no longer transported.
+- Privacy fixture uses reader threads plus `Queue.get(timeout=30)` instead of POSIX-only
+  `select` on pipes; stderr is drained concurrently and child shutdown is bounded. The
+  real file/V2-store privacy and byte-preservation assertions are unchanged. Native Windows
+  execution was not performed by this worker; portability is not claimed as Windows E2E.
+
+### Verified commands/results
+
+All receipts below are under `/home/vottak/.hermes/cache/scratch/`.
+
+```sh
+HERMES_PYTHON=/home/vottak/.hermes/cache/scratch/ag2-ticket18-env/bin/python \
+  TMPDIR=/home/vottak/.hermes/cache/scratch scripts/run_tests.sh -j4 --file-retries 0 \
+  integrations/hermes-ag2-network/tests/ -- \
+  --hermes-core-python "$PWD/.venv-network-tests/bin/python" --tb=short
+
+HERMES_PYTHON="$PWD/.venv-network-tests/bin/python" \
+  TMPDIR=/home/vottak/.hermes/cache/scratch scripts/run_tests.sh -j4 --file-retries 0 \
+  tests/test_dispatch_session_id.py tests/gateway/test_api_server_run_context.py \
+  tests/gateway/test_api_server_runs.py tests/hermes_cli/test_profiles.py \
+  tests/agent/test_memory_store_v2.py --tb=short
+```
+
+- Complete integration: **15 files, 39 passed, 0 failed**, 18.5 seconds, zero retries;
+  `ag2-final-integration-repeat-final.log`. Prior complete `-j2` run also passed **39**, in
+  31.1 seconds (`ag2-final-integration-final.log`). The added transport file has **8** actual
+  parametrized cases; static discovery estimates are not acceptance totals.
+- Relevant core: **5 files, 273 passed, 0 failed, 3 Windows-only skipped**, 42.5 seconds;
+  `ag2-final-core-final.log`. No core code was changed by this correction.
+- Scoped health/ruff against the stated base, standalone ruff, ty against the actual isolated
+  interpreter, explicit Windows-footgun scan of all ten code/test files changed by this
+  correction, and both working-tree/staged `git diff --check` pass. Health: **0 blocking,
+  0 advisory**; `ag2-final-static-current-final.log`. Two missing write encodings in the
+  touched separate-process fixture were corrected, not suppressed.
+- Bare Windows-footgun invocation checks the **stale staged versions**, and reported five
+  findings in staged CLI/test_cli code; `ag2-final-static-final.log`. Those staged versions
+  were not overwritten or staged by this worker. `--diff <HEAD>` scanned **zero files**
+  because HEAD is unchanged: `ag2-final-current-footguns-diff.log` is explicitly **not**
+  a current-working-tree audit. The explicit ten-file scan above is the current receipt.
+- Full root `scripts/check --base <same base>` still fails on the existing BOM-intolerant
+  `agent/memory_downgrade.py:207`, literal system-temp references at
+  `docs/memv2-integration-report.md:11,79`, and the existing `.venv-network-tests` dateutil
+  archive. `ag2-final-root-baseline-final.log`. No check was weakened or exemption added.
+
+### Lifecycle assessment / remaining limits
+
+The reviewed normal lease lifecycle is bounded and fail-closed, including async sends,
+reconnect, nested refusal and terminal failure. The independent separate-Hub/two-bridge
+process regression now also asserts that saturated async send and ask leave **no request**
+in the other project's WAL and no Hermes Run POST. It uses the same shared authority as
+callers in distinct directories/participants, not a per-process semaphore.
+
+Crash gaps across the operational ledger and shared authority are still not a distributed
+transaction: reservation-before-POST with no WAL, saved result/terminal evidence before
+release, or lost Run-ID persistence can leave **safe orphan leases**. A durable terminal
+receipt closes its corresponding release gap on reconnect, but unprovable orphan work is
+not expired, resent or silently freed. `Network.reconcile()` requires a held context and
+recorded/authenticated Run evidence; no automatic orphan repair or CLI/ToolAPI reconciliation
+command is claimed. Operators must not delete the authority to evade these protections.
+The strictest pending policy persists; increasing it requires an explicit coordinated
+operator policy change, not disconnecting a stricter participant.
+
+Existing unrelated dirty files, including `website/docs/developer-guide/plugins/index.md`,
+were preserved and remain visible in git status. No live profile/config/store/credentials,
+Gateway, service, third-party source, core file, spec, commit, index, push or remote issue was
+modified by this correction. No new live-model or Actions run occurred. Same-host controlled
+transport is the verified scope; arbitrary native traffic/multi-host coordination are not
+requirements invented here. Final parent review/publication/Actions and acceptance remain
+outstanding; no full-monorepo-suite or issue-closure claim is made.

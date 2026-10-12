@@ -25,10 +25,14 @@ Prepare an owner-only (`0600`) JSON key file mapping the explicitly enrolled **n
   --keys-file /protected/ag2-identities.json --port 8765
 
 "$ENV/bin/hermes-ag2-network" bridge --hub-url ws://127.0.0.1:8765 \
-  --name coding --allow-peer caller --ledger /approved/state/coding-delivery.sqlite \
+  --name coding --project-peer demo=architect --project-peer docs=caller \
+  --ledger /approved/state/coding-delivery.sqlite --control-db /approved/state/network-admission.sqlite \
   --hub-key-file /protected/coding-ag2-token \
-  --api-url http://127.0.0.1:8642 --api-key-file /protected/coding-api-token
+  --api-url http://127.0.0.1:8642 --api-key-file /protected/coding-api-token \
+  --max-hops 8 --max-turns 16 --max-pending 16 --max-active 16 --timeout 300
 ```
+
+`--allow-peer` is the profile-wide fallback. If a project has one or more `--project-peer PROJECT=PEER` entries, that project's entries replace the fallback list (including an empty explicit grant); peers must also allow the other identity for that project. `agent_network_peers` accepts an optional project ID and returns that project's effective grants.
 
 The hub binds loopback only, uses `AuthRegistry([ApiKeyAuth(name_to_token)])` without `NoAuth`, and holds an exclusive store-owner lock. Clients reject cleartext non-loopback URLs and embedded URL credentials. SIGTERM/SIGINT disconnect the bridge without unregistering native identities. Do **not** use `AgentClient.close()` or `HubClient.shutdown()` for stop: those unregister.
 
@@ -41,17 +45,75 @@ from hermes_ag2_network import Network
 async with Network.connect(
     hub_url, name="caller", token=secret_from_protected_storage,
     allowed_peers={"coding"}, ledger_path=Path("/approved/state/caller.sqlite"),
+    control_path=Path("/approved/state/network-admission.sqlite"),
 ) as agent_network:
     peers = await agent_network.peers()  # name + stable native agent_id; no secrets
     channel = await agent_network.open(peer="coding", project_id="demo")
     reply = await agent_network.ask(channel, "Review this approach.", operation_id="unique-operation-id")
     assert reply.request_id  # native causation_id of the correlated request
     history = await agent_network.history(channel)
-    # send() is asynchronous request delivery, returning the native envelope id.
-    request_envelope_id = await agent_network.send(channel, "Another explicit request.")
+    # Send/ask require a caller-supplied stable operation ID; reuse it on the same retry.
+    request_envelope_id = await agent_network.send(
+        channel, "Another explicit request.", operation_id="unique-operation-id-2",
+    )
 ```
 
-An enrolled recipient adds `executor=HermesHTTPExecutor(...)` (an async callable; controlled fixtures are permitted in deterministic tests). `open` waits for the native invite ACK; disallowed invites receive a native rejection. `send` posts an explicitly addressed request. `ask` adapts native send into a correlated wait; it is **not** a fictional `Channel.ask`. `history` returns request/reply/status text from native WAL plus recipient-local recovery notices for unanswered terminal-channel requests anywhere in the same project (their IDs only; these are marked with `local-recovery:` envelope IDs). Other profiles cannot see those local notices. Each outbound request has a distinct operation ID. Request/reply/status tags are explicit: receipt of a reply never invokes the executor, so there is no automatic ping-pong.
+An enrolled recipient adds `executor=HermesHTTPExecutor(...)` (an async callable; controlled fixtures are permitted in deterministic tests). `open` waits for the native invite ACK; disallowed invites receive a native rejection. `send` posts an explicitly addressed request. `ask` adapts native send into a correlated wait; it is **not** a fictional `Channel.ask`. `history` returns request/reply/status/rejected messages from native WAL plus recipient-local recovery notices for unanswered terminal-channel requests anywhere in the same project (their IDs only; these are marked with `local-recovery:` envelope IDs). Other profiles cannot see those local notices. `send` and `ask` require a caller-supplied stable `operation_id`. Reuse the same ID and exact payload when retrying; a conflicting payload under that ID is rejected. Request/reply/status/rejected tags are explicit: receipt of a reply never invokes the executor, so there is no automatic ping-pong.
+
+The sender includes a stable operation ID and a bounded interaction budget in each request. Defaults are at most 8 network hops, 16 Hermes turns, 16 pending requests per profile, and a 300-second wall-clock deadline; the hard ceilings are 16 hops, 32 turns, 64 pending requests, and 300 seconds. The deadline is propagated through nested consultations and the HTTP executor. Incoming Hermes runs are serialized per profile, while independent project channels can be in flight up to the pending cap. Each receiver applies its own stricter limits. Capacity/budget exhaustion before admission returns an explicit `rejected` status, so the same operation ID is safe to retry once capacity is available. A timeout after admission is marked uncertain and held; it is never automatically re-run. Retry only with the same operation ID: a committed result is replayed from the ledger, while an unsettled run remains held for explicit reconciliation.
+
+### Shared admission and explicit reconciliation
+
+Every controlled participant (including local callers) must use **one same-host SQLite
+`control_path` / required CLI `--control-db`** per network, with identical `max_active` /
+`--max-active` (default 16, hard ceiling 64). The API default is `network-admission.sqlite`
+beside the delivery ledger, suitable only when all ledgers share that directory. A
+receiver with a different authority rejects the unknown interaction rather than granting
+a fresh turn budget. Do not fork/delete this authority to clear a held Run.
+
+The authority atomically debits a single interaction balance for every admitted descendant,
+so branching cannot reuse copied turns. Hop bounds remain path-local. Before a controlled
+`send`/`ask` writes a request to native WAL, it reserves shared capacity. A submitted request
+and its active/uncertain Hermes admission count as **one** global slot, not two. Shared pending
+transport capacity is the strictest enrolled `max_pending` / `--max-pending` (default 16,
+hard ceiling 64); it does not silently expand on disconnect. A stricter participant cannot
+enroll while outstanding transports exceed its limit. Per-profile serialization and local
+pending/waiter limits remain additional bounds. SQLite transactions are the coordination
+seam, not an invented AG2 RPC or a replacement Hermes memory backend.
+
+Native send ACK only proves Hub acceptance: offline/queued work keeps the reservation.
+Completion or a definite pre-execution refusal releases it after a terminal receipt; a
+terminal Run reconciliation also releases it. Timeout, cancellation, lost ACK, unsettled
+status and disconnect retain it. Retrying a pending/uncertain operation fails locally rather
+than appending duplicate requests. Each submission has a distinct transport token (AG2
+assigns its own envelope ID), so a late receipt cannot free a newer reservation. Reconnect
+reads durable terminal receipts to close reply-persistence/release crash gaps. Global or
+pending saturation rejects **before submission**, without waiting on a slot held by a nested
+call's parent. Structured allowlisted admission causes/remediation cross reply and ToolAPI
+boundaries; arbitrary executor exception text is never exposed.
+This supports cooperating same-host user services, not a cross-host/shared-network filesystem
+distributed semaphore and not a cap on arbitrary native AG2 clients' transport traffic.
+
+An admitted execution retains its opaque context, ancestry, Run ID when observed, and lease
+on timeout, disconnect, cancellation or exception; no timer expires that lease. Unknown or
+stale supplied Run context IDs are rejected, even when the profile is idle. Fresh requests
+cannot bypass a held profile. An expired held context still exists, but cannot acquire fresh
+network budget. On reconnect the held metadata and admission are restored before readiness.
+Legacy unsettled operation rows also fail closed with zero inherited budget.
+
+`await network.reconcile(context_id)` is an explicit **operator/library** action, not a model
+tool or an automatic startup retry. `HermesHTTPExecutor.reconcile` performs only authenticated
+GET readback of the recorded Run ID and canonical session tip; it never reposts input. A
+completed Run records its result and releases admission. A failed/cancelled/interrupted or
+incomplete terminal Run raises `ExecutionTerminated`, records terminal evidence and releases
+admission, while its operation stays non-retryable. A still-live Run or failed readback retains
+protection. There is no deployed CLI/tool-API reconciliation command in this slice.
+
+If the Run submit response was lost (or the bridge crashed before persisting an observed
+Run ID), the bridge cannot prove the Run identity via this readback seam. It retains admission
+and requires owning-runtime/operator evidence; **no automatic resend or successful recovery
+is claimed**. Crash gaps between the admission authority and delivery ledger fail closed and
+may require operator repair. Arbitrary deletion/corruption of either database is not supported.
 
 ## Optional Hermes tool plugin
 
@@ -65,7 +127,7 @@ hermes -p coding config set plugins.entries.agent-network.settings.bridge_url ht
 hermes -p coding plugins enable agent-network
 ```
 
-Run that per enrolled profile, using a different loopback port and key for each. Add `--tool-api-port 8766 --tool-api-key-file "$HERMES_HOME/agent-network/secrets/agent-network-tools.key"` to that profile's `bridge` command. The API listener binds **only** `127.0.0.1`, is disabled by default, caps JSON bodies at 64 KiB, verifies a constant-time bearer token plus the expected profile name, and exposes only peers/open/send/ask/history. The owner-only key file must be mode `0600`; the bridge refuses insecure permissions. `ask` caps its wait at 300 seconds. A visited-profile ancestry travels in native request metadata; a repeated profile in the current chain is rejected before delivery, so nested consultation returns a useful tool error instead of locking an active Hermes session. No polling occurs: when the plugin is idle it makes no requests and causes no model activity.
+Run that per enrolled profile, using a different loopback port and key for each. Add `--tool-api-port 8766 --tool-api-key-file "$HERMES_HOME/agent-network/secrets/agent-network-tools.key"` to that profile's `bridge` command. The API listener binds **only** `127.0.0.1`, is disabled by default, caps JSON bodies at 64 KiB, verifies a constant-time bearer token plus the expected profile name, and exposes only peers/open/send/ask/history. The owner-only key file must be mode `0600`; the bridge refuses insecure permissions. The API server binds an opaque `run_context_id` (the operation's SHA-256 Idempotency-Key) to the admitted run, and Hermes injects it into tool handlers out-of-band. The plugin returns it in a bridge-only header; it does not replace Hermes' session-scoped `task_id`, so terminal/browser continuity is preserved. The bridge rejects nested requests without the matching active context, preventing another run—even in the same session—from inheriting ancestry or budget. `ask` caps its wait at 300 seconds. A visited-profile ancestry travels in native request metadata; a repeated profile in the current chain is rejected before delivery, so nested consultation returns a useful tool error instead of locking an active Hermes session. No polling occurs: when the plugin is idle it makes no requests and causes no model activity.
 
 ## Real-runtime smoke
 
@@ -75,6 +137,7 @@ This command generates ephemeral **network** credentials in memory, starts a rea
 "$ENV/bin/hermes-ag2-network" smoke \
   --api-url http://127.0.0.1:8642 --profile coding \
   --api-key-file /protected/coding-api-token \
+  --operation-id live-tracer-smoke-001 \
   --store /approved/scratch/ag2-live-tracer --timeout 300
 ```
 
@@ -83,7 +146,7 @@ For a protected dotenv file add `--api-key-field API_SERVER_KEY`. Alternatively 
 ## Execution and genuine limitations
 
 - Each `(profile, peer, project_id)` persists one stable active AG2 channel mapping; repeated `open` returns that channel, including after bridge/Hub restart. If the local mapping is missing, the bridge adopts the unique matching active Hub channel; multiple matches fail closed for operator reconciliation. If its native channel is terminal/missing, the mapping is replaced with a new channel. Each `(profile, project_id, channel_id)` then gets one durable Hermes session lineage in the bridge's SQLite ledger: a stable deterministic origin ID plus the current continuation ID. Operation IDs are deduplicated within `(profile, project_id, channel_id)`; they may be reused in other project channels. The SQLite tables are operational channel/session/delivery metadata, not a memory backend.
-- Execution uses `POST /p/<profile>/api/sessions` with the stable origin ID. Before each turn, `GET /api/sessions/<origin>/messages?limit=0` resolves Hermes' canonical current continuation tip without reading transcript contents; the bridge then verifies that resolved target with `GET /api/sessions/<tip>`. This ordering also recovers if Hermes rotated while the bridge was down and SQLite still holds the old current ID. `POST /p/<profile>/v1/runs` carries `Authorization`, a SHA-256 `Idempotency-Key` derived from profile/project/channel/operation ID, stable `X-Hermes-Session-Key`, and only `{session_id,input}`. After a completed Run, the bridge resolves the tip again: Hermes may rotate the session during a turn while the Run status still reports the old ID. The mapping is updated transactionally before the reply is sent over AG2. Provider/model/tools/private memory are resolved only by the owning Hermes profile.
+- Execution uses `POST /p/<profile>/api/sessions` with the stable origin ID. Before each turn, `GET /api/sessions/<origin>/messages?limit=0` resolves Hermes' canonical current continuation tip without reading transcript contents; the bridge then verifies that resolved target with `GET /api/sessions/<tip>`. This ordering also recovers if Hermes rotated while the bridge was down and SQLite still holds the old current ID. `POST /p/<profile>/v1/runs` carries `Authorization`, a SHA-256 `Idempotency-Key` derived from profile/project/channel/operation ID, the matching `X-Hermes-Run-Context-Id`, stable `X-Hermes-Session-Key`, and only `{session_id,input}`. After a completed Run, the bridge resolves the tip again: Hermes may rotate the session during a turn while the Run status still reports the old ID. The mapping is updated transactionally before the reply is sent over AG2. Provider/model/tools/private memory are resolved only by the owning Hermes profile.
 - An operation's deduplication fingerprint covers profile/project/channel/operation/input, not the derived session ID (so a retry after session rotation is still the same operation). An identical completed retry returns its saved result; conflicting input under that scoped operation ID is rejected. An admitted-but-unsettled operation remains held for explicit reconciliation and is never automatically rerun. Existing global operation rows are copied transactionally into the new project/channel-scoped ledger; old rows remain intact. Other bridge tables are created idempotently on upgrade.
 - Rotation/history reconciliation uses Hermes' canonical session-tip endpoint and does not fetch the conversation transcript. Tests cover Hub restart + bridge reconnect + session rotation, stable channel reuse, recovery of a request delivered while the recipient was offline, and separate projects with distinct channels and Hermes sessions. A separate real Coding profile smoke verifies a repeated turn resumes the same session after the Hub restarts. `VERIFICATION.md` records the real receipt. No AG2 channel history is sent to Hermes; only the new user message is submitted.
 - When connecting, the bridge uses AG2's `list_channels` and `read_wal` to reconcile addressed requests before accepting new messages. A request already answered in WAL is skipped; an admitted operation with a saved Hermes result gets its correlated reply resent without another Hermes run; a request with an unsettled ledger entry returns a status that requires explicit operator reconciliation; an unseen request on an active channel is admitted once through the durable operation ledger. The scan is capped below 500 visible channels and startup fails closed at the cap. On terminal channels, unanswered request IDs/operation IDs are rebuilt idempotently from Hub WAL into the recipient's local operational ledger; `history` on any channel in that project shows a `local-recovery:` status notice. The caller profile cannot see that notice. No execution or transfer to a new channel happens automatically. A later `open` replaces the stale channel mapping, while the AG2 WAL and local recovery notice remain available by ID to the owning profile.
@@ -92,7 +155,7 @@ For a protected dotenv file add `--api-key-field API_SERVER_KEY`. Alternatively 
 - AG2's WS implementation has a read-only `endpoint_id` property where its LinkClient protocol declares a writable attribute. A narrow documented type cast bridges this upstream typing mismatch, with actual WS tests, not invented methods.
 - Released AG2 requires undeclared `watchdog` for importing `DiskKnowledgeStore` and optional `websockets` for native WS. Both are explicitly bounded dependencies here. Resolved versions: AG2 1.1.2, watchdog 6.0.0, websockets 15.0.1, httpx 0.28.1.
 - AG2 disk WAL is JSONL and not transactional/crash-atomic. Native envelope `idempotency_key`/`causation_id` alone do not deduplicate execution. One hub owns each store. Clean restart hydration is tested; crash-exactly-once is not claimed.
-- Native local control-plane calls bypass some wire permissions; production bridge and all integration tests use authenticated WS. Peer allowlists are checked by this facade. Per-project grants, global budgets, nested-cycle guards, artifact transport, tool plugin enrollment, discovery, systemd deployment and recovery are later tickets. A project label is **not** a filesystem sandbox/cwd binding.
+- Authentication and peer/project grants are checked by this facade. A project label is **not** a filesystem sandbox/cwd binding. Artifact transport, automatic Profile discovery and systemd deployment remain later tickets.
 - `peers()` exposes enrolled identities among the native list's first 50 results, not automatic live Profile discovery. No Profile config, memory backend, private memory store, SOUL, Skills or MCP is modified or copied. Coding/Architect remain on their current legacy memory backend.
 
 ## Verification
@@ -100,7 +163,8 @@ For a protected dotenv file add `--api-key-field API_SERVER_KEY`. Alternatively 
 From Hermes checkout root, always use the canonical runner, with the standalone interpreter:
 
 ```sh
-HERMES_PYTHON="$ENV/bin/python" scripts/run_tests.sh integrations/hermes-ag2-network/tests/ -v --tb=short
+HERMES_PYTHON="$ENV/bin/python" scripts/run_tests.sh --file-retries 0 \
+  integrations/hermes-ag2-network/tests/ -- --hermes-core-python "$CORE_TEST_ENV/bin/python" -v --tb=short
 ```
 
 Tests exercise real native disk Hub, authenticated WS, invitation activation, public request/reply/history/peers, causation correlation, reply non-execution, registry/WAL clean restart, a controlled HTTP server at the external executor boundary, and separate installed hub/bridge processes. Controlled executor tests are not live Hermes receipts. See `VERIFICATION.md` for actual RED/GREEN receipts and live acceptance status.

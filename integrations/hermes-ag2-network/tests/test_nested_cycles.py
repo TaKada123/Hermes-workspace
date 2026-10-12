@@ -38,13 +38,31 @@ def test_nested_request_cannot_reenter_a_profile_already_in_the_chain(tmp_path: 
             async with httpx.AsyncClient() as client:
                 cycle = await client.post(
                     tool_api.url + "/v1/ask",
-                    headers={"Authorization": "Bearer architect-tools-key", "X-Hermes-Profile": "architect"},
+                    headers={
+                        "Authorization": "Bearer architect-tools-key",
+                        "X-Hermes-Profile": "architect",
+                        "X-Hermes-Run-Context-Id": request._task_context.network_context_id,
+                    },
                     json={"channel_id": request.channel_id,
                           "text": "Ask Coding to review me back.",
                           "operation_id": "architect-to-coding", "timeout_seconds": 2},
                 )
+                unrelated = await client.post(
+                    tool_api.url + "/v1/ask",
+                    headers={
+                        "Authorization": "Bearer architect-tools-key",
+                        "X-Hermes-Profile": "architect",
+                        "X-Hermes-Run-Context-Id": "0" * 64,
+                    },
+                    json={"channel_id": request.channel_id,
+                          "text": "Do not join another active run.",
+                          "operation_id": "unrelated-to-coding", "timeout_seconds": 2},
+                )
             assert cycle.status_code == 409
             assert cycle.json()["error"] == "network cycle detected; request rejected before delivery"
+            assert unrelated.status_code == 429
+            assert unrelated.json()["admission"]["code"] == "stale_context"
+            assert "current owning Run context" in unrelated.json()["admission"]["remediation"]
             return ExecutionResult(
                 text="The design is sound; preserve the session and keep the API narrow.",
                 session_id="architect-session", run_id="architect-run",

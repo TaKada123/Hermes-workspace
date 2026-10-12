@@ -17,7 +17,7 @@ def _make_registry(captured: dict):
 class TestSessionIdForwarding:
 
     def test_standard_path_forwards_session_id(self):
-        """registry.dispatch receives session_id on the normal tool path."""
+        """registry.dispatch receives session_id and opaque network run context."""
         captured = {}
         with patch("model_tools.registry", _make_registry(captured)):
             from model_tools import handle_function_call
@@ -26,9 +26,11 @@ class TestSessionIdForwarding:
                 {"query": "test"},
                 task_id="t1",
                 session_id="sess-abc",
+                run_context_id="a" * 64,
                 skip_pre_tool_call_hook=True,
             )
         assert captured.get("session_id") == "sess-abc"
+        assert captured.get("run_context_id") == "a" * 64
 
     def test_execute_code_path_forwards_session_id(self):
         """registry.dispatch receives session_id on the execute_code path."""

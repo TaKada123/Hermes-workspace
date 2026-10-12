@@ -24,9 +24,9 @@ def test_uncertain_executor_is_held_without_automatic_retry(tmp_path: Path):
                     for _ in range(2):
                         with pytest.raises(ExecutionUncertain, match="operator reconciliation"):
                             await caller.ask(channel, "Execute one operation.", operation_id="held-01", timeout=5)
-                    await asyncio.sleep(0.1)
                     history = await caller.history(channel)
-                    assert [m.kind for m in history] == ["request", "status", "request", "status"]
+                    # Retry is refused locally, not persisted as unlimited duplicate work.
+                    assert [m.kind for m in history] == ["request", "status"]
                     assert all("sensitive exception text" not in m.text for m in history)
                     assert executed == ["Execute one operation."]
     asyncio.run(scenario())

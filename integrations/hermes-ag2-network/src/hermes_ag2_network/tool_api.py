@@ -10,7 +10,7 @@ from aiohttp import web
 from ag2.network import NotFoundError
 
 from .network import Network
-from .types import ExecutionUncertain, NetworkCycleError
+from .types import ExecutionUncertain, NetworkBudgetExceeded, NetworkCycleError
 
 
 class InvalidRequest(ValueError):
@@ -78,6 +78,9 @@ class ToolAPI(AbstractAsyncContextManager["ToolAPI"]):
             return web.json_response({"ok": False, "error": "network channel not found"}, status=404)
         except PermissionError:
             return web.json_response({"ok": False, "error": "peer or channel access denied"}, status=403)
+        except NetworkBudgetExceeded as exc:
+            return web.json_response({"ok": False, "error": f"{exc.summary}; {exc.remediation}",
+                                      "admission": exc.public_details()}, status=429)
         except NetworkCycleError:
             return web.json_response({"ok": False,
                                       "error": "network cycle detected; request rejected before delivery"}, status=409)
@@ -110,8 +113,11 @@ class ToolAPI(AbstractAsyncContextManager["ToolAPI"]):
             raise InvalidRequest
         return value
 
-    async def _peers(self, _request: web.Request) -> web.Response:
-        peers = await self.network.peers()
+    async def _peers(self, request: web.Request) -> web.Response:
+        project_id = request.query.get("project_id")
+        if project_id is not None and not project_id.strip():
+            raise InvalidRequest
+        peers = await self.network.peers(project_id=project_id)
         return self._success([{"name": peer.name, "agent_id": peer.agent_id} for peer in peers])
 
     async def _open(self, request: web.Request) -> web.Response:
@@ -129,6 +135,8 @@ class ToolAPI(AbstractAsyncContextManager["ToolAPI"]):
             self._required_string(payload, "channel_id"),
             self._required_string(payload, "text"),
             operation_id=operation_id,
+            _network_context_id=request.headers.get("X-Hermes-Run-Context-Id"),
+            _inherit_context=False,
         )
         return self._success({"envelope_id": envelope_id, "operation_id": operation_id})
 
@@ -144,6 +152,8 @@ class ToolAPI(AbstractAsyncContextManager["ToolAPI"]):
             self._required_string(payload, "text"),
             operation_id=operation_id,
             timeout=timeout,
+            _network_context_id=request.headers.get("X-Hermes-Run-Context-Id"),
+            _inherit_context=False,
         )
         return self._success({
             "envelope_id": reply.envelope_id,

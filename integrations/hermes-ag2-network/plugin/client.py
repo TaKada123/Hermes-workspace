@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import socket
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
@@ -14,6 +15,7 @@ _ERROR_BY_STATUS = {
     403: "peer or channel access denied",
     404: "network channel not found",
     409: "execution is uncertain; operator reconciliation required",
+    429: "network request budget exceeded",
     504: "network request timed out",
 }
 
@@ -46,7 +48,8 @@ def available(ctx) -> bool:
     return bool(_base_url(ctx) and _token())
 
 
-def request(ctx, method: str, path: str, *, payload: dict | None = None, query: dict | None = None) -> dict:
+def request(ctx, method: str, path: str, *, payload: dict | None = None, query: dict | None = None,
+           run_context_id: str | None = None) -> dict:
     base_url = _base_url(ctx)
     token = _token()
     if not base_url or not token:
@@ -54,11 +57,16 @@ def request(ctx, method: str, path: str, *, payload: dict | None = None, query: 
     url = base_url + path
     if query:
         url += "?" + urlencode(query)
+    if run_context_id is not None and not re.fullmatch(r"[0-9a-f]{64}", run_context_id):
+        return {"ok": False, "error": "invalid Hermes run context"}
+    network_context_header = ({"X-Hermes-Run-Context-Id": run_context_id}
+                              if run_context_id else {})
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
     http_request = Request(url, data=body, method=method, headers={
         "Authorization": f"Bearer {token}",
         "X-Hermes-Profile": ctx.profile_name,
         "Accept": "application/json",
+        **network_context_header,
         **({"Content-Type": "application/json"} if body is not None else {}),
     })
     timeout = ctx.get_config("timeout_seconds", 310)

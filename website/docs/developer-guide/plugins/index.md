@@ -573,9 +573,7 @@ def unit_convert(args: dict, **kwargs) -> str:
 1. **Signature:** `def my_handler(args: dict, **kwargs) -> str`
 2. **Return:** Always a JSON string. Success and errors alike.
 3. **Never raise:** Catch all exceptions, return error JSON instead.
-4. **Accept `**kwargs`:** Hermes injects context keywords (`task_id`, `session_id`, `user_task`,
-   `parent_agent`, ...) and only forwards the ones your signature names, so `def handler(args)`
-   works; `**kwargs` is how you opt into the full, additively growing context.
+4. **Accept `**kwargs`:** Hermes injects context keywords (`task_id`, `session_id`, `user_task`, `parent_agent`, and related values). For authenticated `/v1/runs` calls that supply a valid matching `Idempotency-Key` and `X-Hermes-Run-Context-Id`, handlers also receive the opaque `run_context_id`; it is distinct from the session-scoped `task_id` and is never a model argument.
 
 ## Step 5: Write the registration
 

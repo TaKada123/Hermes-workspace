@@ -26,6 +26,7 @@ except ImportError:
 
 from gateway.platforms.api_server_room_grants import _json_error, _room_grant_error_response
 from gateway.platforms.api_server_run_idempotency import TERMINAL_STATUSES
+from gateway.platforms.api_server_run_context import parse_run_context_headers
 
 
 logger = logging.getLogger("gateway.platforms.api_server")
@@ -500,6 +501,7 @@ class _RunLaunch:
     request_profile: Any
     browser_control_principal: Any
     browser_control_transport_family: Any
+    run_context_id: Optional[str] = None
     turn_author: Optional[Dict[str, Any]] = None  # memory-attribution label only; grants nothing
 
     @property
@@ -635,11 +637,10 @@ async def _handle_runs(self, request: "web.Request", *, _api_server) -> "web.Res
         v if isinstance(v, dict) else None for v in (
             (body.get("hosted_room_dispatch"), body.get("_room_execution_policy"))
             if isinstance(body, dict) else (None, None)))
-    idempotency_key = request.headers.get("Idempotency-Key", "").strip()
-    if len(idempotency_key) > 255 or any(ord(ch) < 33 or ord(ch) > 126 for ch in idempotency_key):
-        return _json_error(
-            _openai_error, "Idempotency-Key must be 1-255 visible ASCII characters",
-            code="invalid_idempotency_key", status=400)
+    idempotency_key, run_context_id, header_error = parse_run_context_headers(request.headers)
+    if header_error is not None:
+        error_code, error_message = header_error
+        return _json_error(_openai_error, error_message, code=error_code, status=400)
     idempotency_scope = idempotency_fingerprint = ""
     if idempotency_key:
         idempotency_scope = self._run_idempotency_scope(request)
@@ -738,6 +739,7 @@ async def _handle_runs(self, request: "web.Request", *, _api_server) -> "web.Res
         request_profile=_api_server._api_request_profile.get(),
         browser_control_principal=_api_server._api_request_browser_control_principal.get(),
         browser_control_transport_family=_api_server._api_request_browser_control_transport_family.get(),
+        run_context_id=run_context_id or None,
         turn_author=turn_author)
     self._activate_admitted_request()
     # A canonical Bot Chat that a Desktop holds live is that Desktop's to run: executing here would
@@ -793,10 +795,15 @@ def _run_agent_sync(self, run: _RunLaunch, agent, approval_notify, *, _api_serve
     from tools.approval_context import reset_current_session_key, set_current_session_key
     session_id = run.session_id
     effective_task_id = session_id or run.run_id
+    missing_context = object()
+    previous_run_context_id = getattr(agent, "_active_run_context_id", missing_context)
+    # The caller-supplied operation ID is bound to this admitted run only; the regular Hermes
+    # task_id remains session-scoped for browser/terminal continuity.
     # (token, reset) pairs unwound in the finally block; bound only once each step succeeds.
     resets: list[tuple[Any, Callable]] = []
     with self._profile_scope(run.request_profile):
         try:
+            agent._active_run_context_id = run.run_context_id
             # Contextvars, not process env: concurrent runs must not share identity.
             resets.append((set_current_session_key(run.approval_session_key), reset_current_session_key))
             # chat_id carries the raw session id like _run_agent() does; without it
@@ -833,6 +840,11 @@ def _run_agent_sync(self, run: _RunLaunch, agent, approval_notify, *, _api_serve
         finally:
             # Clear ownership now so a later stop can't reap work this run left running.
             _api_server._clear_turn_process_ownership(agent)
+            if previous_run_context_id is missing_context:
+                with suppress(AttributeError):
+                    delattr(agent, "_active_run_context_id")
+            else:
+                agent._active_run_context_id = previous_run_context_id
             self._memory_sessions.checkin(agent)
             # Declared-conversation binding, same precedence gate as _run_agent.
             if run.declared_selected:
