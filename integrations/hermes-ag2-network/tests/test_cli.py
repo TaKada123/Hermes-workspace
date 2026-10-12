@@ -2,6 +2,7 @@
 import asyncio
 from contextlib import contextmanager
 import json
+import os
 from pathlib import Path
 import select
 import subprocess
@@ -11,13 +12,14 @@ import pytest
 from ag2.network import ProtocolError
 
 from hermes_ag2_network import Network
+from hermes_ag2_network.discovery import enroll_profile
 from test_http_executor import hermes_api
 
 
 @contextmanager
-def command(*arguments):
+def command(*arguments, env=None):
     process = subprocess.Popen([sys.executable, "-m", "hermes_ag2_network.cli", *arguments],
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
     assert process.stdout is not None and process.stderr is not None
     try:
         ready, _, _ = select.select([process.stdout], [], [], 10)
@@ -43,6 +45,10 @@ def test_separate_hub_and_profile_bridge_cli(tmp_path: Path):
     api_token = tmp_path / "api-token"
     api_token.write_text("fixture-secret")
     api_token.chmod(0o600)
+    hermes_home = tmp_path / "hermes-home"
+    (hermes_home / "profiles" / "architect").mkdir(parents=True)
+    enroll_profile("architect", hermes_home)
+    bridge_env = {**os.environ, "HERMES_HOME": str(hermes_home)}
     with hermes_api() as (url, _):
         with command("hub", "--store", str(tmp_path / "hub"), "--keys-file", str(keys), "--port", "0") as hub:
             with command("bridge", "--hub-url", hub["url"], "--name", "architect",
@@ -50,7 +56,8 @@ def test_separate_hub_and_profile_bridge_cli(tmp_path: Path):
                          "--max-turns", "1", "--max-pending", "1", "--timeout", "5",
                          "--control-db", str(tmp_path / "network-admission.sqlite"),
                          "--ledger", str(tmp_path / "architect.sqlite"), "--api-url", url,
-                         "--api-key-file", str(api_token), "--hub-key-file", str(hub_token)) as bridge:
+                         "--api-key-file", str(api_token), "--hub-key-file", str(hub_token),
+                         env=bridge_env) as bridge:
                 assert bridge == {"ready": "bridge", "profile": "architect"}
 
                 async def scenario():

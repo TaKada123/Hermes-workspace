@@ -5,6 +5,8 @@ import json
 from math import isfinite
 from typing import Awaitable, Callable
 
+from .artifacts import ArtifactRef
+
 
 def network_execution_context_id(profile: str, project_id: str, channel_id: str, operation_id: str) -> str:
     """Stable opaque ID binding one admitted network operation to its Hermes API run."""
@@ -62,6 +64,7 @@ class ExecutionRequest:
     session_current_id: str = ""
     deadline_at: float = 0.0
     turns_remaining: int = 0
+    artifact_refs: tuple[ArtifactRef, ...] = ()
     _task_context: ExecutionTaskContext | None = field(default=None, repr=False, compare=False)
 
 
@@ -70,6 +73,7 @@ class ExecutionResult:
     text: str
     session_id: str
     run_id: str
+    artifact_refs: tuple[ArtifactRef, ...] = ()
 
 
 Executor = Callable[[ExecutionRequest], Awaitable[ExecutionResult]]
@@ -86,6 +90,7 @@ class Message:
     session_id: str = ""
     run_id: str = ""
     admission_code: str = "budget"
+    artifact_refs: tuple[ArtifactRef, ...] = ()
 
     @property
     def request_id(self) -> str | None:

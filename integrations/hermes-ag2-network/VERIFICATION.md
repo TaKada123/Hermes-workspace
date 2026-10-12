@@ -435,3 +435,90 @@ modified by this correction. No new live-model or Actions run occurred. Same-hos
 transport is the verified scope; arbitrary native traffic/multi-host coordination are not
 requirements invented here. Final parent review/publication/Actions and acceptance remain
 outstanding; no full-monorepo-suite or issue-closure claim is made.
+
+## Ticket 20: discovery/enrollment and real systemd lifecycle receipt
+
+Local worktree `/home/vottak/Проекты/Hermes-workspace-wt/ag2-network-bridge`, branch
+`feat/ag2-network-bridge`, HEAD `43ce468fad15f425e4e10c1ebcadc8bcfcc430e2` plus
+uncommitted changes. This receipt covers local ticket slice 05 / GH #20 criteria 3–5.
+Its blocked-by `2` means slice 02 / GH #17 session lineage, not GH #2 memory.
+Artifact acceptance is owned by a concurrent worker and is **not declared complete here**.
+No commit, index change, push, issue mutation, live Gateway/service/profile/config/secret
+or private-memory change was performed by this lifecycle worker.
+
+### Behavior and actual defect found
+
+- Discovery now includes the root `default` profile and resolves named-profile
+  `HERMES_HOME` to its owning root; CLI `--home` works consistently for discovery and
+  bridge startup. Only directory names are inspected; enrollment is explicit.
+- Managed `profiles --revoke NAME` is idempotent. Enrollment writes user-owned `0600`
+  JSON names under a `0700` directory, POSIX flock, atomic replacement and file/directory
+  fsync. Eight concurrent CLI enrollments retain every name. Insecure files and symlink
+  directories/files are rejected. Revocation prevents bridge startup before DB/network work;
+  already-running bridges still require explicit stop/disable.
+- The first real systemd outage regression was **RED: 1 failed**, 41.78 seconds: after
+  SIGKILL of the Hub, systemd restarted the Hub but the existing bridge PID stayed alive
+  and never reconnected. `Restart=always` alone cannot repair a process waiting only for
+  a signal. CLI now observes the pinned AG2 1.1.2 receive task (upstream has no public
+  disconnect notification), exits nonzero on WS EOF, and lets systemd reconnect. It does
+  not poll registry RPCs or initiate idle Hermes Runs.
+- Real user-manager GREEN uses UUID-prefixed runtime units, the installed standalone
+  executable, temporary state/enrollment/credentials, the packaged sandbox/restart
+  policies, real native AG2 Hub/WS, and a controlled authenticated HTTP runtime.
+  A bridge SIGKILL is restarted; a saved operation is replayed without a second Run POST.
+  Hub SIGKILL changes both Hub and bridge PIDs, then a fresh operation reuses the same
+  channel/session origin and observes the fixture's continuation rotation. Exactly **two**
+  HTTP Run POSTs occurred (before and after outage), not three.
+- `disable --runtime --now` readback shows both units inactive/disabled with PID zero;
+  they remain stopped beyond the three-second restart delay with no additional Run POST.
+  Cleanup removes the exact runtime unit files and enablement, reloads the manager,
+  and verifies both targets `LoadState=not-found`. A separate subsequent exact-target
+  readback also returned `not-found`, `inactive`, `MainPID=0` for both targets.
+- The former source-string lifecycle tests were replaced with offline
+  `systemd-analyze --user verify` and the behavioral process/user-manager tests. README
+  covers setup, custom/default roots, new specialists, key-map reload, reconnect,
+  coordinated maintenance, immediate disable/revoke, rollback, and real API boundaries.
+
+### Reproducible commands and actual outputs
+
+```sh
+HERMES_PYTHON=/home/vottak/.hermes/cache/scratch/ag2-ticket20-network-env/bin/python \
+  scripts/run_tests.sh integrations/hermes-ag2-network/tests/ --file-retries 0 -- \
+  --hermes-core-python /home/vottak/.hermes/installs/7d27e89e058145aa/environments/dd909b859246486aa5db98a4fe6a538c/venv/bin/python \
+  --ag2-systemd-acceptance --ag2-systemd-runtime-dir /run/user/1000 \
+  --ag2-systemd-receipt /home/vottak/.hermes/cache/scratch/ag2-ticket20-systemd-receipt.json -v --tb=short
+
+PATH="$PWD/.venv-network-tests/bin:$PATH" .venv-network-tests/bin/python scripts/check \
+  --only ruff,health --base 705f4062
+.venv-network-tests/bin/python -m ty check \
+  --python /home/vottak/.hermes/cache/scratch/ag2-ticket20-network-env \
+  --project integrations/hermes-ag2-network integrations/hermes-ag2-network/src \
+  integrations/hermes-ag2-network/tests --output-format concise
+```
+
+- Complete integration snapshot including the concurrent artifact tests: **20 files,
+  62 passed, 0 failed, no skips, zero retries**, 32.5 seconds. This is the actual
+  parametrized count, not the runner's static `~50` estimate. Receipt:
+  `/home/vottak/.hermes/cache/scratch/ag2-ticket20-complete-suite.log`.
+- After adding the revoked-startup gate assertion, final discovery delta: **7 passed,
+  0 failed**, 7.9 seconds; `ag2-ticket20-discovery-final.log` in the same scratch directory.
+- Ruff, ty and scoped health pass; health **0 blocking, 0 advisory**. Static receipt:
+  `ag2-ticket20-static-final.log`. Lifecycle-owned tracked-file `git diff --check` passed.
+  Whole-tree `git diff --check` separately reported trailing EOF blank lines in the
+  concurrent worker's `artifacts.py` and `test_http_executor.py`; they were not edited here.
+- Sanitized persisted receipt: `ag2-ticket20-systemd-receipt.json` in scratch. Final run:
+  Hub PID `291606 → 291983`; bridge `291767 → 291851 → 291990`; Hub restart count `0 → 1`,
+  bridge `1 → 2 → 3` (one initial startup retry). Channel
+  `18ddd69596ddca29da192b430d11b573`; session origin
+  `ag2-08cf49be8aa156bf871a4a0051c82e09`; two Run POSTs; saved replay made none.
+- Initial manager runs skipped because the canonical runner strips D-Bus environment;
+  explicit runtime-dir support corrected this. Offline unit validation initially lacked
+  a runtime directory; it now uses its own temporary directory, not a live manager.
+  These intermediate skips/failures were not counted as acceptance.
+
+This is Linux real process/service acceptance with controlled HTTP execution, **not** a
+new live Hermes/model acceptance run, remote CI, a full monorepo suite, or a claim of
+crash-atomic JSONL WAL/exactly-once side effects. Uncertain work remains fail-closed;
+missing Run IDs/orphan leases still need operator evidence. Existing slice-02 lineage
+and held-operation regressions pass in the complete suite. Artifact-worker review/results,
+independent final review and parent integration/publication decisions remain separate.

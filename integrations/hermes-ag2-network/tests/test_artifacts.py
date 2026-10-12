@@ -34,3 +34,19 @@ def test_wire_rejects_unknown_fields_and_malformed_digest():
         ArtifactRef.from_wire({**wire, "private": True})
     with pytest.raises(ValueError):
         ArtifactRef.from_wire({**wire, "sha256": "not-a-digest"})
+
+
+def test_artifact_uri_schemes_are_restricted_and_file_scheme_is_case_insensitive():
+    wire = {"kind": "file", "uri": "FILE:///private/secret.txt", "media_type": "text/plain",
+            "size_bytes": 1, "sha256": "0" * 64, "label": ""}
+    ref = ArtifactRef.from_wire(wire)
+    assert ref.is_local_file
+    with pytest.raises(ValueError, match="scheme"):
+        ArtifactRef.from_wire({**wire, "uri": "javascript:alert(1)"})
+
+
+def test_wire_rejects_local_file_uri_with_invalid_shape():
+    wire = {"kind": "image", "uri": "file://", "media_type": "image/png",
+            "size_bytes": 1, "sha256": "0" * 64, "label": ""}
+    with pytest.raises(ValueError):
+        ArtifactRef.from_wire(wire)

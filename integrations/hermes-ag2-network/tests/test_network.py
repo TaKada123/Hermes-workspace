@@ -1,10 +1,11 @@
 """Observable agent_network contract; real AG2 disk hub and WS transport."""
 import asyncio
+import hashlib
 from pathlib import Path
 
 import pytest
 from ag2.network import ProtocolError
-from hermes_ag2_network import ExecutionResult, Network, network_hub
+from hermes_ag2_network import ArtifactRef, ArtifactKind, ExecutionResult, Network, network_hub
 
 
 def test_incomplete_project_invitation_is_rejected_without_running_executor(tmp_path: Path):
@@ -27,9 +28,13 @@ def test_incomplete_project_invitation_is_rejected_without_running_executor(tmp_
 
 def test_request_reply_is_durable_without_reply_ping_pong(tmp_path: Path):
     async def scenario():
+        reference = ArtifactRef(ArtifactKind.CHECK_REPORT, "https://artifacts.example/report.txt",
+                                "text/plain", 6, hashlib.sha256(b"passed").hexdigest(), "report")
+
         async def specialist(request):
             assert request.profile == "architect"
             assert request.text == "Review a two-party transport"
+            assert request.artifact_refs == (reference,)
             return ExecutionResult(text="Keep the execution boundary external.",
                                    session_id="controlled-session", run_id="controlled-run")
 
@@ -45,12 +50,19 @@ def test_request_reply_is_durable_without_reply_ping_pong(tmp_path: Path):
                                            ledger_path=tmp_path / "caller.sqlite") as caller:
                     assert [p.name for p in await caller.peers()] == ["architect"]
                     channel = await caller.open(peer="architect", project_id="tracer")
-                    reply = await caller.ask(channel, "Review a two-party transport", operation_id="tracer-01", timeout=5)
+                    private_reference = ArtifactRef(ArtifactKind.FILE, "FILE:///home/private/report.txt",
+                                                    "text/plain", 6, hashlib.sha256(b"passed").hexdigest())
+                    with pytest.raises(ValueError, match="local file paths"):
+                        await caller.send(channel, "Do not transmit a local path", operation_id="private-ref",
+                                          artifact_refs=(private_reference,))
+                    reply = await caller.ask(channel, "Review a two-party transport", operation_id="tracer-01",
+                                             artifact_refs=(reference,), timeout=5)
                     assert reply.text == "Keep the execution boundary external."
                     assert reply.operation_id == "tracer-01"
                     assert reply.session_id == "controlled-session"
                     assert reply.run_id == "controlled-run"
                     history = await caller.history(channel)
+                    assert history[0].artifact_refs == (reference,)
                     assert [(m.kind, m.text) for m in history] == [
                         ("request", "Review a two-party transport"),
                         ("reply", "Keep the execution boundary external."),

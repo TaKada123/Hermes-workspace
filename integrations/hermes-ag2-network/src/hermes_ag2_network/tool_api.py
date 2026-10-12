@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+from pathlib import Path
 from contextlib import AbstractAsyncContextManager
 import hmac
 from typing import Any
@@ -10,6 +12,7 @@ from aiohttp import web
 from ag2.network import NotFoundError
 
 from .network import Network
+from .artifacts import ArtifactRef
 from .types import ExecutionUncertain, NetworkBudgetExceeded, NetworkCycleError
 
 
@@ -44,6 +47,8 @@ class ToolAPI(AbstractAsyncContextManager["ToolAPI"]):
             web.post("/v1/send", self._send),
             web.post("/v1/ask", self._ask),
             web.get("/v1/history", self._history),
+            web.post("/v1/artifacts/publish", self._publish_artifact),
+            web.post("/v1/artifacts/read", self._read_artifact),
         ])
         self._runner = web.AppRunner(app, access_log=None)
         await self._runner.setup()
@@ -113,6 +118,41 @@ class ToolAPI(AbstractAsyncContextManager["ToolAPI"]):
             raise InvalidRequest
         return value
 
+    @staticmethod
+    def _artifact_refs(payload: dict[str, Any]) -> tuple[ArtifactRef, ...]:
+        raw = payload.get("artifact_refs", [])
+        if not isinstance(raw, list) or len(raw) > 16:
+            raise InvalidRequest
+        try:
+            refs = tuple(ArtifactRef.from_wire(value) for value in raw)
+        except ValueError:
+            raise InvalidRequest from None
+        if any(ref.is_local_file for ref in refs):
+            raise InvalidRequest
+        return refs
+
+    async def _publish_artifact(self, request: web.Request) -> web.Response:
+        payload = await self._json_body(request)
+        self.network._execution_context(request.headers.get("X-Hermes-Run-Context-Id"), False)
+        ref = await self.network.publish_artifact(
+            self._required_string(payload, "channel_id"), Path(self._required_string(payload, "path")),
+            kind=payload.get("kind", "file"), media_type=payload.get("media_type", "application/octet-stream"),
+            label=payload.get("label", ""),
+        )
+        return self._success(ref.to_wire())
+
+    async def _read_artifact(self, request: web.Request) -> web.Response:
+        payload = await self._json_body(request)
+        self.network._execution_context(request.headers.get("X-Hermes-Run-Context-Id"), False)
+        ref = ArtifactRef.from_wire(payload.get("artifact_ref"))
+        content = await self.network.read_artifact(self._required_string(payload, "channel_id"), ref)
+        result: dict[str, Any] = {"artifact_ref": ref.to_wire(), "verified": True}
+        if ref.media_type.startswith("text/") or ref.media_type == "application/json":
+            result["text"] = content.decode("utf-8")
+        else:
+            result["base64"] = base64.b64encode(content).decode("ascii")
+        return self._success(result)
+
     async def _peers(self, request: web.Request) -> web.Response:
         project_id = request.query.get("project_id")
         if project_id is not None and not project_id.strip():
@@ -135,6 +175,7 @@ class ToolAPI(AbstractAsyncContextManager["ToolAPI"]):
             self._required_string(payload, "channel_id"),
             self._required_string(payload, "text"),
             operation_id=operation_id,
+            artifact_refs=self._artifact_refs(payload),
             _network_context_id=request.headers.get("X-Hermes-Run-Context-Id"),
             _inherit_context=False,
         )
@@ -152,6 +193,7 @@ class ToolAPI(AbstractAsyncContextManager["ToolAPI"]):
             self._required_string(payload, "text"),
             operation_id=operation_id,
             timeout=timeout,
+            artifact_refs=self._artifact_refs(payload),
             _network_context_id=request.headers.get("X-Hermes-Run-Context-Id"),
             _inherit_context=False,
         )
@@ -163,6 +205,7 @@ class ToolAPI(AbstractAsyncContextManager["ToolAPI"]):
             "text": reply.text,
             "session_id": reply.session_id,
             "run_id": reply.run_id,
+            "artifact_refs": [ref.to_wire() for ref in reply.artifact_refs],
         })
 
     async def _history(self, request: web.Request) -> web.Response:
@@ -179,4 +222,5 @@ class ToolAPI(AbstractAsyncContextManager["ToolAPI"]):
             "causation_id": message.causation_id,
             "session_id": message.session_id,
             "run_id": message.run_id,
+            "artifact_refs": [ref.to_wire() for ref in message.artifact_refs],
         } for message in messages])

@@ -18,6 +18,24 @@ export ENV="$HOME/.cache/hermes-ag2-network-env"
 
 ## Separate optional services
 
+Discover profile names without reading their configuration or memory, then explicitly enroll each runtime identity before starting its bridge. Run this from the same Hermes home used by the bridge service:
+
+```sh
+"$ENV/bin/hermes-ag2-network" profiles
+"$ENV/bin/hermes-ag2-network" profiles --enroll coding
+```
+
+The `profiles` command emits JSON with `available` and `enrolled` names. It includes `default` for the root profile and discovers valid named directories under `profiles/`, without opening their config, credentials, or memory. A named profile's `HERMES_HOME=<root>/profiles/NAME` resolves to `<root>` rather than looking for profiles inside that profile. An unset home defaults to `~/.hermes`; custom roots and `--home ROOT` are supported. Pass the same `--home` to `profiles` and `bridge`, or set `HERMES_HOME` in the instance's service environment. Directory discovery alone cannot validate a runtime's health or its configuration.
+
+Discovery grants no execution permission. `bridge --name NAME` refuses startup unless NAME is explicitly listed in `<root>/agent-network/enrolled-profiles.json`. Enrollment/revocation writes only names, under a persistent POSIX advisory lock, then fsyncs and atomically replaces a `0600` file in a user-owned `0700` directory. Concurrent cooperating CLI updates preserve other enrollments; insecure ownership/permissions or symlink paths are rejected, not silently repaired. Enrollment does not create Hub credentials, peer grants, or a running service.
+
+```sh
+"$ENV/bin/hermes-ag2-network" profiles --home /owning/hermes-root --enroll NEW_NAME
+"$ENV/bin/hermes-ag2-network" profiles --home /owning/hermes-root --revoke NEW_NAME
+```
+
+`--revoke` is idempotent and also works after the profile directory disappears. It revokes **future bridge starts**, not an already-running process or native Hub identity. For immediate disablement, stop/disable the bridge first (below), then revoke enrollment. Do not hand-edit this file concurrently with managed CLI updates.
+
 Prepare an owner-only (`0600`) JSON key file mapping the explicitly enrolled **network identities** to tokens. Use different tokens per identity. Provide each bridge only its own hub token (raw-token `0600` file or `AG2_HUB_KEY` secret environment variable). Hermes API credentials are separate and profile-scoped. Never pass tokens as CLI values, prompts, tool schema parameters or AG2 messages.
 
 ```sh
@@ -122,7 +140,8 @@ The packaged templates are optional. They do not modify Hermes core or any profi
 ```sh
 mkdir -p ~/.local/share/hermes-ag2-network/bin
 ln -sf "$ENV/bin/hermes-ag2-network" ~/.local/share/hermes-ag2-network/bin/hermes-ag2-network
-mkdir -p ~/.config/systemd/user ~/.config/hermes-ag2-network/bridges ~/.local/state/hermes-ag2-network
+mkdir -p ~/.config/systemd/user
+install -d -m 0700 ~/.config/hermes-ag2-network ~/.config/hermes-ag2-network/bridges ~/.local/state/hermes-ag2-network
 install -m 0644 integrations/hermes-ag2-network/systemd/hermes-ag2-hub.service ~/.config/systemd/user/
 install -m 0644 integrations/hermes-ag2-network/systemd/hermes-ag2-bridge@.service ~/.config/systemd/user/
 ```
@@ -137,11 +156,38 @@ systemctl --user status hermes-ag2-hub hermes-ag2-bridge@coding
 journalctl --user -u hermes-ag2-bridge@coding
 ```
 
-New Profiles need no source edit: inspect `~/.hermes/profiles/` (and the profile-aware `hermes -p NAME config path`), then create an explicit per-profile bridge env/credentials and enable `hermes-ag2-bridge@NAME`. Do not copy private profile data into the Hub. Stop/disable with `systemctl --user disable --now hermes-ag2-bridge@NAME`; disable the hub only after all bridges are stopped. Roll back by disabling both units, removing these unit copies and running `systemctl --user daemon-reload`; Hermes runs normally without either service. Keep or deliberately archive the operational WAL/ledger databases before removal if you need channel recovery. Units use `Restart=on-failure` for process reconnect after failure; systemd restart is not a claim of crash-atomic WAL or exactly-once execution.
+### Add a specialist, reconnect, stop and roll back
+
+New Profiles need no source edit: discover names, explicitly enroll NAME, create its distinct env/credential files, add its Hub identity/token to the protected key map, and grant the intended peers/projects on both sides. Restart the Hub **after a coordinated bridge stop** to load a changed key map (the Hub reads it at startup, not dynamically), then start the intended enrolled bridges. Use unique `TOOL_API_PORT` values. A `default` instance addresses the root profile; named instances address their own HTTP `/p/NAME` runtime. Do not copy private profile files into Hub state.
+
+The bridge uses `Wants`/`After` (not `Requires`) and `Restart=always`, with a three-second restart delay and no start-limit window. On established WS disconnect it exits nonzero; systemd constructs a fresh bridge connection, restores ledger/channel/session mappings and recovers native WAL. The pinned AG2 1.1.2 receive task is observed because upstream has no public disconnect notification; no periodic registry polling or idle model runs are introduced. The Hub uses `Restart=on-failure`. Restarting a service does **not** prove that an already-admitted Hermes Run stopped and does not automatically re-execute uncertain work. Follow the reconciliation limitations above.
+
+```sh
+# For planned maintenance: stop every bridge before stopping the Hub.
+systemctl --user stop hermes-ag2-bridge@coding.service
+systemctl --user stop hermes-ag2-hub.service
+# Restart in dependency order; durable state must stay in place.
+systemctl --user start hermes-ag2-hub.service hermes-ag2-bridge@coding.service
+systemctl --user show hermes-ag2-bridge@coding.service -p MainPID -p ActiveState -p NRestarts
+
+# Disable a specialist immediately, then revoke future startup authorization.
+systemctl --user disable --now hermes-ag2-bridge@coding.service
+"$ENV/bin/hermes-ag2-network" profiles --revoke coding
+systemctl --user is-active hermes-ag2-bridge@coding.service   # expected: inactive
+systemctl --user is-enabled hermes-ag2-bridge@coding.service  # expected: disabled
+# Only after ALL bridges are disabled/stopped:
+systemctl --user disable --now hermes-ag2-hub.service
+```
+
+Manual `stop`/`disable --now` suppresses systemd restart even with `Restart=always`; `disable` alone does not stop a process. A remaining enabled bridge may pull its Wanted Hub up, so do not stop only the Hub to disable the network. Removal of an enrollment or Hub token is not a hot revocation of an existing connection.
+
+Rollback: after readback confirms all relevant units inactive/disabled, remove **only the two unit copies installed for this network** and its executable symlink, then `systemctl --user daemon-reload`. Disable the optional plugin only in the profiles where it was installed; absent bridges make its tools unavailable, not an alternative runtime. Retain or deliberately archive Hub WAL, delivery ledgers and the shared admission authority together before any state removal; do not delete a database to bypass an uncertain Run. Remove credentials only through the owning secret workflow. Core/Gateway services and private profile configuration/memory do not need migration, restart, or modification to stop this network.
+
+`test_systemd_units.py` uses `systemd-analyze verify`. Opt-in `test_systemd_lifecycle.py` actually runs isolated temporary user units with the packaged restart/sandbox policies, real AG2 Hub/WS and a controlled authenticated HTTP runtime. It tests bridge process crash, Hub process outage, saved-result replay without another POST, channel/session lineage reuse, and clean disable/readback/cleanup. This is real service acceptance, **not** a live Hermes/model run or crash-atomic WAL/exactly-once proof. See the receipt in `VERIFICATION.md`.
 
 ### Artifact references and real limits
 
-`hermes_ag2_network.artifacts.ArtifactRef` is the typed descriptor model for file/image/check-report/Git-reference/result/error/status artifacts. It carries a URI, media type, byte count and SHA-256; `verify_local_file` rejects files outside explicitly granted roots and files over the caller's byte cap. Local file bytes are never implicitly read, and private memory is not searched or attached. A URI does not grant access: consumers must independently authorize it. The current `send`/`ask` text API and Hermes tool plugin do not yet transfer or dereference artifact descriptors, nor do they provide authenticated artifact serving. Treat these types as validation primitives, not end-to-end artifact exchange. Git references must be supplied as explicit metadata rather than triggering repository reads.
+`hermes_ag2_network.artifacts.ArtifactRef` is the typed descriptor model for file/image/check-report/Git-reference/result/error/status references. `send`/`ask`, history, the loopback ToolAPI and Hermes plugin carry bounded descriptor metadata; the recipient Hermes Run sees the descriptors separately from the message text. The bridge does not transfer or fetch artifact bytes, host an artifact server, or verify the remote object against its declared digest. `verify_local_file` hashes a regular file only inside explicitly approved roots and under a byte cap, but local `file:` URIs are rejected at the network boundary so host paths cannot leak. Private memory is never searched or attached. Consumers must independently authorize access and verify bytes before use. Thus current artifact support is typed metadata exchange, not content exchange; Git references must be supplied explicitly rather than triggering repository reads.
 
 AG2/hub API limitations remain: registration lacks a public external-runtime handler attach (the tested name-only shim and attach race are documented above); JSONL WAL is not crash-transactional; and Hermes Runs has no project cwd/sandbox binding. These controls do not provide multi-host shared admission or limit arbitrary native AG2 clients.
 
@@ -185,7 +231,7 @@ For a protected dotenv file add `--api-key-field API_SERVER_KEY`. Alternatively 
 - AG2's WS implementation has a read-only `endpoint_id` property where its LinkClient protocol declares a writable attribute. A narrow documented type cast bridges this upstream typing mismatch, with actual WS tests, not invented methods.
 - Released AG2 requires undeclared `watchdog` for importing `DiskKnowledgeStore` and optional `websockets` for native WS. Both are explicitly bounded dependencies here. Resolved versions: AG2 1.1.2, watchdog 6.0.0, websockets 15.0.1, httpx 0.28.1.
 - AG2 disk WAL is JSONL and not transactional/crash-atomic. Native envelope `idempotency_key`/`causation_id` alone do not deduplicate execution. One hub owns each store. Clean restart hydration is tested; crash-exactly-once is not claimed.
-- Authentication and peer/project grants are checked by this facade. A project label is **not** a filesystem sandbox/cwd binding. Artifact transport, automatic Profile discovery and systemd deployment remain later tickets.
+- Authentication and peer/project grants are checked by this facade. A project label is **not** a filesystem sandbox/cwd binding. Profile directory discovery/enrollment and optional service lifecycle are supported as documented above; automatic enrollment and runtime configuration discovery are intentionally not supported.
 - `peers()` exposes enrolled identities among the native list's first 50 results, not automatic live Profile discovery. No Profile config, memory backend, private memory store, SOUL, Skills or MCP is modified or copied. Coding/Architect remain on their current legacy memory backend.
 
 ## Verification
@@ -198,5 +244,16 @@ HERMES_PYTHON="$ENV/bin/python" scripts/run_tests.sh --file-retries 0 \
 ```
 
 Tests exercise real native disk Hub, authenticated WS, invitation activation, public request/reply/history/peers, causation correlation, reply non-execution, registry/WAL clean restart, a controlled HTTP server at the external executor boundary, and separate installed hub/bridge processes. Controlled executor tests are not live Hermes receipts. See `VERIFICATION.md` for actual RED/GREEN receipts and live acceptance status.
+
+For isolated systemd acceptance on a host with a user manager, explicitly opt in. The canonical runner sanitizes D-Bus environment, so provide the current user's runtime directory explicitly (discover it from the shell's `XDG_RUNTIME_DIR` before invoking the runner):
+
+```sh
+HERMES_PYTHON="$ENV/bin/python" scripts/run_tests.sh --file-retries 0 \
+  integrations/hermes-ag2-network/tests/test_systemd_lifecycle.py -- \
+  --ag2-systemd-acceptance --ag2-systemd-runtime-dir "$XDG_RUNTIME_DIR" \
+  --ag2-systemd-receipt /approved/scratch/systemd-receipt.json -v --tb=short
+```
+
+Only UUID-prefixed runtime units are enabled; cleanup stops/disables those exact units, removes their temporary unit files and verifies `LoadState=not-found`/zero PIDs. The test keeps live installed units, Gateway and profile homes untouched. Without opt-in the manager test skips; the subprocess Hub-EOF regression and offline `systemd-analyze` validation still run.
 
 Sources inspected: released 1.1.2 wheel (`ag2/network/client/{hub_client,agent_client,handlers,channel}.py`, `network/auth.py`, native disk/WS modules), official upstream docs `website/docs/user-guide/network/{distributed,agent_clients,conversation}.mdx`, and [Hermes programmatic integration](https://hermes-agent.nousresearch.com/docs/developer-guide/programmatic-integration). The guessed published AG2 network URLs returned 404; upstream docs include stale snippets (e.g. `ApiKeyAuth` taking a set and `attach_plugin=False` disabling the default handler). Installed released signatures and real execution, not those snippets, govern this adapter.

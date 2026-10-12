@@ -21,6 +21,21 @@ def _schema(name: str, description: str, properties: dict[str, Any], required: l
 
 
 _STRING = {"type": "string"}
+_ARTIFACT_REFS = {
+    "type": "array", "maxItems": 16,
+    "items": {
+        "type": "object", "additionalProperties": False,
+        "required": ["kind", "uri", "media_type", "size_bytes", "sha256", "label"],
+        "properties": {
+            "kind": {"type": "string", "enum": ["file", "image", "check_report", "git_reference", "result", "error", "status"]},
+            "uri": {"type": "string", "maxLength": 2048},
+            "media_type": {"type": "string", "maxLength": 127},
+            "size_bytes": {"type": "integer", "minimum": 0},
+            "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "label": {"type": "string", "maxLength": 256},
+        },
+    },
+}
 TOOLS = (
     (
         "agent_network_peers",
@@ -46,8 +61,9 @@ TOOLS = (
             "channel_id": {**_STRING, "description": "Channel ID returned by agent_network_open."},
             "text": {**_STRING, "description": "New message only; history is not resent."},
             "operation_id": {**_STRING, "description": "Stable ID for this intended operation."},
+            "artifact_refs": {**_ARTIFACT_REFS, "description": "Typed refs from artifact_publish provide verified project content; external URLs remain inert metadata. No file paths."},
         }, ["channel_id", "text", "operation_id"]),
-        "POST", "/v1/send", ["channel_id", "text", "operation_id"], None,
+        "POST", "/v1/send", ["channel_id", "text", "operation_id", "artifact_refs"], None,
     ),
     (
         "agent_network_ask",
@@ -56,9 +72,28 @@ TOOLS = (
             "channel_id": {**_STRING, "description": "Channel ID returned by agent_network_open."},
             "text": {**_STRING, "description": "New question only; history is not resent."},
             "operation_id": {**_STRING, "description": "Stable ID for this intended operation."},
+            "artifact_refs": {**_ARTIFACT_REFS, "description": "Typed refs from artifact_publish provide verified project content; external URLs remain inert metadata. No file paths."},
             "timeout_seconds": {"type": "number", "minimum": 1, "maximum": 300},
         }, ["channel_id", "text", "operation_id"]),
-        "POST", "/v1/ask", ["channel_id", "text", "operation_id"], "timeout_seconds",
+        "POST", "/v1/ask", ["channel_id", "text", "operation_id", "artifact_refs"], "timeout_seconds",
+    ),
+    (
+        "agent_network_artifact_publish",
+        "Snapshot an approved project file as a verified opaque reference; never shares private memory.",
+        _schema("agent_network_artifact_publish", "Publish a bounded approved-root snapshot. For typed final output return JSON: {\"network_result\":{\"text\":\"summary\",\"artifact_refs\":[the_returned_ref]}}.", {
+            "channel_id": _STRING, "path": _STRING,
+            "kind": _ARTIFACT_REFS["items"]["properties"]["kind"],
+            "media_type": _STRING, "label": _STRING,
+        }, ["channel_id", "path"]),
+        "POST", "/v1/artifacts/publish", ["channel_id", "path", "kind", "media_type", "label"], None,
+    ),
+    (
+        "agent_network_artifact_read",
+        "Consume verified same-host project content; hash and size are checked again. No remote fetching.",
+        _schema("agent_network_artifact_read", "Read a granted content-addressed project snapshot.", {
+            "channel_id": _STRING, "artifact_ref": _ARTIFACT_REFS["items"],
+        }, ["channel_id", "artifact_ref"]),
+        "POST", "/v1/artifacts/read", ["channel_id", "artifact_ref"], None,
     ),
     (
         "agent_network_history",
@@ -72,7 +107,7 @@ TOOLS = (
 
 
 def register(ctx) -> None:
-    """Register five optional network tools using only public PluginContext methods."""
+    """Register optional network/content tools using public PluginContext methods."""
     def handler_for(method: str, path: str, fields: list[str] | None, timeout_field: str | None):
         def handler(args: dict | None = None, **kwargs: Any) -> str:
             args = args if isinstance(args, dict) else {}

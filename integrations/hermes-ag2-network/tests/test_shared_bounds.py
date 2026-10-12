@@ -67,9 +67,11 @@ def test_global_capacity_rejects_a_different_profile_before_executor_admission(t
 
 def test_global_capacity_is_shared_by_separate_bridge_processes_and_survives_disconnect(tmp_path: Path):
     import json
+    import os
     from test_cli import command
     from test_http_executor import hermes_api
     from hermes_ag2_network import ExecutionUncertain
+    from hermes_ag2_network.discovery import enroll_profile
 
     tokens = {"caller": "a", "architect": "b", "designer": "c"}
     keys = tmp_path / "keys.json"
@@ -80,13 +82,18 @@ def test_global_capacity_is_shared_by_separate_bridge_processes_and_survives_dis
         path.write_text(secret, encoding="utf-8")
         path.chmod(0o600)
     control = tmp_path / "shared-control.sqlite"
+    hermes_home = tmp_path / "hermes-home"
+    for profile in ("architect", "designer"):
+        (hermes_home / "profiles" / profile).mkdir(parents=True, exist_ok=True)
+        enroll_profile(profile, hermes_home)
+    bridge_env = {**os.environ, "HERMES_HOME": str(hermes_home)}
 
     def bridge(hub_url, name, api_url):
         return command("bridge", "--hub-url", hub_url, "--name", name,
                        "--allow-peer", "caller", "--max-active", "1", "--timeout", "2",
                        "--control-db", str(control), "--ledger", str(tmp_path / (name + ".sqlite")),
                        "--api-url", api_url, "--api-key-file", str(tmp_path / "api.key"),
-                       "--hub-key-file", str(tmp_path / (name + ".key")))
+                       "--hub-key-file", str(tmp_path / (name + ".key")), env=bridge_env)
 
     with hermes_api() as (architect_url, architect_posts), hermes_api(profile="designer") as (designer_url, designer_posts):
         async def scenario():

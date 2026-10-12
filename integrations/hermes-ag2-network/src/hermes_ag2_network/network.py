@@ -3,6 +3,7 @@ import asyncio
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import replace
+import json
 import math
 from hashlib import sha256
 from pathlib import Path
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
 
 
 from .admission import Admission
+from .artifacts import ArtifactRef, ArtifactStore
 from .ledger import Ledger
 from .types import (
     ExecutionBudget, ExecutionRequest, ExecutionResult, ExecutionTaskContext, ExecutionTerminated, ExecutionUncertain,
@@ -46,6 +48,18 @@ class ExternalIdentity:
         raise RuntimeError("AG2 model execution disabled: external Hermes identity")
 
 
+def _artifact_refs(data: dict[str, Any]) -> tuple[ArtifactRef, ...]:
+    raw = data.get("artifact_refs", [])
+    if not isinstance(raw, list) or len(raw) > 16:
+        raise ValueError("invalid artifact reference list")
+    if len(json.dumps(raw).encode("utf-8")) > 16 * 1024:
+        raise ValueError("artifact reference metadata exceeds the size limit")
+    refs = tuple(ArtifactRef.from_wire(item) for item in raw)
+    if any(ref.is_local_file for ref in refs):
+        raise ValueError("local file references cannot cross profiles")
+    return refs
+
+
 def _message(envelope: Envelope) -> Message:
     data = envelope.event_data
     admission = data.get("admission")
@@ -53,7 +67,7 @@ def _message(envelope: Envelope) -> Message:
     return Message(envelope.envelope_id, envelope.sender_id, data["kind"], data.get("text", ""),
                    data["operation_id"], envelope.causation_id,
                    data.get("session_id", ""), data.get("run_id", ""),
-                   code)
+                   code, _artifact_refs(data))
 
 
 def _answered_request_ids(envelopes: list[Envelope], sender_id: str) -> set[str]:
@@ -81,7 +95,8 @@ class Network:
     def __init__(self, hub_client: HubClient, name: str, allowed_peers: set[str],
                  executor: Executor | None, ledger_path: Path,
                  project_peers: Mapping[str, set[str]] | None = None,
-                 limits: NetworkLimits | None = None, control_path: Path | None = None):
+                 limits: NetworkLimits | None = None, control_path: Path | None = None,
+                 artifact_store: ArtifactStore | None = None):
         self.hub_client = hub_client
         self.name = name
         self.allowed_peers = frozenset(allowed_peers)
@@ -95,6 +110,7 @@ class Network:
                for peers in (*self.project_peers.values(), self.allowed_peers) for peer in peers):
             raise ValueError("peer grants require nonempty peer names")
         self.executor = executor
+        self.artifact_store = artifact_store
         self.limits = limits or NetworkLimits()
         self.ledger = Ledger(ledger_path)
         self.admission = Admission(control_path or Path(ledger_path).parent / "network-admission.sqlite",
@@ -117,7 +133,8 @@ class Network:
     async def connect(cls, url: str, *, name: str, token: str, allowed_peers: set[str],
                       ledger_path: Path, executor: Executor | None = None,
                       project_peers: Mapping[str, set[str]] | None = None,
-                      limits: NetworkLimits | None = None, control_path: Path | None = None):
+                      limits: NetworkLimits | None = None, control_path: Path | None = None,
+                      artifact_store: ArtifactStore | None = None):
         if not name or not token:
             raise ValueError("identity and credential required")
         parsed = urlsplit(url)
@@ -128,7 +145,7 @@ class Network:
         # 1.1.2 LinkClient declares endpoint_id writable but WsLinkClient
         # implements a read-only property. Native WS is runtime-tested here.
         hub_client = HubClient(cast(LinkFactory, WsLink(url)))
-        network = cls(hub_client, name, allowed_peers, executor, ledger_path, project_peers, limits, control_path)
+        network = cls(hub_client, name, allowed_peers, executor, ledger_path, project_peers, limits, control_path, artifact_store)
         try:
             await hub_client.open()
             passport = Passport(name=name, owner="hermes-profile",
@@ -327,7 +344,28 @@ class Network:
             raise ValueError("timeout must be a finite positive number")
         return time.time() + min(float(timeout), maximum)
 
+    def _verify_artifacts(self, project_id: str, refs: tuple[ArtifactRef, ...]):
+        if self.artifact_store is not None:
+            self.artifact_store.verify(project_id, refs)
+        elif any(ArtifactStore.is_stored(ref) for ref in refs):
+            raise PermissionError("project artifact store is not enrolled")
+
+    async def publish_artifact(self, channel_id: str, path: Path, *, kind: str = "file",
+                               media_type: str = "application/octet-stream", label: str = "") -> ArtifactRef:
+        channel, _ = await self._channel(channel_id)
+        if self.artifact_store is None:
+            raise PermissionError("project artifact store is not enrolled")
+        return self.artifact_store.publish(channel.metadata.labels["project_id"], path,
+                                           kind=kind, media_type=media_type, label=label)
+
+    async def read_artifact(self, channel_id: str, ref: ArtifactRef) -> bytes:
+        channel, _ = await self._channel(channel_id)
+        if self.artifact_store is None:
+            raise PermissionError("project artifact store is not enrolled")
+        return self.artifact_store.read(channel.metadata.labels["project_id"], ref)
+
     async def send(self, channel_id: str, text: str, *, operation_id: str,
+                   artifact_refs: tuple[ArtifactRef, ...] = (),
                    _deadline_at: float | None = None, _network_context_id: str | None = None,
                    _inherit_context: bool = True) -> str:
         context = self._execution_context(_network_context_id, _inherit_context)
@@ -335,9 +373,19 @@ class Network:
         async with asyncio.timeout(budget.deadline_at - time.time()):
             if not isinstance(text, str) or not text.strip():
                 raise ValueError("nonempty text required")
+            if not isinstance(artifact_refs, (list, tuple)) or len(artifact_refs) > 16:
+                raise ValueError("at most 16 typed artifact references are allowed")
+            if any(not isinstance(ref, ArtifactRef) or ref.is_local_file
+                   for ref in artifact_refs):
+                raise ValueError("artifact references must be typed and must not expose local file paths")
+            wire_refs = [ref.to_wire() for ref in artifact_refs]
+            refs_json = json.dumps(wire_refs, sort_keys=True, separators=(",", ":"))
+            if len(refs_json.encode("utf-8")) > 16 * 1024:
+                raise ValueError("artifact reference metadata exceeds the size limit")
             channel, peer_id = await self._channel(channel_id)
             if not isinstance(operation_id, str) or not operation_id.strip():
                 raise ValueError("nonempty operation_id required")
+            self._verify_artifacts(channel.metadata.labels["project_id"], tuple(artifact_refs))
             peer = await self.hub_client.get_agent(peer_id)
             outbound_trace = context.trace if context is not None else ()
             if not outbound_trace:
@@ -349,7 +397,8 @@ class Network:
             transport_id = uuid.uuid4().hex
             envelope = Envelope(channel_id=channel_id, sender_id=self.client.agent_id,
                                 audience=[peer_id], event_type=EV_TEXT, event_data={
-                "kind": "request", "text": text, "operation_id": operation_id, "trace": list(outbound_trace),
+                "kind": "request", "text": text, "artifact_refs": wire_refs,
+                "operation_id": operation_id, "trace": list(outbound_trace),
                 "transport_id": transport_id,
                 "budget": {
                     "deadline_at": budget.deadline_at,
@@ -361,7 +410,10 @@ class Network:
             context_id = network_execution_context_id(peer.name, channel.metadata.labels["project_id"],
                                                       channel_id, operation_id)
             interaction = (budget.interaction_id, budget.turns_remaining, budget.deadline_at) if context is None else None
-            self.admission.reserve_transport(context_id, transport_id, sha256(text.encode()).hexdigest(), interaction)
+            request_fingerprint = sha256(json.dumps(
+                {"text": text, "artifact_refs": wire_refs}, sort_keys=True, separators=(",", ":"),
+            ).encode()).hexdigest()
+            self.admission.reserve_transport(context_id, transport_id, request_fingerprint, interaction)
             try:
                 # Native ACK only proves acceptance by AG2, not terminal execution.
                 return await self.client.send_envelope(envelope)
@@ -373,7 +425,8 @@ class Network:
                 raise ExecutionUncertain("transport submission uncertain; inspect history or reconcile before retrying") from exc
 
     async def ask(self, channel_id: str, text: str, *, operation_id: str,
-                  timeout: float = 300, _network_context_id: str | None = None,
+                  artifact_refs: tuple[ArtifactRef, ...] = (), timeout: float = 300,
+                  _network_context_id: str | None = None,
                   _inherit_context: bool = True) -> Message:
         context = self._execution_context(_network_context_id, _inherit_context)
         deadline_at = self._deadline_for(timeout, self.limits.request_timeout)
@@ -390,6 +443,7 @@ class Network:
         self._waiters[key] = replies
         try:
             request_id = await self.send(channel_id, text, operation_id=operation_id,
+                                         artifact_refs=artifact_refs,
                                          _deadline_at=deadline_at,
                                          _network_context_id=_network_context_id,
                                          _inherit_context=_inherit_context)
@@ -411,6 +465,8 @@ class Network:
                 raise ExecutionUncertain(reply.text)
             if reply.kind == "rejected":
                 raise NetworkBudgetExceeded(code=reply.admission_code)
+            channel, _ = await self._channel(channel_id)
+            self._verify_artifacts(channel.metadata.labels["project_id"], reply.artifact_refs)
             return reply
         finally:
             self._waiters.pop(key, None)
@@ -463,6 +519,12 @@ class Network:
             return result
         if self.executor is None:
             raise NetworkBudgetExceeded(code="executor_unavailable")
+        validate_input = getattr(self.executor, "validate_input", None)
+        if validate_input is not None:
+            try:
+                validate_input(request)
+            except (ValueError, OSError) as exc:
+                raise RequestNotAdmitted("artifact input refused before execution") from exc
         context = ExecutionTaskContext(
             network_context_id=network_execution_context_id(
                 request.profile, request.project_id, request.channel_id, request.operation_id,
@@ -498,10 +560,17 @@ class Network:
             # Cancellation/deadline is not proof that the external HTTP Run stopped.
             self.ledger.hold(self._held_request)
             raise
-        self._finish_execution(self._held_request, result)
+        try:
+            self._finish_execution(self._held_request, result)
+        except (ValueError, OSError) as exc:
+            self.ledger.terminate(context.network_context_id)
+            self._release_execution(self._held_request)
+            raise ExecutionTerminated("completed execution returned invalid artifact output") from exc
         return result
 
     def _finish_execution(self, request: ExecutionRequest, result: ExecutionResult):
+        refs = _artifact_refs({"artifact_refs": [ref.to_wire() for ref in result.artifact_refs]})
+        self._verify_artifacts(request.project_id, refs)
         self.ledger.advance_session(request.profile, request.project_id, request.channel_id, result.session_id)
         self.ledger.finish(request, result)
         self._release_execution(request)
@@ -559,12 +628,17 @@ class Network:
             async with self._run_lock:
                 try:
                     project_id = channel.metadata.labels["project_id"]
+                    try:
+                        artifact_refs = _artifact_refs(data)
+                        self._verify_artifacts(project_id, artifact_refs)
+                    except (ValueError, OSError) as exc:
+                        raise RequestNotAdmitted("invalid artifact references") from exc
                     session_origin_id, session_current_id = self.ledger.session(
                         self.name, project_id, envelope.channel_id,
                     )
                     request = ExecutionRequest(
                         self.name, project_id, envelope.channel_id, operation_id, text,
-                        session_origin_id, session_current_id,
+                        session_origin_id, session_current_id, artifact_refs=artifact_refs,
                     )
                     wal = await self.hub_client.read_wal(envelope.channel_id)
                     if envelope.envelope_id in _answered_request_ids(wal, self.client.agent_id):
@@ -579,12 +653,18 @@ class Network:
                         request = ExecutionRequest(
                             self.name, project_id, envelope.channel_id, operation_id, text,
                             session_origin_id, session_current_id, budget.deadline_at,
-                            budget.turns_remaining,
+                            budget.turns_remaining, artifact_refs=artifact_refs,
                         )
                         result = await self._execute_once(request, budget, trace)
+                    try:
+                        refs = _artifact_refs({"artifact_refs": [ref.to_wire() for ref in result.artifact_refs]})
+                        self._verify_artifacts(project_id, refs)
+                    except (ValueError, OSError) as exc:
+                        raise ExecutionTerminated("cached artifact output failed verification") from exc
                     reply_data: dict[str, Any] = {
                         "kind": "reply", "text": result.text,
                         "session_id": result.session_id, "run_id": result.run_id,
+                        "artifact_refs": [ref.to_wire() for ref in result.artifact_refs],
                     }
                 except NetworkBudgetExceeded as exc:
                     reply_data = {
@@ -592,6 +672,8 @@ class Network:
                         "text": f"{exc.summary}; {exc.remediation}",
                         "admission": exc.public_details(),
                     }
+                except ExecutionTerminated:
+                    reply_data = {"kind": "status", "text": "terminal execution or artifact verification failed; no automatic re-execution", "terminal": True}
                 except RequestNotAdmitted:
                     reply_data = {"kind": "status", "text": "request refused before execution; correct the input under a new operation ID", "terminal": True}
                 except Exception as exc:  # health: allow BLE001 -- external executor boundary: ACK held work instead of native NACK/replay; exception text may contain secrets

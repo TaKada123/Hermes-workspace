@@ -10,6 +10,7 @@ import secrets
 import signal
 import stat
 
+from .discovery import discover_profiles, enroll_profile, enrolled_profiles, revoke_profile
 from .executor import HermesHTTPExecutor
 from .hub import network_hub
 from .network import Network
@@ -48,12 +49,27 @@ def token(args, prefix: str) -> str:
     return value
 
 
-async def until_stopped():
+async def until_stopped(network: Network | None = None):
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop.set)
-    await stop.wait()
+    if network is None:
+        await stop.wait()
+        return
+    # AG2 1.1.2 has no public disconnect notification. Its pinned WS receive
+    # task terminates on EOF; observing it avoids polling RPCs or an idle LLM.
+    receiver = getattr(network.hub_client, "_receive_task", None)
+    if not isinstance(receiver, asyncio.Task):
+        raise RuntimeError("pinned AG2 disconnect observer unavailable")
+    stopped = asyncio.create_task(stop.wait())
+    try:
+        await asyncio.wait({stopped, receiver}, return_when=asyncio.FIRST_COMPLETED)
+        if not stop.is_set():
+            raise ConnectionError("hub disconnected; supervisor must reconnect")
+    finally:
+        stopped.cancel()
+        await asyncio.gather(stopped, return_exceptions=True)
 
 
 async def serve_hub(args):
@@ -89,14 +105,14 @@ async def serve_bridge(args):
                 if args.tool_api_key_file:
                     raise ValueError("--tool-api-key-file requires --tool-api-port")
                 print(json.dumps({"ready": "bridge", "profile": args.name}), flush=True)
-                await until_stopped()
+                await until_stopped(network)
             else:
                 if not args.tool_api_key_file:
                     raise ValueError("--tool-api-port requires an owner-only --tool-api-key-file")
                 async with ToolAPI(network, protected_file(args.tool_api_key_file), port=args.tool_api_port) as tool_api:
                     print(json.dumps({"ready": "bridge", "profile": args.name,
                                       "tool_api_url": tool_api.url}), flush=True)
-                    await until_stopped()
+                    await until_stopped(network)
 
 
 async def smoke(args):
@@ -154,6 +170,7 @@ def main():
     bridge = commands.add_parser("bridge", help="one enrolled Hermes profile, no AG2 model")
     bridge.add_argument("--hub-url", required=True)
     bridge.add_argument("--name", required=True)
+    bridge.add_argument("--home", type=Path, help="owning Hermes root or profile home; same as profiles --home")
     bridge.add_argument("--allow-peer", action="append", default=[],
                         help="profile-wide enrolled peer; project grants override this list")
     bridge.add_argument("--project-peer", action="append", default=[], metavar="PROJECT=PEER",
@@ -174,6 +191,11 @@ def main():
     bridge.add_argument("--tool-api-key-file", help="owner-only bearer key file for the optional Hermes plugin")
     credential_options(bridge, "hub")
     credential_options(bridge, "api")
+    discovery = commands.add_parser("profiles", help="discover profiles by name; enrollment is always explicit")
+    discovery.add_argument("--home", type=Path, help="Hermes home (defaults to HERMES_HOME or ~/.hermes)")
+    changes = discovery.add_mutually_exclusive_group()
+    changes.add_argument("--enroll", metavar="PROFILE", help="explicitly enroll one discovered profile")
+    changes.add_argument("--revoke", metavar="PROFILE", help="revoke startup authorization; stop running bridge separately")
     probe = commands.add_parser("smoke", help="run a real Hermes tool through a native AG2 request/reply")
     probe.add_argument("--api-url", required=True)
     probe.add_argument("--profile", required=True)
@@ -183,8 +205,23 @@ def main():
     probe.add_argument("--timeout", type=float, default=300)
     credential_options(probe, "api")
     args = parser.parse_args()
+    if args.command == "profiles":
+        try:
+            available = discover_profiles(args.home)
+            if args.enroll:
+                enrolled = enroll_profile(args.enroll, args.home)
+            elif args.revoke:
+                enrolled = revoke_profile(args.revoke, args.home)
+            else:
+                enrolled = enrolled_profiles(args.home)
+            print(json.dumps({"available": available, "enrolled": enrolled}, ensure_ascii=False))
+        except (OSError, ValueError) as exc:
+            parser.exit(1, f"{type(exc).__name__}: discovery failed\n")
+        return
     # Never dump argparse namespace (may later contain secret-bearing fields).
     try:
+        if args.command == "bridge" and args.name not in enrolled_profiles(args.home):
+            parser.error("profile is not explicitly enrolled; run 'hermes-ag2-network profiles --enroll NAME' first")
         asyncio.run({"hub": serve_hub, "bridge": serve_bridge, "smoke": smoke}[args.command](args))
     except Exception as exc:  # health: allow BLE001 -- secret-safe CLI boundary; emit class only, never credential-bearing exception text
         parser.exit(1, f"{type(exc).__name__}: command failed; no automatic execution retry\n")

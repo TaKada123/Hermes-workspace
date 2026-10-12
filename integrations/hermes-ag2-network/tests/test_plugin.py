@@ -1,12 +1,14 @@
 """The standalone plugin registers safe names and calls only its profile-bound loopback bridge."""
 import asyncio
+
 import importlib.util
 import json
 from pathlib import Path
 import sys
 import types
 
-from hermes_ag2_network import ExecutionResult, Network, network_hub
+from hermes_ag2_network import ArtifactRef, ExecutionResult, Network, network_hub
+from hermes_ag2_network.artifacts import ArtifactStore
 from hermes_ag2_network.tool_api import ToolAPI
 
 
@@ -38,15 +40,21 @@ class PluginContext:
         self.tools[kwargs["name"]] = kwargs
 
 
-def test_plugin_registers_five_profile_bound_tools_and_uses_real_bridge(tmp_path, monkeypatch):
+def test_plugin_registers_profile_bound_tools_and_exchanges_verified_content(tmp_path, monkeypatch):
     async def scenario():
         completed = []
+        approved = tmp_path / "approved"
+        approved.mkdir()
+        report = approved / "report.json"
+        report.write_bytes(b"{}")
+        store = ArtifactStore(tmp_path / "store", project_roots={"plugin-test": (approved,)})
 
         async def architect(request):
             completed.append(request)
             return ExecutionResult(
                 text=f"Architect reply to: {request.text}",
                 session_id="architect-session", run_id=f"run-{request.operation_id}",
+                artifact_refs=request.artifact_refs,
             )
 
         keys = {"caller": "caller-hub-key", "architect": "architect-hub-key"}
@@ -54,11 +62,13 @@ def test_plugin_registers_five_profile_bound_tools_and_uses_real_bridge(tmp_path
             async with Network.connect(
                 hub.url, name="architect", token=keys["architect"], allowed_peers={"caller"},
                 executor=architect, ledger_path=tmp_path / "architect.sqlite",
+                artifact_store=store,
             ):
                 async with Network.connect(
                     hub.url, name="caller", token=keys["caller"], allowed_peers=set(),
                     project_peers={"plugin-test": {"architect"}},
                     ledger_path=tmp_path / "caller.sqlite",
+                    artifact_store=store,
                 ) as caller:
                     async with ToolAPI(caller, "profile-tool-secret", port=0) as tool_api:
                         secret_scope = types.ModuleType("agent.secret_scope")
@@ -75,6 +85,7 @@ def test_plugin_registers_five_profile_bound_tools_and_uses_real_bridge(tmp_path
                         assert set(context.tools) == {
                             "agent_network_peers", "agent_network_open", "agent_network_send",
                             "agent_network_ask", "agent_network_history",
+                            "agent_network_artifact_publish", "agent_network_artifact_read",
                         }
                         assert all(tool["check_fn"]() for tool in context.tools.values())
 
@@ -93,15 +104,29 @@ def test_plugin_registers_five_profile_bound_tools_and_uses_real_bridge(tmp_path
 
                         opened = await call("agent_network_open", {"peer": "architect", "project_id": "plugin-test"})
                         channel_id = opened["result"]["channel_id"]
+                        published = await call("agent_network_artifact_publish", {
+                            "channel_id": channel_id, "path": str(report), "kind": "check_report",
+                            "media_type": "application/json", "label": "report",
+                        })
+                        assert published["ok"] is True
+                        artifact_ref = ArtifactRef.from_wire(published["result"])
+                        read = await call("agent_network_artifact_read", {
+                            "channel_id": channel_id, "artifact_ref": artifact_ref.to_wire(),
+                        })
+                        assert read["result"]["verified"] is True
+                        assert read["result"]["text"] == "{}"
                         asked = await call("agent_network_ask", {
                             "channel_id": channel_id,
                             "text": "Please review the interface.",
                             "operation_id": "plugin-ask-01",
+                            "artifact_refs": [artifact_ref.to_wire()],
                             "timeout_seconds": 5,
                         })
                         assert asked["ok"] is True
                         assert asked["result"]["kind"] == "reply"
                         assert asked["result"]["text"] == "Architect reply to: Please review the interface."
+                        assert completed[0].artifact_refs == (artifact_ref,)
+                        assert asked["result"]["artifact_refs"] == [artifact_ref.to_wire()]
 
                         repeated = await call("agent_network_ask", {
                             "channel_id": channel_id,
@@ -125,6 +150,7 @@ def test_plugin_registers_five_profile_bound_tools_and_uses_real_bridge(tmp_path
                         assert [item["kind"] for item in history["result"]] == [
                             "request", "reply", "request", "reply", "request", "reply",
                         ]
+                        assert history["result"][0]["artifact_refs"] == [artifact_ref.to_wire()]
                         assert len(completed) == 3
 
                         # The plugin's profile binding is derived from PluginContext, not a model argument.

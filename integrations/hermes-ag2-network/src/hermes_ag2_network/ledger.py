@@ -5,8 +5,31 @@ from pathlib import Path
 import sqlite3
 import uuid
 
+from .artifacts import ArtifactRef
 from .types import (ExecutionBudget, ExecutionRequest, ExecutionResult, ExecutionTaskContext,
                     ExecutionUncertain, RequestNotAdmitted, network_execution_context_id)
+
+
+def _request_payload(request: ExecutionRequest) -> str:
+    fields = {
+        "profile": request.profile, "project_id": request.project_id,
+        "channel_id": request.channel_id, "operation_id": request.operation_id,
+        "text": request.text,
+        "artifact_refs": [ref.to_wire() for ref in request.artifact_refs],
+    }
+    return json.dumps(fields, sort_keys=True)
+
+
+def _canonical_payload(payload: str) -> str:
+    data = json.loads(payload)
+    data.setdefault("artifact_refs", [])
+    return json.dumps(data, sort_keys=True)
+
+
+def _restore_artifact_refs(data: dict) -> dict:
+    data["artifact_refs"] = tuple(ArtifactRef.from_wire(ref)
+                                  for ref in data.get("artifact_refs", []))
+    return data
 
 
 class Ledger:
@@ -89,9 +112,7 @@ class Ledger:
                             (current_id, profile, project_id, channel_id))
 
     def cached(self, request: ExecutionRequest) -> ExecutionResult | None:
-        payload = json.dumps({key: getattr(request, key) for key in (
-            "profile", "project_id", "channel_id", "operation_id", "text",
-        )}, sort_keys=True)
+        payload = _request_payload(request)
         scope = (request.profile, request.project_id, request.channel_id, request.operation_id)
         row = self.db.execute(
             "SELECT payload,result FROM scoped_operations "
@@ -99,11 +120,11 @@ class Ledger:
         ).fetchone()
         if not row:
             return None
-        if row[0] != payload:
+        if _canonical_payload(row[0]) != payload:
             raise RequestNotAdmitted("operation_id reused with different input in this project channel")
         if row[1] is None:
             raise ExecutionUncertain("prior execution unsettled; explicit operator reconciliation required")
-        return ExecutionResult(**json.loads(row[1]))
+        return ExecutionResult(**_restore_artifact_refs(json.loads(row[1])))
 
     def admit(self, request: ExecutionRequest) -> ExecutionResult | None:
         # Session IDs are derived from the durable channel lineage, not from
@@ -112,20 +133,18 @@ class Ledger:
         cached = self.cached(request)
         if cached is not None:
             return cached
-        payload = json.dumps({key: getattr(request, key) for key in (
-            "profile", "project_id", "channel_id", "operation_id", "text",
-        )}, sort_keys=True)
+        payload = _request_payload(request)
         scope = (request.profile, request.project_id, request.channel_id, request.operation_id)
         with self.db:
             row = self.db.execute(
                 "SELECT payload,result FROM scoped_operations "
                 "WHERE profile=? AND project_id=? AND channel_id=? AND operation_id=?", scope).fetchone()
             if row:
-                if row[0] != payload:
+                if _canonical_payload(row[0]) != payload:
                     raise RequestNotAdmitted("operation_id reused with different input in this project channel")
                 if row[1] is None:
                     raise ExecutionUncertain("prior execution unsettled; explicit operator reconciliation required")
-                return ExecutionResult(**json.loads(row[1]))
+                return ExecutionResult(**_restore_artifact_refs(json.loads(row[1])))
             self.db.execute("INSERT INTO scoped_operations VALUES (?,?,?,?,?,NULL)", (*scope, payload))
         return None
 
@@ -157,8 +176,8 @@ class Ledger:
             context = ExecutionTaskContext(
                 network_execution_context_id(profile, data["project_id"], data["channel_id"], data["operation_id"]),
                 (profile,), ExecutionBudget(0.0, 0, 0))
-            request = ExecutionRequest(**data, session_origin_id=origin, session_current_id=current,
-                                       _task_context=context)
+            request = ExecutionRequest(**_restore_artifact_refs(data), session_origin_id=origin,
+                                       session_current_id=current, _task_context=context)
             self.hold(request)
             return request
         data = json.loads(row[0])
@@ -166,7 +185,7 @@ class Ledger:
         data["_task_context"] = ExecutionTaskContext(
             context["network_context_id"], tuple(context["trace"]),
             ExecutionBudget(**context["budget"]), context.get("run_id", ""))
-        return ExecutionRequest(**data)
+        return ExecutionRequest(**_restore_artifact_refs(data))
 
     def is_terminated(self, context_id: str) -> bool:
         return self.db.execute("SELECT 1 FROM terminated_operations WHERE context_id=?", (context_id,)).fetchone() is not None
