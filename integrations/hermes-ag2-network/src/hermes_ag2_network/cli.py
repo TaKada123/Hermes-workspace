@@ -10,6 +10,7 @@ import secrets
 import signal
 import stat
 
+from .artifacts import ArtifactStore
 from .discovery import discover_profiles, enroll_profile, enrolled_profiles, revoke_profile
 from .executor import HermesHTTPExecutor
 from .hub import network_hub
@@ -89,6 +90,74 @@ def project_peer_grants(values: list[str]) -> dict[str, set[str]]:
     return grants
 
 
+def artifact_configuration(path: str | None) -> tuple[ArtifactStore | None, set[str]]:
+    """Explicit nonsecret behavior config; absent means metadata-only mode.
+
+    Reject unknown keys rather than silently ignoring a misspelled security grant.
+    Credentials remain exclusively in the existing protected-file/env workflow.
+    """
+    if path is None:
+        return None, set()
+    file = Path(path).absolute()
+    if any(part.is_symlink() for part in (file, *file.parents)):
+        raise PermissionError("configuration path must not contain symlinks")
+    fd = os.open(file, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as source:
+        metadata = os.fstat(source.fileno())
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) & 0o077):
+            raise PermissionError("configuration must be an owner-only regular file")
+        data = source.read(65537)
+    if len(data) > 65536:
+        raise ValueError("configuration exceeds 64 KiB")
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate configuration key")
+            result[key] = value
+        return result
+
+    config = json.loads(data.decode("utf-8-sig"), object_pairs_hook=unique_object)
+    keys = {"artifact_store_root", "artifact_project_roots", "artifact_max_bytes",
+            "artifact_private_roots", "artifact_image_projects"}
+    if not isinstance(config, dict) or set(config) - keys:
+        raise ValueError("unknown or invalid behavioral configuration")
+    if not {"artifact_store_root", "artifact_project_roots"} <= set(config):
+        raise ValueError("artifact store and explicit project roots required")
+
+    def paths(values):
+        if not isinstance(values, list) or any(not isinstance(value, str) or not value for value in values):
+            raise ValueError("artifact roots must be lists of paths")
+        roots = tuple(Path(value) for value in values)
+        for root in roots:
+            if not root.is_absolute() or ".." in root.parts:
+                raise ValueError("artifact paths must be absolute without traversal")
+            if any(part.is_symlink() for part in (root, *root.parents)):
+                raise PermissionError("artifact paths must not contain symlinks")
+        return roots
+
+    root = config["artifact_store_root"]
+    if not isinstance(root, str) or not root:
+        raise ValueError("artifact store root must be a path")
+    store_root = paths([root])[0]
+    grants = config["artifact_project_roots"]
+    if not isinstance(grants, dict) or not grants:
+        raise ValueError("explicit project artifact grants required")
+    project_roots = {project: paths(values) for project, values in grants.items()}
+    for roots in project_roots.values():
+        if not roots or any(not root.is_dir() for root in roots):
+            raise ValueError("project artifact roots must be existing directories")
+    private_roots = paths(config.get("artifact_private_roots", []))
+    images = config.get("artifact_image_projects", [])
+    if (not isinstance(images, list) or any(not isinstance(project, str) or project not in grants for project in images)):
+        raise ValueError("image projects require matching explicit artifact grants")
+    store = ArtifactStore(store_root, project_roots=project_roots,
+                          max_bytes=config.get("artifact_max_bytes", 1048576), private_roots=private_roots)
+    return store, set(images)
+
+
 async def serve_bridge(args):
     limits = NetworkLimits(
         max_hops=args.max_hops, max_turns=args.max_turns, max_pending=args.max_pending,
@@ -97,10 +166,13 @@ async def serve_bridge(args):
     project_peers = project_peer_grants(args.project_peer)
     if not args.allow_peer and not project_peers:
         raise ValueError("at least one --allow-peer or --project-peer grant is required")
-    async with HermesHTTPExecutor(args.api_url, profile=args.name, token=token(args, "api"), deadline=args.timeout) as executor:
+    artifact_store, image_projects = artifact_configuration(args.config_file)
+    async with HermesHTTPExecutor(args.api_url, profile=args.name, token=token(args, "api"), deadline=args.timeout,
+                                  artifact_store=artifact_store, image_projects=image_projects) as executor:
         async with Network.connect(args.hub_url, name=args.name, token=token(args, "hub"),
             allowed_peers=set(args.allow_peer), executor=executor, ledger_path=Path(args.ledger),
-            project_peers=project_peers, limits=limits, control_path=Path(args.control_db)) as network:
+            project_peers=project_peers, limits=limits, control_path=Path(args.control_db),
+            artifact_store=artifact_store) as network:
             if args.tool_api_port is None:
                 if args.tool_api_key_file:
                     raise ValueError("--tool-api-key-file requires --tool-api-port")
@@ -175,6 +247,7 @@ def main():
                         help="profile-wide enrolled peer; project grants override this list")
     bridge.add_argument("--project-peer", action="append", default=[], metavar="PROJECT=PEER",
                         help="peer grant for one project; repeat for additional peers")
+    bridge.add_argument("--config-file", help="owner-only JSON behavioral config for explicit same-host artifact grants; disabled by default")
     bridge.add_argument("--ledger", required=True)
     bridge.add_argument("--control-db", required=True,
                         help="same shared admission SQLite path for every controlled participant (same host)")

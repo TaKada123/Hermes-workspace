@@ -26,7 +26,7 @@ def protected(path, value):
     return str(path)
 
 
-@pytest.mark.parametrize("images", [True, False])
+@pytest.mark.parametrize("images", [True, False, None], ids=["image-granted", "image-denied", "content-disabled"])
 def test_installed_bridge_content_exchange_and_explicit_image_grant(tmp_path: Path, images):
     approved = tmp_path / "approved"
     approved.mkdir()
@@ -58,7 +58,8 @@ def test_installed_bridge_content_exchange_and_explicit_image_grant(tmp_path: Pa
                          "--ledger", str(tmp_path / "architect.sqlite"),
                          "--control-db", str(tmp_path / "network-admission.sqlite"),
                          "--api-url", url, "--api-key-file", api_token, "--hub-key-file", hub_token,
-                         "--config-file", config_file, "--tool-api-port", "0", "--tool-api-key-file", tools_token,
+                         *(["--config-file", config_file] if images is not None else []),
+                         "--tool-api-port", "0", "--tool-api-key-file", tools_token,
                          "--timeout", "5") as bridge:
                 async def scenario():
                     async with Network.connect(hub["url"], name="caller", token="a", allowed_peers={"architect"},
@@ -69,6 +70,15 @@ def test_installed_bridge_content_exchange_and_explicit_image_grant(tmp_path: Pa
                         }) as http:
                             published = await http.post("/v1/artifacts/publish", json={"channel_id": channel,
                                 "path": str(report), "kind": "check_report", "media_type": "text/plain"})
+                            if images is None:
+                                from hermes_ag2_network import ExecutionUncertain
+                                assert published.status_code == 403
+                                read = await http.post("/v1/artifacts/read", json={"channel_id": channel, "artifact_ref": result_ref.to_wire()})
+                                assert read.status_code == 403
+                                with pytest.raises(ExecutionUncertain, match="before execution"):
+                                    await caller.ask(channel, "Check report", operation_id="report", artifact_refs=(result_ref,), timeout=5)
+                                assert requests == []
+                                return
                             assert published.status_code == 200
                             assert published.json()["result"] == result_ref.to_wire()
                             reply = await caller.ask(channel, "Check report", operation_id="report", artifact_refs=(result_ref,), timeout=5)
@@ -89,6 +99,9 @@ def test_installed_bridge_content_exchange_and_explicit_image_grant(tmp_path: Pa
                             assert denied.status_code == 403
                 asyncio.run(scenario())
     runs = [body for path, _, body in requests if path.endswith("/v1/runs")]
+    if images is None:
+        assert runs == []
+        return
     assert len(runs) == (2 if images else 1)
     assert "3 passed\\n" in runs[0]["input"] or "3 passed\n" in runs[0]["input"]
     assert str(approved) not in runs[0]["input"]
