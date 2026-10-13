@@ -165,6 +165,24 @@ def test_invalid_api_url_is_rejected_without_echoing_input(cli, url):
     assert not receipt.exists()
 
 
+@pytest.mark.parametrize("url", [
+    pytest.param("https://private-token.☃", id="malformed-idna"),
+    pytest.param("https://private-token.\x01", id="nonprintable-host"),
+])
+def test_invalid_httpx_api_url_is_rejected_without_mutation(cli, url):
+    run, receipt, keys, home = cli
+    before = {profile: path.read_bytes() for profile, path in keys.items()}
+    result = run(url)
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "invalid --api-url" in result.stderr and "valid host/port" in result.stderr
+    for private in ("private-token", "☃", "Traceback", "coding-credential", "architect-credential"):
+        assert private not in result.stdout + result.stderr
+    assert not receipt.parent.exists()
+    assert list(home.iterdir()) == []
+    assert {profile: path.read_bytes() for profile, path in keys.items()} == before
+
+
 def test_transport_failure_saves_blocked_receipt(cli):
     import socket
 

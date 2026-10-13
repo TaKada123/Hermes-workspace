@@ -112,9 +112,9 @@ def main() -> int:
     }
     try:
         probe = RuntimeProbe(args.api_url, credentials)
-    except ValueError:
+        receipt = asyncio.run(probe.readiness())
+    except (ValueError, httpx.InvalidURL):
         parser.exit(2, "invalid --api-url; use a credential-free HTTP loopback or HTTPS base URL with a valid host/port, without path, query or fragment\n")
-    receipt = asyncio.run(probe.readiness())
     try:
         save_receipt(args.receipt, receipt)
     except FileExistsError:
