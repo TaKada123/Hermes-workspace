@@ -78,7 +78,12 @@ those failed attempts were not counted as checks. `git diff --check` passed.
 
 Receipt targets must be new. Exit 0 means only authenticated Sessions API readiness,
 NOT plugin/model readiness, network enrollment, idle proof or ten-step acceptance.
-Exit 2 blocks live execution. Recovery needs the owning operator/parent to establish a
+Exit 2 blocks live execution or rejects unusable input/output. Credential and receipt
+errors go to stderr with cause/remediation, without a traceback, token or path echo;
+stdout is emitted only after a new receipt is saved. HTTP blockers distinguish rejected
+authentication, denied permission, other status failures, invalid Sessions JSON and
+transport failures without retaining response bodies.
+Recovery needs the owning operator/parent to establish a
 healthy current Gateway and authenticated API without changing existing sessions.
 
 ## GitHub Actions, not a slow local suite
@@ -93,7 +98,11 @@ parent's authorized integration push:
 4. An actual canonical `scripts/run_tests.sh -v --tb=short` default-discovery full-suite
    attempt, with zero retries and no paths/-k/marker narrowing. It still attempts the full
    suite after a focused check failure if environment creation succeeded and the run
-   wasn't cancelled. The job has a 90-minute limit; timeout is not a pass.
+   wasn't cancelled. The job has a 90-minute limit and the full-suite step a 60-minute
+   limit, leaving artifact-upload headroom; timeout is not a pass. Default discovery
+   still excludes `tests/integration/`, `tests/e2e/` and `tests/docker/`; these dedicated
+   lanes are not claimed as covered. Environment creation and focused checks also
+   have shorter step limits; artifact upload uses `always()`.
 5. Archive controlled test logs plus exact tested SHA/ref/Run ID using a SHA-pinned
    upload-artifact action, even on failure. Artifact: `ag2-controlled-ci-<SHA>`.
    No live-home receipts/private runtime logs are uploaded by this workflow.
@@ -132,3 +141,32 @@ No push, dispatch, issue write/closure, main merge or independent-review claim w
 All #21 live criteria (multi-turn, both memory writes, restart, parallel projects, live
 errors/duplicate suppression/idle counters) remain open, not simulated. Parent Standards
 and Spec review remains separate. **This ticket is blocked, not done.**
+
+## Standards repair round (controlled, not live)
+
+Added `tests/test_live_acceptance_cli.py`: real module imports in subprocesses, isolated
+`HERMES_HOME`/`HOME`, owner-only credential files, temporary receipt paths and a controlled
+loopback HTTP server. Contracts cover stdout/exit status matching the saved receipt,
+0600 output, preservation of existing evidence, HTTP auth/status/malformed/transport
+failures, invalid API URLs and credential/file/output failures without secret/body leakage.
+No new live scenario or Gateway repair is claimed.
+
+TDD receipts in `/home/vottak/.hermes/cache/scratch/`:
+
+- `ag2-ticket21-review-http-red.log`: 5 expected diagnostic failures, 1 success.
+- `ag2-ticket21-review-http-green.log`: 6 passed after HTTP remediation mapping.
+- `ag2-ticket21-review-input-red.log`: expected failures for CLI credential/input/output handling.
+- `ag2-ticket21-review-input-green.log`: intermediate result, NOT final evidence;
+  exposed receipt-parent misclassification and a stale ticket20 installed package lacking
+  the readiness module in the pre-existing unit test.
+- `ag2-ticket21-review-build.log`: fresh standalone PM build from this worktree to
+  `ag2-ticket21-review-network-env`, test group only. No live environment mutated.
+- `ag2-ticket21-review-final-green.log`: canonical runner, two focused files,
+  **21 passed, 0 failed**, zero retries. No slow local suite was run.
+- `ag2-ticket21-review-static.log`: scoped Ruff/ty and `scripts/check --only health,ruff
+  --base a736b20f`; passed, code health 0 blocking/0 advisory. The initial ty diagnostic
+  on the HTTP fixture's mixed-value dict was corrected with a typed state contract.
+
+The workflow now limits the complete-suite attempt to 60 minutes inside its 90-minute
+job, with shorter limits for PM builds/focused checks and `always()` artifact upload.
+CI execution and independent delta review still belong to the parent on the exact merged SHA.

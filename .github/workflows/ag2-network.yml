@@ -53,6 +53,7 @@ jobs:
           printf 'HERMES_TEST_ENV=%s/hermes-core-test-env\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: Build isolated package and Hermes test environments through PM
+        timeout-minutes: 10
         id: environments
         shell: bash
         run: |
@@ -61,6 +62,7 @@ jobs:
           "$HERMES_BASE_PYTHON" -c 'import os; from pathlib import Path; from pm.operations import build_environment; print(build_environment(source=Path.cwd(), out=Path(os.environ["HERMES_TEST_ENV"]), extras=["slack"], groups=["dev", "test"], explicit=True))'
 
       - name: Run the complete AG2 integration test suite
+        timeout-minutes: 5
         shell: bash
         env:
           HERMES_PYTHON: ${{ runner.temp }}/ag2-network-test-env/bin/python
@@ -72,6 +74,7 @@ jobs:
           scripts/run_tests.sh integrations/hermes-ag2-network/tests/ -- --hermes-core-python "$HERMES_TEST_ENV/bin/python" -v --tb=short 2>&1 | tee "$RESULTS/integration.log"
 
       - name: Run Hermes run-context, profile and memory regression tests
+        timeout-minutes: 5
         shell: bash
         env:
           HERMES_PYTHON: ${{ runner.temp }}/hermes-core-test-env/bin/python
@@ -83,6 +86,7 @@ jobs:
           scripts/run_tests.sh tests/test_dispatch_session_id.py tests/gateway/test_api_server_run_context.py tests/gateway/test_api_server_runs.py tests/hermes_cli/test_profiles.py tests/agent/test_memory_store_v2.py -v --tb=short 2>&1 | tee "$RESULTS/hermes-regressions.log"
 
       - name: Run blocking static and type checks
+        timeout-minutes: 3
         shell: bash
         run: |
           set -euo pipefail
@@ -90,6 +94,7 @@ jobs:
           "$HERMES_TEST_ENV/bin/python" -m ty check --python "$NETWORK_TEST_ENV" --project integrations/hermes-ag2-network integrations/hermes-ag2-network/src integrations/hermes-ag2-network/tests --output-format concise 2>&1 | tee "$RESULTS/types.log"
 
       - name: Attempt canonical complete Hermes default-discovery suite
+        timeout-minutes: 60
         if: ${{ !cancelled() && steps.environments.outcome == 'success' }}
         shell: bash
         env:
@@ -103,6 +108,7 @@ jobs:
           scripts/run_tests.sh -v --tb=short 2>&1 | tee "$RESULTS/hermes-full-suite.log"
 
       - name: Archive exact-SHA controlled CI receipts, including failures
+        timeout-minutes: 5
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
