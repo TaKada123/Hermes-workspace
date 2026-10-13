@@ -19,13 +19,22 @@ jobs:
   integration-tests:
     name: Standalone integration suite
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Check out exact branch commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Initialize isolated CI receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ag2-results"
+          printf 'RESULTS=%s/ag2-results\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          printf 'tested_sha=%s\nref=%s\nrun_id=%s\n' "$GITHUB_SHA" "$GITHUB_REF" "$GITHUB_RUN_ID" > "$RUNNER_TEMP/ag2-results/commit.txt"
 
       - name: Set up pinned uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
@@ -44,6 +53,7 @@ jobs:
           printf 'HERMES_TEST_ENV=%s/hermes-core-test-env\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: Build isolated package and Hermes test environments through PM
+        id: environments
         shell: bash
         run: |
           set -euo pipefail
@@ -59,9 +69,9 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: |
           set -euo pipefail
-          scripts/run_tests.sh integrations/hermes-ag2-network/tests/ -- --hermes-core-python "$HERMES_TEST_ENV/bin/python" -v --tb=short
+          scripts/run_tests.sh integrations/hermes-ag2-network/tests/ -- --hermes-core-python "$HERMES_TEST_ENV/bin/python" -v --tb=short 2>&1 | tee "$RESULTS/integration.log"
 
-      - name: Run Hermes run-context regression tests
+      - name: Run Hermes run-context, profile and memory regression tests
         shell: bash
         env:
           HERMES_PYTHON: ${{ runner.temp }}/hermes-core-test-env/bin/python
@@ -70,11 +80,33 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: |
           set -euo pipefail
-          scripts/run_tests.sh tests/test_dispatch_session_id.py tests/gateway/test_api_server_run_context.py tests/gateway/test_api_server_runs.py -v --tb=short
+          scripts/run_tests.sh tests/test_dispatch_session_id.py tests/gateway/test_api_server_run_context.py tests/gateway/test_api_server_runs.py tests/hermes_cli/test_profiles.py tests/agent/test_memory_store_v2.py -v --tb=short 2>&1 | tee "$RESULTS/hermes-regressions.log"
 
       - name: Run blocking static and type checks
         shell: bash
         run: |
           set -euo pipefail
-          PATH="$HERMES_TEST_ENV/bin:$PATH" scripts/check --only health,ruff --base e98dd05728e2a3d09d9a2e26d5d21edc6c6f83c3
-          "$HERMES_TEST_ENV/bin/python" -m ty check --python "$NETWORK_TEST_ENV" --project integrations/hermes-ag2-network integrations/hermes-ag2-network/src integrations/hermes-ag2-network/tests --output-format concise
+          PATH="$HERMES_TEST_ENV/bin:$PATH" scripts/check --only health,ruff --base e98dd05728e2a3d09d9a2e26d5d21edc6c6f83c3 2>&1 | tee "$RESULTS/static.log"
+          "$HERMES_TEST_ENV/bin/python" -m ty check --python "$NETWORK_TEST_ENV" --project integrations/hermes-ag2-network integrations/hermes-ag2-network/src integrations/hermes-ag2-network/tests --output-format concise 2>&1 | tee "$RESULTS/types.log"
+
+      - name: Attempt canonical complete Hermes default-discovery suite
+        if: ${{ !cancelled() && steps.environments.outcome == 'success' }}
+        shell: bash
+        env:
+          HERMES_PYTHON: ${{ runner.temp }}/hermes-core-test-env/bin/python
+          HERMES_TEST_FILE_RETRIES: '0'
+          HERMES_TEST_WORKERS: '4'
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          # No paths, -k or marker selection: not a weaker regression substitute.
+          scripts/run_tests.sh -v --tb=short 2>&1 | tee "$RESULTS/hermes-full-suite.log"
+
+      - name: Archive exact-SHA controlled CI receipts, including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ag2-controlled-ci-${{ github.sha }}
+          path: ${{ runner.temp }}/ag2-results/
+          if-no-files-found: error
+          retention-days: 14

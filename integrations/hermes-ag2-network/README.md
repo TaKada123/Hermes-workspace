@@ -244,6 +244,15 @@ hermes -p coding plugins enable agent-network
 
 Run that per enrolled profile, using a different loopback port and key for each. Add `--tool-api-port 8766 --tool-api-key-file "$HERMES_HOME/agent-network/secrets/agent-network-tools.key"` to that profile's `bridge` command. The API listener binds **only** `127.0.0.1`, is disabled by default, caps JSON bodies at 64 KiB, verifies a constant-time bearer token plus the expected profile name, and exposes only peers/open/send/ask/history plus artifact publish/read (content access still requires the explicit config/grants above). The owner-only key file must be mode `0600`; the bridge refuses insecure permissions. The API server binds an opaque `run_context_id` (the operation's SHA-256 Idempotency-Key) to the admitted run, and Hermes injects it into tool handlers out-of-band. The plugin returns it in a bridge-only header; it does not replace Hermes' session-scoped `task_id`, so terminal/browser continuity is preserved. The bridge rejects nested requests without the matching active context, preventing another run—even in the same session—from inheriting ancestry or budget. `ask` caps its wait at 300 seconds. A visited-profile ancestry travels in native request metadata; a repeated profile in the current chain is rejected before delivery, so nested consultation returns a useful tool error instead of locking an active Hermes session. No polling occurs: when the plugin is idle it makes no requests and causes no model activity.
 
+## Live acceptance prerequisite gate
+
+`python -m hermes_ag2_network.live_acceptance` performs only authenticated, read-only
+Coding/Architect Sessions API checks and writes a new sanitized readiness receipt.
+It never runs a model or modifies a session; readiness is **not** ten-step acceptance.
+See [LIVE_ACCEPTANCE.md](LIVE_ACCEPTANCE.md) for the actual current blocker, commands,
+CI publication path and explicitly unverified criteria. Historical smoke receipts below
+must not be used as current ticket #21 acceptance.
+
 ## Real-runtime smoke
 
 This command generates ephemeral **network** credentials in memory, starts a real native disk/WS hub, enrolls one existing Hermes Profile with the supplied **Hermes API** credential, asks it to run a read-only terminal SHA256 probe, verifies the digest, reads the native WAL and reads back the exact completed Hermes run/session tool receipts. It does not configure profiles, gateways or providers. API must already be enabled/authenticated by the operator. It creates only a new API session, a run and the chosen bridge state directory; the model may still perform its normal runtime housekeeping.
