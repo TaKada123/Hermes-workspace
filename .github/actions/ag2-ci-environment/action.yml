@@ -1,0 +1,96 @@
+name: Isolated AG2 CI environment
+description: Pinned toolchain, native prerequisites and fresh PM-owned test environments
+inputs:
+  network:
+    description: Also build the standalone AG2 test environment
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Declare external runner-local writable paths
+      shell: bash
+      run: |
+        set -euo pipefail
+        root="$RUNNER_TEMP/ag2-ci"
+        mkdir -p "$root"/{results,home,tmp,native,uv-cache,python,python-bin}
+        for entry in "RESULTS=results" "HOME=home" "TMPDIR=tmp" "UV_CACHE_DIR=uv-cache" "UV_PYTHON_INSTALL_DIR=python" "UV_PYTHON_BIN_DIR=python-bin"; do
+          printf '%s=%s/%s\n' "${entry%%=*}" "$root" "${entry#*=}" >> "$GITHUB_ENV"
+        done
+        printf 'HERMES_HOME=%s/home/.hermes\nHERMES_RUNTIME_DIR=%s/runtime\nHERMES_TEST_ENV=%s/core-env\nNETWORK_TEST_ENV=%s/network-env\n' "$root" "$root" "$root" "$root" >> "$GITHUB_ENV"
+        test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+        printf 'tested_sha=%s\nref=%s\nrun_id=%s\n' "$GITHUB_SHA" "$GITHUB_REF" "$GITHUB_RUN_ID" > "$root/results/commit.txt"
+
+    - name: Set up pinned uv without a shared cache
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      with:
+        version: '0.12.3'
+        enable-cache: false
+
+    - name: Install and verify native prerequisites
+      shell: bash
+      run: |
+        set -euo pipefail
+        exec > >(tee "$RESULTS/native-prerequisites.log") 2>&1
+        # Same tested prerequisites as the earlier canonical full-suite lane.
+        for tool in bash git curl tar sha256sum install uname cut node npm; do command -v "$tool"; done
+        test "$(uname -m)" = x86_64
+        RG_VERSION=15.1.0
+        RG_SHA256=1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599
+        RG_TARBALL="ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+        native="$RUNNER_TEMP/ag2-ci/native"
+        curl -sSfL --retry 3 --retry-delay 5 -o "$native/$RG_TARBALL" \
+          "https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/${RG_TARBALL}"
+        printf '%s  %s\n' "$RG_SHA256" "$native/$RG_TARBALL" | sha256sum -c -
+        tar -xzf "$native/$RG_TARBALL" -C "$native"
+        install -m 0755 "$native/ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl/rg" "$native/rg"
+        printf '%s\n' "$native" >> "$GITHUB_PATH"
+        "$native/rg" --version
+        git --version
+        node --version
+        npm --version
+
+    - name: Install pinned Python and require safe SQLite
+      shell: bash
+      run: |
+        set -euo pipefail
+        exec > >(tee "$RESULTS/python-prerequisites.log") 2>&1
+        uv --version
+        test "$(uv --version | cut -d ' ' -f 2)" = 0.12.3
+        uv python install 3.14.7
+        base="$(uv python find --managed-python 3.14.7)"
+        "$base" - <<'PY'
+        import json, sqlite3, sys
+        from hermes_cli.sqlite_runtime import is_sqlite_wal_reset_vulnerable
+        assert sys.version_info[:3] == (3, 14, 7), sys.version
+        assert not is_sqlite_wal_reset_vulnerable(sqlite3.sqlite_version_info), 'unsafe SQLite: refusing misleading suite failures'
+        print(json.dumps({'python': sys.version, 'sqlite': sqlite3.sqlite_version, 'executable': sys.executable}))
+        PY
+        printf 'HERMES_BASE_PYTHON=%s\n' "$base" >> "$GITHUB_ENV"
+
+    - name: Build fresh locked PM-owned environments
+      shell: bash
+      env:
+        BUILD_NETWORK: ${{ inputs.network }}
+      run: |
+        set -euo pipefail
+        "$HERMES_BASE_PYTHON" - <<'PY' 2>&1 | tee "$RESULTS/environment-build.log"
+        import json, os, sqlite3, subprocess
+        from pathlib import Path
+        from pm.operations import build_environment
+        root = Path.cwd().resolve()
+        base = Path(os.environ['HERMES_BASE_PYTHON'])
+        paths = {key: str(Path(os.environ[key]).resolve()) for key in
+                 ('HOME', 'HERMES_HOME', 'HERMES_RUNTIME_DIR', 'HERMES_TEST_ENV', 'NETWORK_TEST_ENV', 'TMPDIR', 'UV_CACHE_DIR', 'RESULTS')}
+        assert all(not Path(path).is_relative_to(root) for path in paths.values()), paths
+        print(json.dumps({'external_paths': paths}))
+        core = build_environment(source=root, out=Path(os.environ['HERMES_TEST_ENV']),
+                                 python=base, extras=['slack'], groups=['dev', 'test'], explicit=True)
+        check = "import sys,sqlite3; from hermes_cli.sqlite_runtime import is_sqlite_wal_reset_vulnerable; assert sys.version_info[:3] == (3,14,7); assert not is_sqlite_wal_reset_vulnerable(sqlite3.sqlite_version_info); print(sys.executable,sys.version,sqlite3.sqlite_version)"
+        subprocess.run([str(core), '-c', check], check=True)
+        if os.environ['BUILD_NETWORK'] == 'true':
+            network = build_environment(source=root / 'integrations/hermes-ag2-network',
+                                        out=Path(os.environ['NETWORK_TEST_ENV']), python=base,
+                                        groups=['test'], explicit=True)
+            subprocess.run([str(network), '-c', check], check=True)
+        PY
+        printf 'HERMES_PYTHON=%s/bin/python\n' "$HERMES_TEST_ENV" >> "$GITHUB_ENV"
