@@ -1,5 +1,11 @@
 [
   {
+    "path": "integrations/hermes-ag2-network/tests/test_systemd_units.py",
+    "symbol": "test_packaged_units_pass_systemd_validation",
+    "kind": "bare_which",
+    "reason": "Standalone integration probes the host systemd syntax checker, not a managed runtime; absence skips only native unit validation. Importing Hermes core would violate integration environment isolation."
+  },
+  {
     "path": "agent/anthropic_adapter.py",
     "symbol": "<module>",
     "kind": "known_path_table"

@@ -29,7 +29,7 @@ def write_json(path: Path, value: object) -> None:
 
 def verify(output: Path, shards: int) -> dict:
     output.mkdir(parents=True, exist_ok=True)
-    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, timeout=30).strip()
     if os.environ.get("GITHUB_SHA") not in (None, head):
         raise ValueError("Checkout differs from GITHUB_SHA")
     files = runner._discover_files([ROOT / p for p in runner._DEFAULT_ROOTS])
@@ -83,7 +83,7 @@ def run_slice(index: int, shards: int, output: Path, timeout: float) -> int:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
+                process.wait(timeout=10)
             code, status = 124, "timed_out"
     result.update(exit_code=code, status=status, finished_unix=time.time(),
                   duration_seconds=time.time() - started)

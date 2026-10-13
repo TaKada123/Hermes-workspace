@@ -84,13 +84,16 @@ runs:
         assert all(not Path(path).is_relative_to(root) for path in paths.values()), paths
         print(json.dumps({'external_paths': paths}))
         core = build_environment(source=root, out=Path(os.environ['HERMES_TEST_ENV']),
-                                 python=base, extras=['slack'], groups=['dev', 'test'], explicit=True)
+                                 python=base, extras=['acp', 'fal', 'parallel-web', 'slack'], groups=['dev', 'test'], explicit=True)
+        # These optional SDKs are exercised by canonical default discovery.
+        # Lazy installs are disabled by the runner: fail here, not in 20 test jobs.
+        subprocess.run([str(core), '-c', 'import acp, fal_client, parallel, slack_bolt; import pytest, ruamel.yaml; print("canonical suite imports ready")'], check=True, timeout=60)
         check = "import sys,sqlite3; from hermes_cli.sqlite_runtime import is_sqlite_wal_reset_vulnerable; assert sys.version_info[:3] == (3,14,7); assert not is_sqlite_wal_reset_vulnerable(sqlite3.sqlite_version_info); print(sys.executable,sys.version,sqlite3.sqlite_version)"
-        subprocess.run([str(core), '-c', check], check=True)
+        subprocess.run([str(core), '-c', check], check=True, timeout=60)
         if os.environ['BUILD_NETWORK'] == 'true':
             network = build_environment(source=root / 'integrations/hermes-ag2-network',
                                         out=Path(os.environ['NETWORK_TEST_ENV']), python=base,
                                         groups=['test'], explicit=True)
-            subprocess.run([str(network), '-c', check], check=True)
+            subprocess.run([str(network), '-c', check], check=True, timeout=60)
         PY
         printf 'HERMES_PYTHON=%s/bin/python\n' "$HERMES_TEST_ENV" >> "$GITHUB_ENV"
