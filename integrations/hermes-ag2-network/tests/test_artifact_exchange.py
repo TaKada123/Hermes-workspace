@@ -176,9 +176,11 @@ def test_cached_output_is_reverified_after_restart_not_trusted_from_ledger(tmp_p
                                                ledger_path=tmp_path / "caller.sqlite", artifact_store=store) as caller:
                         channel = await caller.open(peer="architect", project_id="project")
                         if corrupt:
+                            history = await caller.history(channel)
                             with pytest.raises(ExecutionUncertain):
                                 await caller.ask(channel, "Check", operation_id="once", timeout=5)
-                            assert (await caller.history(channel))[-1].kind == "status"
+                            # A local cached-result integrity failure must not append another request/status.
+                            assert await caller.history(channel) == history
                         else:
                             assert (await caller.ask(channel, "Check", operation_id="once", timeout=5)).artifact_refs == (ref,)
         assert executions == ["once"]

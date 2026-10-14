@@ -1,4 +1,21 @@
-# Ticket 21: blocked live acceptance, not a completion receipt
+# Ticket 21 live acceptance
+
+## Current implementation checkpoint
+
+The reproducible ten-step executor is now implemented. Current HTTP 200 invalid Sessions
+JSON was documented API-shape drift (`object=list, data=[…]`), not HTML fallback; readiness
+passes after the correction. Actual Coding/Architect live execution remains blocked by the
+empty explicit bridge enrollment catalog, before any Hermes Session/Run. Enrollment/runtime
+repair, live Gateway restart and issue closure were not performed.
+
+See [ACCEPTANCE_MAP.md](ACCEPTANCE_MAP.md) for the current executable command, complete
+criterion/evidence map and limits; [VERIFICATION.md](VERIFICATION.md) for test receipts.
+
+## Historical prerequisite-only checkpoint (superseded readiness)
+
+The remainder preserves the earlier unreachable-runtime report and its historical commands.
+Its "not implemented" and "current" wording refers only to that earlier checkpoint; old scratch
+environments are not reproducibility prerequisites for the new executor.
 
 ## Outcome
 

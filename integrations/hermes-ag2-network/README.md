@@ -284,6 +284,21 @@ For a protected dotenv file add `--api-key-field API_SERVER_KEY`. Alternatively 
 
 ## Verification
 
+### Opt-in live Coding/Architect executor
+
+`python -m hermes_ag2_network.live_acceptance` is read-only readiness by default.
+`--execute --state-dir NEW_DIRECTORY --receipt NEW_FILE` runs the ten-step scenario using
+existing explicitly enrolled Coding/Architect runtimes and temporary separate Hub/Bridge
+processes. It does not enroll/install/repair profiles or restart the Gateway. Sessions readiness
+accepts documented `object=list, data=[…]` as well as the historical schema and diagnoses HTML
+fallback without exporting user rows. See [ACCEPTANCE_MAP.md](ACCEPTANCE_MAP.md) for the
+command, private-memory protections, idle observation scope, evidence map and current blockers.
+
+Completed send/ask retries now return the original authenticated native request/reply receipt
+without appending duplicate WAL messages, including after caller/Hub restart. Conflicting payloads
+and invalid cached artifacts fail locally as `ExecutionUncertain`; pending/uncertain operations
+retain their existing admission protection. A controlled HTTP process test is not a live model pass.
+
 From Hermes checkout root, always use the canonical runner, with the standalone interpreter:
 
 ```sh

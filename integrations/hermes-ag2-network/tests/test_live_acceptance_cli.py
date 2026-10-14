@@ -1,70 +1,7 @@
 """Real-import controlled CLI receipts; not live ten-step acceptance (#21)."""
 import json
-import os
-from pathlib import Path
-import subprocess
-import sys
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from threading import Thread
-from typing import TypedDict
 
 import pytest
-
-
-class EndpointState(TypedDict):
-    status: int
-    body: str
-    requests: list[str]
-
-
-@pytest.fixture
-def cli(tmp_path):
-    keys = {}
-    for profile in ("coding", "architect"):
-        keys[profile] = tmp_path / f"{profile}.key"
-        keys[profile].write_text(f"{profile}-credential")
-        keys[profile].chmod(0o600)
-    home = tmp_path / "hermes-home"
-    home.mkdir()
-    receipt = tmp_path / "evidence" / "receipt.json"
-
-    def run(url, *extra):
-        env = {**os.environ, "HERMES_HOME": str(home), "HOME": str(tmp_path),
-               "PYTHONPATH": str(Path(__file__).parents[1] / "src")}
-        return subprocess.run([
-            sys.executable, "-m", "hermes_ag2_network.live_acceptance",
-            "--api-url", url, "--coding-api-key-file", str(keys["coding"]),
-            "--architect-api-key-file", str(keys["architect"]), "--receipt", str(receipt),
-            *extra,
-        ], env=env, capture_output=True, text=True, timeout=20)
-    return run, receipt, keys, home
-
-
-@pytest.fixture
-def endpoint():
-    state: EndpointState = {"status": 200, "body": '{"sessions": [{"title": "private-title"}]}', "requests": []}
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            profile = self.path.split("/")[2]
-            state["requests"].append(self.path)
-            assert self.headers["Authorization"] == f"Bearer {profile}-credential"
-            self.send_response(state["status"])
-            self.end_headers()
-            self.wfile.write(state["body"].encode())
-
-        def log_message(self, format, *args):
-            pass
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{server.server_port}", state
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
 
 
 @pytest.mark.parametrize(("status", "body", "action"), [

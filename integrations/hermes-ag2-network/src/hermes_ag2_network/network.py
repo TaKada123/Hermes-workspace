@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 from .admission import Admission
 from .artifacts import ArtifactRef, ArtifactStore
 from .ledger import Ledger
+from .network_replay import matching_completed_reply
 from .types import (
     ExecutionBudget, ExecutionRequest, ExecutionResult, ExecutionTaskContext, ExecutionTerminated, ExecutionUncertain,
     Executor, Message, NetworkBudgetExceeded, NetworkCycleError, NetworkLimits, Peer, RequestNotAdmitted,
@@ -394,6 +395,12 @@ class Network:
                 outbound_trace = (*outbound_trace, self.name)
             if peer.name in outbound_trace:
                 raise NetworkCycleError(f"network cycle detected: {peer.name} is already in the request ancestry")
+            completed = matching_completed_reply(await self.hub_client.read_wal(channel_id),
+                sender_id=self.client.agent_id, peer_id=peer_id, operation_id=operation_id,
+                text=text, artifact_refs=wire_refs)
+            if completed is not None:
+                self._settle_transport_receipt(completed)
+                return completed.causation_id
             transport_id = uuid.uuid4().hex
             envelope = Envelope(channel_id=channel_id, sender_id=self.client.agent_id,
                                 audience=[peer_id], event_type=EV_TEXT, event_data={
@@ -447,6 +454,17 @@ class Network:
                                          _deadline_at=deadline_at,
                                          _network_context_id=_network_context_id,
                                          _inherit_context=_inherit_context)
+            channel, peer_id = await self._channel(channel_id)
+            completed = matching_completed_reply(await self.hub_client.read_wal(channel_id),
+                sender_id=self.client.agent_id, peer_id=peer_id, operation_id=operation_id,
+                text=text, artifact_refs=[ref.to_wire() for ref in artifact_refs])
+            if completed is not None and completed.causation_id == request_id:
+                reply = _message(completed)
+                try:
+                    self._verify_artifacts(channel.metadata.labels['project_id'], reply.artifact_refs)
+                except (ValueError, OSError):
+                    raise ExecutionUncertain('cached output artifact verification refused; no automatic retry') from None
+                return reply
             try:
                 async with asyncio.timeout(max(0.0, deadline_at - time.time())):
                     while True:

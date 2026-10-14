@@ -394,6 +394,7 @@ dependencies = [
     { name = "ag2" },
     { name = "aiohttp" },
     { name = "httpx" },
+    { name = "pyyaml" },
     { name = "watchdog" },
     { name = "websockets" },
 ]
@@ -408,6 +409,7 @@ requires-dist = [
     { name = "ag2", specifier = "==1.1.2" },
     { name = "aiohttp", specifier = ">=3.12,<4" },
     { name = "httpx", specifier = ">=0.28.1,<1" },
+    { name = "pyyaml", specifier = ">=6,<7" },
     { name = "watchdog", specifier = ">=6,<7" },
     { name = "websockets", specifier = ">=15,<16" },
 ]
