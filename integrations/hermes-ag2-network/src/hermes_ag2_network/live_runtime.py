@@ -225,8 +225,26 @@ class Readbacks:
         rows = messages.get('messages', messages.get('data', []))
         if not isinstance(rows, list) or messages.get('has_more'):
             raise AcceptanceBlocked(f'{profile}: incomplete session-message readback; no truncated evidence accepted')
-        tools = [call.get('function', {}).get('name', '') for row in rows
-                 for call in row.get('tool_calls') or []]
+        tools = []
+        for row in rows:
+            for call in row.get('tool_calls') or []:
+                function = call.get('function', {})
+                name = function.get('name', '')
+                tools.append(name)
+                if name != 'tool_call':
+                    continue
+                arguments = function.get('arguments', {})
+                if isinstance(arguments, str):
+                    try:
+                        arguments = json.loads(arguments)
+                    except ValueError:
+                        raise AcceptanceBlocked(f'{profile}: malformed deferred invocation evidence') from None
+                if not isinstance(arguments, dict) or not isinstance(arguments.get('calls'), list):
+                    raise AcceptanceBlocked(f'{profile}: malformed deferred invocation evidence')
+                for invoked in arguments['calls']:
+                    if not isinstance(invoked, dict) or not isinstance(invoked.get('name'), str):
+                        raise AcceptanceBlocked(f'{profile}: malformed deferred invocation evidence')
+                    tools.append(invoked['name'])
         counters = {key: value[key] for key in ('message_count', 'tool_call_count', 'api_call_count',
                     'input_tokens', 'output_tokens') if key in value}
         return {'profile': profile, 'run_id': run_id, 'session_id': session_id,
