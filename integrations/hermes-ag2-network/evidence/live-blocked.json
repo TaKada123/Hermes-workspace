@@ -1,0 +1,98 @@
+{
+  "phase": "live",
+  "ready": true,
+  "live_scenario_completed": false,
+  "scenario_id": "acceptance-5f5438c875064b2688b8a754b4a04dd5",
+  "projects": [
+    "acceptance-5f5438c875064b2688b8a754b4a04dd5-alpha",
+    "acceptance-5f5438c875064b2688b8a754b4a04dd5-beta"
+  ],
+  "steps": {
+    "1": {
+      "criterion": "Coding initiates Architect consultation",
+      "status": "not_run"
+    },
+    "2": {
+      "criterion": "Architect receives native AG2 request",
+      "status": "not_run"
+    },
+    "3": {
+      "criterion": "Architect replies through owning Hermes Run",
+      "status": "not_run"
+    },
+    "4": {
+      "criterion": "Coding receives reply and continues",
+      "status": "not_run"
+    },
+    "5": {
+      "criterion": "Coding consults Architect again",
+      "status": "not_run"
+    },
+    "6": {
+      "criterion": "Both channel sessions continue",
+      "status": "not_run"
+    },
+    "7": {
+      "criterion": "Each owning runtime writes independent private memory",
+      "status": "not_run"
+    },
+    "8": {
+      "criterion": "Temporary Hub/Bridge processes restart",
+      "status": "not_run"
+    },
+    "9": {
+      "criterion": "History/identities/sessions continue after restart",
+      "status": "not_run"
+    },
+    "10": {
+      "criterion": "No duplicate, canary leakage or idle activity",
+      "status": "not_run"
+    }
+  },
+  "blockers": [
+    "Explicit bridge enrollment missing: architect, coding; owner must authorize profiles --home ROOT --enroll NAME. Executor does not alter live enrollment/config."
+  ],
+  "mutations": [],
+  "runs": [],
+  "channels": {},
+  "checks": {},
+  "cleanup": {
+    "memory": {},
+    "profile_configs_unchanged": {
+      "coding": true,
+      "architect": true
+    }
+  },
+  "profile_backends": {
+    "coding": "file",
+    "architect": "file"
+  },
+  "readiness": {
+    "phase": "readiness",
+    "ready": true,
+    "live_scenario_completed": false,
+    "profiles": {
+      "coding": {
+        "authenticated": true,
+        "http_status": 200,
+        "content_type": "application/json",
+        "response_kind": "json",
+        "sessions_schema": "list.data"
+      },
+      "architect": {
+        "authenticated": true,
+        "http_status": 200,
+        "content_type": "application/json",
+        "response_kind": "json",
+        "sessions_schema": "list.data"
+      }
+    },
+    "blockers": [],
+    "mutations": []
+  },
+  "execution_build": {
+    "package_source_sha256": "2bc6b3a90084b7f5b705afe8774a9adc4ba45556947ada35c9d60fa7d2b7867f",
+    "git_sha": "d7c2bebe6c031cbbdf9faff5db716babeb01d0f0",
+    "dirty": false
+  }
+}

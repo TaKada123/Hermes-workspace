@@ -1,5 +1,58 @@
 # AG2 ticket verification receipts
 
+## Ticket 21 executor — current verified source
+
+Exact tested source commit: `d7c2bebe6c031cbbdf9faff5db716babeb01d0f0`, implementation branch
+`feat/ag2-live-acceptance-executor`, base `122e97644ff6cd688d1d61c6deb0a305e1288089`.
+The later evidence-only commit does not change executable source. See [ACCEPTANCE_MAP.md](ACCEPTANCE_MAP.md).
+
+Final canonical results on this exact clean source, zero retries:
+- Complete standalone suite: **27 files, 127 passed, 0 failed, 1 skipped**, 49.1 s.
+- Relevant Hermes regressions: **5 files, 273 passed, 0 failed, 3 Windows-only skips**, 56.9 s.
+- Scoped code health/Ruff: **0 blocking, 0 advisory**. Scoped ty: **All checks passed**.
+- Actual `--execute`: exit **2**, both authenticated Sessions probes HTTP **200**, schema
+  `list.data`; explicit bridge enrollment missing for `architect,coding`; `mutations=[]`,
+  `runs=[]`, all ten live steps `not_run`. Both real backends `file`, configuration hashes unchanged.
+
+Committed verbatim sanitized tool logs and machine-readable totals are under `evidence/`:
+`standalone.log`, `core.log`, `static.log`, `types.log`, `verification.json`, `live-blocked.json`.
+The live receipt records clean Git SHA and package source SHA-256. Controlled process fixtures
+exercise the whole executor using actual Hub/Bridge processes and synthetic HTTP model actions;
+**they do not replace a missing live Hermes/model receipt**.
+
+Commands (source checkout; disposable PM environments, no live environment mutation):
+```sh
+NET=/home/vottak/.hermes/cache/scratch/ag2-live-executor-tests-env-02/bin/python
+CORE=/home/vottak/.hermes/cache/scratch/ag2-live-core-tests-env-03/bin/python
+# NET built through pm.operations.build_environment(groups=["test"]).
+# CORE built through PM with groups=["dev", "test"], extras=["slack"] (aiohttp API fixtures).
+HERMES_PYTHON="$NET" scripts/run_tests.sh integrations/hermes-ag2-network/tests/ \
+  -q --tb=short --file-retries 0 -- --hermes-core-python "$CORE"
+HERMES_PYTHON="$CORE" scripts/run_tests.sh tests/test_dispatch_session_id.py \
+  tests/gateway/test_api_server_run_context.py tests/gateway/test_api_server_runs.py \
+  tests/hermes_cli/test_profiles.py tests/agent/test_memory_store_v2.py \
+  -q --tb=short --file-retries 0
+"$CORE" scripts/check --only health,ruff --base 122e97644ff6cd688d1d61c6deb0a305e1288089
+# ty uses --python <NET environment> --project integrations/hermes-ag2-network
+# and the changed acceptance/replay source and fixture files, --output-format concise.
+```
+
+TDD console receipts: Sessions shape/HTML diagnosis RED (2 failures), executor public contract
+RED (3 failures), completed-operation replay RED (different native envelope/causation IDs).
+The replay defect was repaired without new Hermes Runs or duplicate WAL messages; altered input
+and cached-artifact corruption preserve `ExecutionUncertain` semantics. Existing-state credentials
+and invalid evidence-output paths are guarded before mutation. Fixture reuse moved to conftest,
+not test-module imports. An initial runtime-only Python lacked pytest; a first core environment
+lacked aiohttp. These setup failures were corrected with isolated PM builds, not pip or live repair.
+
+Historical hosted full-suite evidence: [run 38378874280](https://github.com/TaKada123/Hermes-workspace/actions/runs/38378874280),
+SHA `122e97644ff6cd688d1d61c6deb0a305e1288089` (**does not cover new code**). Parent artifact
+analysis: 57,206 passed, 90 failed, 761 skipped plus 12 fixture ERRORs omitted from runner totals;
+missing upstream workflow snapshots/Nix paths and existing design-router resolver violations are
+baseline. No unrelated fixes, slow local full suite, push, issue closure or current-source hosted
+CI was performed. Independent parent Standards + Spec review remains pending. **Live #21 blocked.**
+
+
 ## Result / scope
 
 The standalone tracer works through real native AG2 1.1.2 disk/WS/channel/WAL and the public `Network` seam. A real Coding Hermes Profile E2E now passed (receipt below). No existing user session was reused. API keys live in owner-only files under `$HERMES_HOME/agent-network/secrets/`; original `.env`/`config.yaml` snapshots are owner-only under `deployment-backup/`.

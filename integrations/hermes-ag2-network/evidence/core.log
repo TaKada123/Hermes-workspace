@@ -1,0 +1,28 @@
+▶ not activated — using HERMES_PYTHON: /home/vottak/.hermes/cache/scratch/ag2-live-core-tests-env-03/bin/python
+▶ running per-file parallel test suite via run_tests_parallel.py
+  (TZ=UTC LANG=C.UTF-8 PYTHONHASHSEED=0; clean env)
+▶ pre-compiling bytecode cache
+▶ launching test runner
+Discovered 5 test files (~237 tests) under ['tests/test_dispatch_session_id.py', 'tests/gateway/test_api_server_run_context.py', 'tests/gateway/test_api_server_runs.py', 'tests/hermes_cli/test_profiles.py', 'tests/agent/test_memory_store_v2.py']; running with -j 12
+[  0.4% |     1/~237 | ✓1 | ✗0] ✓ tests/gateway/test_api_server_run_context.py (1✓, 6.4s)
+[  1.3% |     3/~237 | ✓3 | ✗0] ✓ tests/test_dispatch_session_id.py (2✓, 7.5s)
+[ 38.0% |    90/~237 | ✓90 | ✗ 0] ✓ tests/agent/test_memory_store_v2.py (87✓, 14.4s)
+[ 64.1% |   152/~237 | ✓165 | ✗  0] ✓ tests/gateway/test_api_server_runs.py (75✓, 42.9s)
+[100.0% |   237/~237 | ✓273 | ✗  0] ✓ tests/hermes_cli/test_profiles.py (108✓ 3s, 56.9s)
+
+=== Summary: 5 files, 273 tests passed, 0 failed, 3 skipped (100% complete) in 56.9s (12 workers) ===
+
+  note: platforms('windows') tests (in 1 file) were SKIPPED on this host (linux); they run on the Windows Python-tests lane.
+  Durations cached to test_durations.json (5 files)
+
+=== Per-file subprocess time distribution ===
+  Files:   5
+  Total subprocess CPU-wall: 128.1s  (runner wall: 56.9s, parallelism: 12x)
+  P50: 14.44s  P90: 56.86s  P95: 56.86s  P99: 56.86s  Max: 56.86s
+  <1s: 0 files (0%)  <2s: 0 files (0%)
+  Top 10 slowest:
+     56.86s  tests/hermes_cli/test_profiles.py
+     42.87s  tests/gateway/test_api_server_runs.py
+     14.44s  tests/agent/test_memory_store_v2.py
+      7.52s  tests/test_dispatch_session_id.py
+      6.44s  tests/gateway/test_api_server_run_context.py

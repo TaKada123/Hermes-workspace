@@ -1,0 +1,40 @@
+{
+  "tested_source_sha": "d7c2bebe6c031cbbdf9faff5db716babeb01d0f0",
+  "live": "blocked_before_mutation",
+  "independent_review": "pending_parent",
+  "current_commit_hosted_ci": "not_run_no_push_authorization",
+  "checks": {
+    "standalone": {
+      "log_sha256": "d9780f2651d81de83d416eb9da7bceaced218de199bcf33b448de1576478792d",
+      "files": 27,
+      "passed": 127,
+      "failed": 0,
+      "skipped": 1,
+      "seconds": 49.1
+    },
+    "core": {
+      "log_sha256": "f8d8374c527cbcbc884484fca14126e689e4ae5485c03461f9a88205b9fc2f7b",
+      "files": 5,
+      "passed": 273,
+      "failed": 0,
+      "skipped": 3,
+      "seconds": 56.9
+    },
+    "static": {
+      "log_sha256": "94c5f4874c00d007e722acc3380c89a786acefbd2c5048258f18a40651e1b5dd"
+    },
+    "types": {
+      "log_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    }
+  },
+  "historical_ci": {
+    "run_id": 38378874280,
+    "sha": "122e97644ff6cd688d1d61c6deb0a305e1288089",
+    "covers_new_code": false,
+    "source": "parent read-only artifact analysis",
+    "passed": 57206,
+    "failed": 90,
+    "skipped": 761,
+    "additional_setup_errors": 12
+  }
+}

@@ -1,0 +1,9 @@
+
+=== health (ok) ===
+Allowed by comment (reviewers: check the reasons):
+  integrations/hermes-ag2-network/src/hermes_ag2_network/live_scenario.py:343  BLE001  LiveScenario.run  -- sanitize provider/tool/private exception bodies in evidence
+  integrations/hermes-ag2-network/src/hermes_ag2_network/live_scenario.py:352  BLE001  LiveScenario.run  -- do not leak owning runtime/private memory in cleanup failure
+
+code health: 12 files vs 122e97644ff6: 0 blocking, 0 advisory (2.4s)
+
+scripts/check: 2 checks, ok
