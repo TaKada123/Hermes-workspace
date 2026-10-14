@@ -1,6 +1,29 @@
 # Live Coding/Architect executor: acceptance map
 
-## Current outcome
+## Current outcome — enrolled live follow-up
+
+**#21 is still blocked, not completed.** Parent authorized and enrolled Coding/Architect.
+Fresh genuine `--execute` on clean source `57d39e553ed05d5f9c5ad657f1ea611c9b0774ed`
+returned exit 2. Coding actually called `agent_network_ask` through deferred `tool_call`,
+but Architect's native WAL contained no corresponding request/reply. Installed profile
+plugin clients predate #19: neither accepts nor forwards `X-Hermes-Run-Context-Id`, and
+neither maps HTTP 429. Current ToolAPI safely refuses nested requests without the owning
+active context. The 429 diagnosis follows the inspected contract; live HTTP status was
+not captured, so it is not represented as a captured response.
+
+Evidence: `evidence/live-enrolled-blocked.json`, `evidence/live-enrolled-diagnosis.json`.
+All ten step statuses remain `not_run` because the executor stops during the first consultation;
+criterion 1 was attempted but its success gate did not pass. No memory canary was written;
+all three temporary processes were reaped, credential copies removed, durable state retained,
+profile configs unchanged, owning backends still `file`, Gateway health HTTP 200.
+Runtime plugins were not updated: authorization permits enrollment, not plugin deployment.
+A parent/operator decision is required before any runtime repair or another acceptance run.
+
+The evidence-only follow-up commit does not change executable source. Deferred-tool evidence
+recognition was repaired with actual RED→GREEN at the agreed Runs/Sessions seam; standalone
+suite: 28 files, 128 passed, 0 failed, 1 skip. Parent's independent review remains separate.
+
+## Historical pre-enrollment outcome
 
 Executor is implemented, but **#21 live acceptance remains blocked, not passed**.
 Current authenticated Coding/Architect Sessions endpoints return HTTP 200 JSON with

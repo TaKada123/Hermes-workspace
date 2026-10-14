@@ -1,6 +1,40 @@
 # AG2 ticket verification receipts
 
-## Ticket 21 executor — current verified source
+## Ticket 21 — current enrolled live follow-up
+
+Exact clean live-tested source: `57d39e553ed05d5f9c5ad657f1ea611c9b0774ed`.
+Branch `feat/ag2-live-acceptance-executor`. Source SHA-256:
+`1616bc66be102e5f1576fb71abe69685102be0e3f20ab65a391451f813851fcd`.
+
+- Genuine fresh execution after parent enrollment: **exit 2**, not completed. Receipt:
+  `/home/vottak/.hermes/cache/scratch/ag2-ticket21-enrolled-live-receipt-03.json`;
+  committed sanitized copy `evidence/live-enrolled-blocked.json`.
+- Coding Run `run_5c4cee218abe4480890ff7d5bd130202`, fresh session
+  `ag2-547d267875695bcfaf8ce7fc75fefadd`, completed, actual deferred `agent_network_ask`
+  invocations recorded; no Architect request/reply in native peer WAL. Ten scenario steps
+  remain `not_run`, first consultation attempted but blocked. Errors/two-project/restart/
+  memory/idle acceptance was not reached and is not claimed.
+- Actual RED regression: new public Runs/Sessions test expected deferred invocation names;
+  old verifier returned only `tool_describe,tool_call`. GREEN targeted **2 passed**, including
+  existing real-process controlled executor; full standalone **28 files, 128 passed,
+  0 failed, 1 skipped**, 44.1 s, zero retries. Same PM/canonical commands below plus
+  `test_live_run_readbacks.py`. Scoped health/Ruff **0 blocking, 0 advisory**; ty passes.
+- Installed Coding/Architect plugin client files are identical legacy copies, SHA-256
+  `f2f5d61b2476b38fe5fb85d4ff8253e69a543ba90d918d3d6612149908daccb6`.
+  Both lack Run-context forwarding and HTTP-429 mapping. Current public ToolAPI refuses
+  missing-context nested work while Coding is active. The likely 429 is inferred from this
+  contract, not captured live HTTP evidence; first class-only 502 probe recorded no 502.
+  Diagnostic instrumentation was removed; no runtime plugin/Gateway/config repair occurred.
+- Cleanup readback: owned PIDs 525154/525147/525125 absent; temporary `.key` files absent;
+  no memory canaries written; `held=[]`; durable state retained at
+  `/home/vottak/.hermes/cache/scratch/ag2-ticket21-enrolled-live-state-03`.
+  Original configs unchanged, both backends `file`; `/health` HTTP 200. Earlier attempts'
+  fresh states/receipts `-01`, `-02` also retained and owned processes reaped.
+- Remaining blocker: operator-authorized deployment of current plugin/context-compatible
+  runtime, followed by a new genuine complete acceptance. No push or issue closure.
+  Parent owns independent review, including this two-file code delta; review not claimed here.
+
+## Ticket 21 executor — historical pre-enrollment verified source
 
 Exact tested source commit: `d7c2bebe6c031cbbdf9faff5db716babeb01d0f0`, implementation branch
 `feat/ag2-live-acceptance-executor`, base `122e97644ff6cd688d1d61c6deb0a305e1288089`.

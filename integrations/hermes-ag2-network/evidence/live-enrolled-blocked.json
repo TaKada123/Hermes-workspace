@@ -1,0 +1,164 @@
+{
+  "phase": "live",
+  "ready": true,
+  "live_scenario_completed": false,
+  "scenario_id": "acceptance-7c2994bcf7484361afb1836f0f2b41de",
+  "projects": [
+    "acceptance-7c2994bcf7484361afb1836f0f2b41de-alpha",
+    "acceptance-7c2994bcf7484361afb1836f0f2b41de-beta"
+  ],
+  "steps": {
+    "1": {
+      "criterion": "Coding initiates Architect consultation",
+      "status": "not_run"
+    },
+    "2": {
+      "criterion": "Architect receives native AG2 request",
+      "status": "not_run"
+    },
+    "3": {
+      "criterion": "Architect replies through owning Hermes Run",
+      "status": "not_run"
+    },
+    "4": {
+      "criterion": "Coding receives reply and continues",
+      "status": "not_run"
+    },
+    "5": {
+      "criterion": "Coding consults Architect again",
+      "status": "not_run"
+    },
+    "6": {
+      "criterion": "Both channel sessions continue",
+      "status": "not_run"
+    },
+    "7": {
+      "criterion": "Each owning runtime writes independent private memory",
+      "status": "not_run"
+    },
+    "8": {
+      "criterion": "Temporary Hub/Bridge processes restart",
+      "status": "not_run"
+    },
+    "9": {
+      "criterion": "History/identities/sessions continue after restart",
+      "status": "not_run"
+    },
+    "10": {
+      "criterion": "No duplicate, canary leakage or idle activity",
+      "status": "not_run"
+    }
+  },
+  "blockers": [
+    "Architect native WAL lacks exactly one correlated request/reply for the requested operation"
+  ],
+  "mutations": [
+    {
+      "temporary_network_state": "/home/vottak/.hermes/cache/scratch/ag2-ticket21-enrolled-live-state-03"
+    },
+    {
+      "profile": "coding",
+      "run_id": "run_5c4cee218abe4480890ff7d5bd130202",
+      "session_id": "ag2-547d267875695bcfaf8ce7fc75fefadd"
+    }
+  ],
+  "runs": [
+    {
+      "profile": "coding",
+      "run_id": "run_5c4cee218abe4480890ff7d5bd130202",
+      "session_id": "ag2-547d267875695bcfaf8ce7fc75fefadd",
+      "origin_session_id": "ag2-547d267875695bcfaf8ce7fc75fefadd",
+      "status": "completed",
+      "tool_names": [
+        "skill_view",
+        "tool_describe",
+        "tool_call",
+        "agent_network_open",
+        "tool_call",
+        "agent_network_ask",
+        "tool_call",
+        "agent_network_ask"
+      ],
+      "counters": {
+        "message_count": 12,
+        "tool_call_count": 5,
+        "api_call_count": 6,
+        "input_tokens": 20735,
+        "output_tokens": 733
+      }
+    }
+  ],
+  "channels": {},
+  "checks": {},
+  "cleanup": {
+    "processes": [
+      {
+        "pid": 525154,
+        "returncode": 0
+      },
+      {
+        "pid": 525147,
+        "returncode": 0
+      },
+      {
+        "pid": 525125,
+        "returncode": 0
+      }
+    ],
+    "memory": {},
+    "temporary_credentials_removed": true,
+    "durable_state_retained": "/home/vottak/.hermes/cache/scratch/ag2-ticket21-enrolled-live-state-03",
+    "profile_configs_unchanged": {
+      "coding": true,
+      "architect": true
+    }
+  },
+  "profile_backends": {
+    "coding": "file",
+    "architect": "file"
+  },
+  "identities": {
+    "coding": "18de757edc958e3bc3dfd0c45cde1862",
+    "architect": "18de757f23ae4a5520f29d26a118e506"
+  },
+  "ledger_metadata": {
+    "sessions": [
+      {
+        "profile": "coding",
+        "project_id": "acceptance-7c2994bcf7484361afb1836f0f2b41de-alpha",
+        "channel_id": "18de757f2d64dc0fa0d99a4dfd148a5a",
+        "origin_id": "ag2-547d267875695bcfaf8ce7fc75fefadd",
+        "current_id": "ag2-547d267875695bcfaf8ce7fc75fefadd"
+      }
+    ],
+    "held": []
+  },
+  "readiness": {
+    "phase": "readiness",
+    "ready": true,
+    "live_scenario_completed": false,
+    "profiles": {
+      "coding": {
+        "authenticated": true,
+        "http_status": 200,
+        "content_type": "application/json",
+        "response_kind": "json",
+        "sessions_schema": "list.data"
+      },
+      "architect": {
+        "authenticated": true,
+        "http_status": 200,
+        "content_type": "application/json",
+        "response_kind": "json",
+        "sessions_schema": "list.data"
+      }
+    },
+    "blockers": [],
+    "mutations": []
+  },
+  "execution_build": {
+    "package_source_sha256": "1616bc66be102e5f1576fb71abe69685102be0e3f20ab65a391451f813851fcd",
+    "git_sha": "57d39e553ed05d5f9c5ad657f1ea611c9b0774ed",
+    "dirty": false
+  }
+}

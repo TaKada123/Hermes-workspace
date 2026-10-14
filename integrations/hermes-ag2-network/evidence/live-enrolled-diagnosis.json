@@ -1,0 +1,75 @@
+{
+  "live_receipt": "/home/vottak/.hermes/cache/scratch/ag2-ticket21-enrolled-live-receipt-03.json",
+  "tested_sha": "57d39e553ed05d5f9c5ad657f1ea611c9b0774ed",
+  "live_exit": 2,
+  "steps": {
+    "1": {
+      "criterion": "Coding initiates Architect consultation",
+      "status": "not_run"
+    },
+    "2": {
+      "criterion": "Architect receives native AG2 request",
+      "status": "not_run"
+    },
+    "3": {
+      "criterion": "Architect replies through owning Hermes Run",
+      "status": "not_run"
+    },
+    "4": {
+      "criterion": "Coding receives reply and continues",
+      "status": "not_run"
+    },
+    "5": {
+      "criterion": "Coding consults Architect again",
+      "status": "not_run"
+    },
+    "6": {
+      "criterion": "Both channel sessions continue",
+      "status": "not_run"
+    },
+    "7": {
+      "criterion": "Each owning runtime writes independent private memory",
+      "status": "not_run"
+    },
+    "8": {
+      "criterion": "Temporary Hub/Bridge processes restart",
+      "status": "not_run"
+    },
+    "9": {
+      "criterion": "History/identities/sessions continue after restart",
+      "status": "not_run"
+    },
+    "10": {
+      "criterion": "No duplicate, canary leakage or idle activity",
+      "status": "not_run"
+    }
+  },
+  "held": [],
+  "plugins": {
+    "coding": {
+      "path": "/home/vottak/.hermes/profiles/coding/plugins/agent-network/client.py",
+      "sha256": "f2f5d61b2476b38fe5fb85d4ff8253e69a543ba90d918d3d6612149908daccb6",
+      "request_keyword_parameters": [
+        "payload",
+        "query"
+      ],
+      "sends_run_context_header": false
+    },
+    "architect": {
+      "path": "/home/vottak/.hermes/profiles/architect/plugins/agent-network/client.py",
+      "sha256": "f2f5d61b2476b38fe5fb85d4ff8253e69a543ba90d918d3d6612149908daccb6",
+      "request_keyword_parameters": [
+        "payload",
+        "query"
+      ],
+      "sends_run_context_header": false
+    }
+  },
+  "cleanup_verified": {
+    "owned_pids_absent": true,
+    "temporary_keys_absent": true,
+    "memory_canaries_not_written": true,
+    "gateway_health": 200
+  },
+  "diagnosis": "Installed profile plugins predate consumed Run-context propagation; current ToolAPI refuses missing-context nested work while Coding is active. Actual old client collapses unmapped 429 to generic failure. HTTP 429 is inferred from the inspected public contract, not captured from live traffic."
+}
