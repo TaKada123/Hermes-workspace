@@ -83,11 +83,23 @@ def profile_resources(home: Path, profile: str) -> dict:
     token = match.group(1).strip().strip('\"\'')
     if not token or any(not 33 <= ord(c) <= 126 for c in token):
         raise AcceptanceBlocked(f'{profile}: invalid existing tool credential')
-    settings = yaml.safe_load(config.read_text())
+    try:
+        settings = yaml.safe_load(config.read_text())
+    except yaml.YAMLError:
+        raise AcceptanceBlocked(f'{profile}: invalid YAML configuration; owner must repair syntax, no automatic repair') from None
     if not isinstance(settings, dict):
         raise AcceptanceBlocked(f'{profile}: invalid profile configuration; no automatic repair')
     plugins = settings.get('plugins', {})
-    url = plugins.get('entries', {}).get('agent-network', {}).get('settings', {}).get('bridge_url', '')
+    memory = settings.get('memory', {})
+    node = plugins
+    for key in ('entries', 'agent-network', 'settings'):
+        if not isinstance(node, dict):
+            raise AcceptanceBlocked(f'{profile}: invalid plugin configuration; owner must repair structures, no automatic repair')
+        node = node.get(key, {})
+    if (not isinstance(node, dict) or not isinstance(memory, dict)
+            or not isinstance(plugins.get('enabled', []), list)):
+        raise AcceptanceBlocked(f'{profile}: invalid profile configuration; owner must repair structures, no automatic repair')
+    url = node.get('bridge_url', '')
     if ('agent-network' not in plugins.get('enabled', []) or
             not isinstance(url, str) or not re.fullmatch(r'http://127\.0\.0\.1:[0-9]+', url)):
         raise AcceptanceBlocked(f'{profile}: explicit existing loopback bridge_url required')
@@ -183,14 +195,26 @@ class TemporaryNetwork:
         stopped = []
         for proc in reversed(self.processes):
             if proc.returncode is None:
-                proc.terminate()
+                try:
+                    proc.terminate()
+                except ProcessLookupError:
+                    pass  # Owned process exited between returncode check and signal.
                 try:
                     await asyncio.wait_for(proc.wait(), 15)
                 except TimeoutError:
-                    proc.kill()
-                    await proc.wait()
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass  # The child can exit concurrently with escalation.
+                    try:
+                        await asyncio.wait_for(proc.wait(), 5)
+                    except TimeoutError:
+                        # Keep an unreaped returncode in the receipt, but attempt every
+                        # other owned child before deferring to the operator.
+                        stopped.append({'pid': proc.pid, 'returncode': None})
+                        continue
             stopped.append({'pid': proc.pid, 'returncode': proc.returncode})
-        self.processes.clear()
+        self.processes = [proc for proc in self.processes if proc.returncode is None]
         return stopped
 
     def remove_credentials(self):
@@ -210,7 +234,27 @@ class Readbacks:
         response.raise_for_status()
         return response.json()
 
-    async def run(self, profile: str, run_id: str, session_id: str, origin_id: str = '') -> dict:
+    async def messages(self, profile: str, session_id: str) -> list[dict]:
+        rows = []
+        for _ in range(100):
+            body = await self.get(profile, f'api/sessions/{session_id}/messages',
+                                  limit=200, offset=len(rows), order='oldest')
+            page = body.get('messages', body.get('data'))
+            pagination = body.get('pagination')
+            if (not isinstance(page, list) or not all(isinstance(row, dict) for row in page)
+                    or not isinstance(pagination, dict) or body.get('session_id') != session_id
+                    or pagination.get('offset') != len(rows) or pagination.get('returned') != len(page)
+                    or pagination.get('limit') != 200):
+                raise AcceptanceBlocked(f'{profile}: incomplete/malformed public message pagination')
+            more = pagination.get('has_more', len(page) == 200)
+            if not isinstance(more, bool) or (more and not page):
+                raise AcceptanceBlocked(f'{profile}: non-progressing public message pagination')
+            rows.extend(page)
+            if not more:
+                return rows
+        raise AcceptanceBlocked(f'{profile}: message pagination bound exceeded; no truncated evidence accepted')
+
+    async def run(self, profile: str, run_id: str, session_id: str, origin_id: str = '', *, input_text: str = '') -> dict:
         body = await self.get(profile, f'v1/runs/{run_id}')
         if (body.get('status') != 'completed' or body.get('partial') or body.get('interrupted')
                 or not body.get('session_id')):
@@ -221,35 +265,46 @@ class Readbacks:
                 raise AcceptanceBlocked(f'{profile}: Run and canonical session tip do not correlate')
         session = await self.get(profile, f'api/sessions/{session_id}')
         value = session.get('session', {})
-        messages = await self.get(profile, f'api/sessions/{session_id}/messages', limit=200)
-        rows = messages.get('messages', messages.get('data', []))
-        if not isinstance(rows, list) or messages.get('has_more'):
-            raise AcceptanceBlocked(f'{profile}: incomplete session-message readback; no truncated evidence accepted')
-        tools = []
-        for row in rows:
-            for call in row.get('tool_calls') or []:
-                function = call.get('function', {})
-                name = function.get('name', '')
-                tools.append(name)
-                if name != 'tool_call':
-                    continue
-                arguments = function.get('arguments', {})
-                if isinstance(arguments, str):
-                    try:
-                        arguments = json.loads(arguments)
-                    except ValueError:
-                        raise AcceptanceBlocked(f'{profile}: malformed deferred invocation evidence') from None
-                if not isinstance(arguments, dict) or not isinstance(arguments.get('calls'), list):
-                    raise AcceptanceBlocked(f'{profile}: malformed deferred invocation evidence')
-                for invoked in arguments['calls']:
-                    if not isinstance(invoked, dict) or not isinstance(invoked.get('name'), str):
-                        raise AcceptanceBlocked(f'{profile}: malformed deferred invocation evidence')
-                    tools.append(invoked['name'])
+        from .live_evidence import turn_tools
+        rows = await self.messages(profile, session_id)
+        tools, invocations = turn_tools(rows, input_text, body.get('output'), body.get('created_at'), body.get('updated_at'))
         counters = {key: value[key] for key in ('message_count', 'tool_call_count', 'api_call_count',
                     'input_tokens', 'output_tokens') if key in value}
         return {'profile': profile, 'run_id': run_id, 'session_id': session_id,
                 'origin_session_id': origin_id or value.get('_lineage_root_id') or session_id,
-                'status': body['status'], 'tool_names': tools, 'counters': counters}
+                'status': body['status'], 'tool_names': tools, 'tool_invocations': invocations,
+                'input_sha256': digest(input_text), 'counters': counters}
+
+    async def activity(self, sessions: dict[str, set[str]], channels: dict[str, set[str]], runs: dict[str, set[str]]) -> dict:
+        discovered = {p: set(ids) for p, ids in sessions.items()}
+        for profile, ids in channels.items():
+            for channel in sorted(ids):
+                offset = 0
+                for _ in range(100):
+                    body = await self.get(profile, 'api/sessions', title='AG2 ' + channel[:12],
+                                          include_children=True, limit=100, offset=offset)
+                    page = body.get('data')
+                    if (not isinstance(page, list) or body.get('offset') != offset
+                            or body.get('limit') != 100 or not isinstance(body.get('has_more'), bool)
+                            or not all(isinstance(r, dict) and isinstance(r.get('id'), str) for r in page)):
+                        raise AcceptanceBlocked(f'{profile}: public acceptance-session discovery unavailable/incomplete')
+                    discovered.setdefault(profile, set()).update(row['id'] for row in page)
+                    if not body['has_more']:
+                        break
+                    if not page:
+                        raise AcceptanceBlocked(f'{profile}: non-progressing acceptance-session discovery')
+                    offset += 100  # API pins can be backfilled beyond the recency window.
+                else:
+                    raise AcceptanceBlocked(f'{profile}: acceptance-session discovery bound exceeded')
+        statuses = {}
+        for profile, ids in runs.items():
+            for run_id in sorted(ids):
+                body = await self.get(profile, f'v1/runs/{run_id}')
+                if not isinstance(body.get('status'), str):
+                    raise AcceptanceBlocked(f'{profile}: known Run status unavailable')
+                statuses[f'{profile}:{run_id}'] = {'status': body['status'], 'session_id': body.get('session_id')}
+        return {'sessions': await self.snapshot(discovered), 'known_runs': statuses,
+                'run_discovery_available': False}
 
     async def snapshot(self, sessions: dict[str, set[str]]) -> dict:
         result = {}

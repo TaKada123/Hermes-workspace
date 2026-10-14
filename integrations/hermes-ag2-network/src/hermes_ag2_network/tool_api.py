@@ -47,6 +47,7 @@ class ToolAPI(AbstractAsyncContextManager["ToolAPI"]):
             web.post("/v1/send", self._send),
             web.post("/v1/ask", self._ask),
             web.get("/v1/history", self._history),
+            web.get("/v1/channels", self._channels),
             web.post("/v1/artifacts/publish", self._publish_artifact),
             web.post("/v1/artifacts/read", self._read_artifact),
         ])
@@ -224,3 +225,20 @@ class ToolAPI(AbstractAsyncContextManager["ToolAPI"]):
             "run_id": message.run_id,
             "artifact_refs": [ref.to_wire() for ref in message.artifact_refs],
         } for message in messages])
+
+    async def _channels(self, request: web.Request) -> web.Response:
+        project = request.query.get('project_id', '')
+        if not project.strip():
+            raise InvalidRequest
+        # Native authenticated listing includes closed channels, not just locally
+        # remembered opens. Recheck project/peer grants before exposing metadata.
+        result = []
+        for metadata in await self.network._channels(include_terminal=True):
+            if metadata.labels.get('project_id') != project:
+                continue
+            try:
+                await self.network._channel(metadata.channel_id)
+            except PermissionError:
+                continue
+            result.append({'channel_id': metadata.channel_id, 'project_id': project})
+        return self._success(result)

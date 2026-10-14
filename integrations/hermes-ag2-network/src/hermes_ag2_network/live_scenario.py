@@ -63,6 +63,7 @@ class LiveScenario:
         self.network = None
         self.readbacks = Readbacks(api_url, credentials)
         self.memories = {}
+        self._cancelled = False
 
     def passed(self, *steps):
         for key in steps:
@@ -82,13 +83,13 @@ class LiveScenario:
     async def native_history(self, channel: str) -> list[dict]:
         return await self.tool('coding', 'GET', '/v1/history', params={'channel_id': channel})
 
-    async def record_run(self, profile: str, reply: dict):
+    async def record_run(self, profile: str, reply: dict, input_text: str):
         origin = ''
         if self.network is not None and self.network.owns_state:
             mappings = ledger_metadata(self.state)['sessions']
             origin = next((r['origin_id'] for r in mappings if r['profile'] == profile
                            and r['current_id'] == reply['session_id']), '')
-        record = await self.readbacks.run(profile, reply['run_id'], reply['session_id'], origin)
+        record = await self.readbacks.run(profile, reply['run_id'], reply['session_id'], origin, input_text=input_text)
         self.sessions[profile].add(reply['session_id'])
         self.receipt['runs'].append(record)
         self.receipt['mutations'].append({'profile': profile, 'run_id': reply['run_id'],
@@ -111,7 +112,7 @@ class LiveScenario:
         reply = await caller.ask(outer, prompt, operation_id=operation, timeout=300)
         if reply.kind != 'reply':
             raise AcceptanceBlocked('Coding did not produce a terminal reply; retain admission and inspect owning Run')
-        record = await self.record_run('coding', asdict(reply))
+        record = await self.record_run('coding', asdict(reply), prompt)
         if not any('agent_network_ask' in name for name in record['tool_names']):
             raise AcceptanceBlocked('Coding Run did not invoke agent_network_ask; model prose is not consultation evidence')
         channel = (await self.tool('coding', 'POST', '/v1/open', json={'peer': 'architect', 'project_id': project}))['channel_id']
@@ -120,7 +121,9 @@ class LiveScenario:
             child = verify_exchange(history, nested_operation)
         except ValueError:
             raise AcceptanceBlocked('Architect native WAL lacks exactly one correlated request/reply for the requested operation') from None
-        await self.record_run('architect', child)
+        child_input = next(row['text'] for row in history if row.get('kind') == 'request'
+                           and row.get('operation_id') == nested_operation)
+        await self.record_run('architect', child, child_input)
         if marker not in child.get('text', '') or marker not in reply.text:
             raise AcceptanceBlocked('Coding/Architect outputs lack independent project markers')
         other = next(p for p in self.projects if p != project)
@@ -152,6 +155,8 @@ class LiveScenario:
             self.receipt['checks']['errors'] = found
 
     async def memory_turn(self, profile: str, text: str, operation: str):
+        if self._cancelled:
+            raise asyncio.CancelledError
         # Send private canaries directly to the freshly-created owning network session,
         # never in an AG2 request/envelope or another profile's input.
         mappings = ledger_metadata(self.state)['sessions']
@@ -168,7 +173,7 @@ class LiveScenario:
                 self.receipt['mutations'].append({'profile': profile, 'run_id': context.run_id,
                                                   'session_id': session, 'status': 'unsettled'})
                 raise
-        record = await self.record_run(profile, {'run_id': result.run_id, 'session_id': result.session_id})
+        record = await self.record_run(profile, {'run_id': result.run_id, 'session_id': result.session_id}, text)
         if not any('memory' in name for name in record['tool_names']):
             raise AcceptanceBlocked(f'{profile}: owning runtime did not invoke a memory tool')
 
@@ -227,6 +232,52 @@ class LiveScenario:
                 self.receipt['blockers'].append(f'{profile}: memory bytes differ after owning-runtime cleanup; verify unrelated entries. No automatic file restoration')
         self.receipt['cleanup']['memory'] = result
 
+    async def verify_histories(self):
+        checked = []
+        seen = set()
+        for project in self.projects:
+            for profile in ('coding', 'architect'):
+                catalog = await self.tool(profile, 'GET', '/v1/channels', params={'project_id': project})
+                if not isinstance(catalog, list):
+                    raise AcceptanceBlocked('native channel catalog unavailable; cannot prove all-history privacy')
+                for entry in catalog:
+                    if not isinstance(entry, dict) or entry.get('project_id') != project or not entry.get('channel_id'):
+                        raise AcceptanceBlocked('native channel catalog malformed or outside acceptance project')
+                    channel = entry['channel_id']
+                    if channel in seen:
+                        continue
+                    seen.add(channel)
+                    history = await self.tool(profile, 'GET', '/v1/history', params={'channel_id': channel})
+                    for data in self.memories.values():
+                        if any(data['marker'] in json.dumps(row, ensure_ascii=False) for row in history):
+                            raise AcceptanceBlocked('private memory canary leaked to native channel history')
+                    for operation in {row['operation_id'] for row in history if row['kind'] == 'request'}:
+                        try:
+                            verify_exchange(history, operation)
+                        except ValueError:
+                            raise AcceptanceBlocked('project history has missing/duplicated correlated messages') from None
+                    checked.append({'project': project, 'profile': profile, 'channel_id': channel,
+                                    'history': public_history(history)})
+        required = {row[k] for row in self.receipt['channels'].values()
+                    for k in ('coding_architect', 'acceptance_coding')}
+        if not required <= seen:
+            raise AcceptanceBlocked('native channel catalog omitted a known acceptance channel')
+        self.receipt['checks']['canary_history_scope'] = checked
+
+    async def idle_activity(self):
+        metadata = ledger_metadata(self.state)
+        channels = {p: set() for p in self.sessions}
+        sessions = {p: set(ids) for p, ids in self.sessions.items()}
+        runs = {p: set() for p in self.sessions}
+        for row in metadata['sessions']:
+            profile = row['profile']
+            channels[profile].add(row['channel_id'])
+            sessions[profile].update((row['origin_id'], row['current_id']))
+        for row in self.receipt['runs'] + metadata['held']:
+            if row.get('run_id'):
+                runs[row['profile']].add(row['run_id'])
+        return await self.readbacks.activity(sessions, channels, runs)
+
     async def exercise(self):
         assert self.network is not None
         arguments: dict[str, Any] = {'name': 'acceptance', 'token': self.network.keys['acceptance'], 'allowed_peers': {'coding', 'architect'},
@@ -248,15 +299,23 @@ class LiveScenario:
                     raise AcceptanceBlocked('Architect second consultation forked its session lineage')
             self.passed('5', '6')
             before = await self.readbacks.snapshot(self.sessions)
-            replay = await caller.ask(outer, first_prompt, operation_id=self.projects[0] + '-first', timeout=10)
+            replays = await asyncio.gather(*(caller.ask(outer, first_prompt,
+                operation_id=self.projects[0] + '-first', timeout=10) for _ in range(2)), return_exceptions=True)
+            refused = [r for r in replays if isinstance(r, ValueError) and str(r) == 'operation already awaited']
+            replies = [r for r in replays if not isinstance(r, BaseException)]
+            if not replies or len(refused) + len(replies) != 2:
+                raise AcceptanceBlocked('concurrent retry returned an unexpected or uncertain outcome; no automatic replay')
+            replay = replies[0]
             after = await self.readbacks.snapshot(self.sessions)
-            if before != after or replay.kind != 'reply':
+            if before != after or any(r.kind != 'reply' or asdict(r) != asdict(replay) for r in replies):
                 raise AcceptanceBlocked('duplicate operation caused additional Hermes activity')
             try:
                 verify_exchange([asdict(m) for m in await caller.history(outer)], self.projects[0] + '-first')
             except ValueError:
                 raise AcceptanceBlocked('duplicate retry appended a duplicate native request/reply') from None
-            self.receipt['checks']['duplicate_replay'] = {'run_id': replay.run_id, 'counters_unchanged': True}
+            self.receipt['checks']['duplicate_replay'] = {'run_id': replay.run_id,
+                'counters_unchanged': True, 'concurrent_retries': 2, 'same_native_receipt': True,
+                'locally_refused_pending_retry_count': len(refused)}
             await self.faults()
             await self.private_memory()
             primary_channel = self.receipt['channels'][self.projects[0]]['coding_architect']
@@ -292,30 +351,43 @@ class LiveScenario:
                 owned = [r for r in mappings if r['profile'] == profile]
                 if len({r['origin_id'] for r in owned}) != len(owned) or len({r['current_id'] for r in owned}) != len(owned):
                     raise AcceptanceBlocked(f'{profile}: projects share a Hermes session; parallel isolation failed')
-            for project in self.projects:
-                history = await self.native_history(self.receipt['channels'][project]['coding_architect'])
-                for data in self.memories.values():
-                    if any(data['marker'] in row.get('text', '') for row in history):
-                        raise AcceptanceBlocked('private memory canary leaked to native channel history')
-                for operation in {row['operation_id'] for row in history if row['kind'] == 'request'}:
-                    try:
-                        verify_exchange(history, operation)
-                    except ValueError:
-                        raise AcceptanceBlocked('project history has missing/duplicated correlated messages') from None
-                self.receipt['channels'][project]['history'] = public_history(history)
-            before = await self.readbacks.snapshot(self.sessions)
+            await self.verify_histories()
+            before = await self.idle_activity()
             start = time.monotonic()
             await asyncio.sleep(self.idle_seconds)
-            after = await self.readbacks.snapshot(self.sessions)
+            after = await self.idle_activity()
             self.receipt['checks']['idle'] = {'observed_seconds': time.monotonic() - start,
-                'scope': 'all new acceptance session model/Run counters; not unrelated user sessions',
-                'before': before, 'after': after, 'unchanged': before == after}
+                'scope': 'public acceptance-channel session discovery/counters and known Run statuses; no unrelated/global-zero claim',
+                'before': before, 'after': after, 'unchanged': before == after,
+                'complete': False, 'new_run_discovery': 'unavailable: public Runs only supports GET by known ID'}
             if before != after:
-                raise AcceptanceBlocked('idle acceptance sessions produced model/tool/message activity')
-            self.passed('10')
+                raise AcceptanceBlocked('idle acceptance sessions or known Runs produced activity')
+            raise AcceptanceBlocked('Idle acceptance incomplete: public API cannot discover new acceptance-related queued Runs; unchanged known counters are not full Run evidence')
+
+    def cancelled(self):
+        self._cancelled = True
+        message = 'Acceptance cancelled; no new Hermes cleanup Runs submitted. Retain ledger and settle owning Runs before memory cleanup'
+        if message not in self.receipt['blockers']:
+            self.receipt['blockers'].append(message)
+
+    async def protected_cleanup(self, awaitable, label: str, timeout: float):
+        # Signals cancel the caller, not this bounded resource finalizer. Repeated
+        # signals still set the no-new-Runs gate while owned processes are reaped.
+        task = asyncio.create_task(asyncio.wait_for(awaitable, timeout))
+        while True:
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:
+                self.cancelled()
+                if task.cancelled():
+                    self.receipt['blockers'].append(f'{label}: cleanup cancelled internally; operator verification required')
+                    return None
+            except Exception as exc:  # health: allow BLE001 -- sanitized resource finalization receipt
+                self.receipt['blockers'].append(f'{label}: cleanup unsettled ({type(exc).__name__}); operator verification required')
+                return None
 
     async def run(self) -> dict:
-        cancelled = False
+        self._cancelled = False
         try:
             self.resources = {p: profile_resources(self.home, p) for p in ('coding', 'architect')}
             self.receipt['profile_backends'] = {p: r['memory_backend'] for p, r in self.resources.items()}
@@ -336,8 +408,7 @@ class LiveScenario:
             await self.network.start()
             await self.exercise()
         except asyncio.CancelledError:
-            cancelled = True
-            self.receipt['blockers'].append('Acceptance cancelled; no new Hermes cleanup Runs submitted. Retain ledger and settle owning Runs before memory cleanup')
+            self.cancelled()
         except AcceptanceBlocked as exc:
             self.receipt['blockers'].append(str(exc))
         except Exception as exc:  # health: allow BLE001 -- sanitize provider/tool/private exception bodies in evidence
@@ -345,10 +416,18 @@ class LiveScenario:
         finally:
             if self.network is not None:
                 # Prevent queued/parallel transport from starting a new writer during cleanup.
-                self.receipt['cleanup']['processes'] = await self.network.stop()
+                self.receipt['cleanup']['processes'] = await self.protected_cleanup(
+                    self.network.stop(), 'Owned processes', 65)
+            processes = self.receipt['cleanup'].get('processes')
+            reaped = processes is not None and all(row['returncode'] is not None for row in processes)
+            if self.network is not None and not reaped:
+                self.receipt['blockers'].append('Owned process cleanup incomplete; no new memory Runs, operator verification required')
             try:
-                if not cancelled:
-                    await self.cleanup_memory()
+                if not self._cancelled and reaped:
+                    async with asyncio.timeout(330):
+                        await self.cleanup_memory()
+            except asyncio.CancelledError:
+                self.cancelled()
             except Exception as exc:  # health: allow BLE001 -- do not leak owning runtime/private memory in cleanup failure
                 self.receipt['blockers'].append(f'Owning-runtime memory cleanup unsettled ({type(exc).__name__}); operator readback required')
             if self.network is not None:
@@ -358,14 +437,23 @@ class LiveScenario:
                     except (OSError, sqlite3.Error, ValueError):
                         self.receipt['blockers'].append('Operational ledger metadata unreadable; retain state for operator reconciliation')
                     finally:
-                        self.network.remove_credentials()
-                    self.receipt['cleanup']['temporary_credentials_removed'] = True
+                        try:
+                            self.network.remove_credentials()
+                            self.receipt['cleanup']['temporary_credentials_removed'] = True
+                        except OSError:
+                            self.receipt['cleanup']['temporary_credentials_removed'] = False
+                            self.receipt['blockers'].append('Temporary credential removal failed; operator cleanup required')
                     self.receipt['cleanup']['durable_state_retained'] = str(self.state)
-            self.receipt['cleanup']['profile_configs_unchanged'] = {
-                p: digest(r['config'].read_bytes()) == r['config_sha256'] for p, r in self.resources.items()}
+            unchanged = {}
+            for profile, resource in self.resources.items():
+                try:
+                    unchanged[profile] = digest(resource['config'].read_bytes()) == resource['config_sha256']
+                except OSError:
+                    unchanged[profile] = False
+            self.receipt['cleanup']['profile_configs_unchanged'] = unchanged
             if not all(self.receipt['cleanup']['profile_configs_unchanged'].values()):
                 self.receipt['blockers'].append('Profile configuration changed during acceptance; operator review required, no automatic restoration')
-            await self.readbacks.http.aclose()
+            await self.protected_cleanup(self.readbacks.http.aclose(), 'HTTP client', 15)
         self.receipt['live_scenario_completed'] = (not self.receipt['blockers'] and
             all(step['status'] == 'passed' for step in self.receipt['steps'].values()) and
             all(self.receipt['cleanup']['profile_configs_unchanged'].values()))

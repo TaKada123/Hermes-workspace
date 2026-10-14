@@ -11,15 +11,17 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 from threading import Thread
 from urllib.request import Request, urlopen
+from urllib.parse import parse_qs, urlsplit
 import uuid
 
 from hermes_ag2_network.discovery import enroll_profile
 from hermes_ag2_network.live_scenario import LiveScenario
 
 
-def test_real_process_executor_completes_controlled_ten_step_contract(tmp_path):
+def test_real_process_executor_verifies_controlled_steps_and_blocks_missing_run_discovery(tmp_path):
     home = tmp_path / 'home'
     ports = {}
     import socket
@@ -59,14 +61,21 @@ def test_real_process_executor_completes_controlled_ten_step_contract(tmp_path):
                 return self.respond({'features': {'run_submission': True, 'run_status': True,
                                                    'runs_idempotency': {'durable': True}}})
             if path == 'api/sessions':
-                return self.respond({'object': 'list', 'data': []})
+                query = parse_qs(urlsplit(self.path).query)
+                title = query.get('title', [''])[0]
+                data = [row for (p, _), row in sessions.items() if p == profile and row.get('title') == title]
+                return self.respond({'object': 'list', 'data': data, 'limit': 100, 'offset': 0, 'has_more': False})
             if path.startswith('v1/runs/'):
                 return self.respond(runs[path.rsplit('/', 1)[1]])
             session_id = path.split('/')[2]
             key = (profile, session_id)
             if path.endswith('/messages'):
-                limit = int(self.path.split('limit=')[1])
-                return self.respond({'session_id': session_id, 'messages': sessions[key]['messages'] if limit else []})
+                query = parse_qs(urlsplit(self.path).query)
+                limit = int(query['limit'][0])
+                offset = int(query.get('offset', ['0'])[0])
+                rows = sessions[key]['messages'][offset:offset + limit]
+                return self.respond({'session_id': session_id, 'messages': rows,
+                    'pagination': {'limit': limit, 'offset': offset, 'returned': len(rows)}})
             return self.respond({'session': {k: v for k, v in sessions[key].items() if k != 'messages'}})
 
         def do_POST(self):
@@ -78,7 +87,7 @@ def test_real_process_executor_completes_controlled_ten_step_contract(tmp_path):
                 key = (profile, body['id'])
                 if key in sessions:
                     return self.respond({'error': {'code': 'session_exists'}}, 409)
-                sessions[key] = {'id': body['id'], 'messages': [], 'message_count': 0, 'tool_call_count': 0,
+                sessions[key] = {'id': body['id'], 'title': body['title'], 'messages': [], 'message_count': 0, 'tool_call_count': 0,
                                  'api_call_count': 0, 'input_tokens': 0, 'output_tokens': 0}
                 return self.respond({'session': {'id': body['id']}}, 201)
             assert path == 'v1/runs'
@@ -87,14 +96,14 @@ def test_real_process_executor_completes_controlled_ten_step_contract(tmp_path):
                 return self.respond({'run_id': idempotency[identity]})
             run_id = uuid.uuid4().hex
             idempotency[identity] = run_id
-            runs[run_id] = {'run_id': run_id, 'session_id': body['session_id'], 'status': 'queued'}
+            runs[run_id] = {'run_id': run_id, 'session_id': body['session_id'], 'status': 'queued', 'created_at': time.time()}
             context_id = self.headers['X-Hermes-Run-Context-Id']
 
             def work():
                 try:
                     text = body['input']
                     row = sessions[(profile, body['session_id'])]
-                    row['messages'].append({'role': 'user', 'content': text})
+                    row['messages'].append({'role': 'user', 'content': text, 'timestamp': time.time()})
                     row['api_call_count'] += 1
                     output = 'controlled direct reply'
                     if 'memory tool' in text:
@@ -104,7 +113,9 @@ def test_real_process_executor_completes_controlled_ten_step_contract(tmp_path):
                             path.write_text(path.read_text() + marker + '\n')
                         else:
                             path.write_text(path.read_text().replace(marker + '\n', ''))
-                        row['messages'].append({'role': 'assistant', 'tool_calls': [{'function': {'name': 'memory'}}]})
+                        row['messages'].append({'role': 'assistant', 'tool_calls': [{'id': run_id + '-tool',
+                            'function': {'name': 'memory', 'arguments': '{}'}}]})
+                        row['messages'].append({'role': 'tool', 'tool_call_id': run_id + '-tool', 'content': 'success'})
                     elif profile == 'coding':
                         project = capture(r'Project (acceptance-[^. ]+)', text)
                         operation = capture(r'operation_id (acceptance-[^. ]+)', text)
@@ -120,15 +131,17 @@ def test_real_process_executor_completes_controlled_ten_step_contract(tmp_path):
                         reply = tool('ask', {'channel_id': channel, 'operation_id': operation,
                                             'text': f'controlled advice request, marker {marker}', 'timeout_seconds': 20})
                         assert reply['kind'] == 'reply'
-                        row['messages'].append({'role': 'assistant', 'tool_calls': [{'function': {'name': 'agent_network_ask'}}]})
+                        row['messages'].append({'role': 'assistant', 'tool_calls': [{'id': run_id + '-tool',
+                            'function': {'name': 'agent_network_ask', 'arguments': json.dumps({'operation_id': operation})}}]})
+                        row['messages'].append({'role': 'tool', 'tool_call_id': run_id + '-tool', 'content': json.dumps(reply)})
                         output = 'controlled Coding continuation ' + reply['text']
                     else:
                         marker = capture(r'marker (acceptance-[^ ]+)', text)
                         output = 'controlled Architect advice ' + marker
-                    row['messages'].append({'role': 'assistant', 'content': output})
+                    row['messages'].append({'role': 'assistant', 'content': output, 'timestamp': time.time()})
                     row['message_count'] = len(row['messages'])
                     row['tool_call_count'] = sum(bool(m.get('tool_calls')) for m in row['messages'])
-                    runs[run_id].update(status='completed', output=output)
+                    runs[run_id].update(status='completed', output=output, updated_at=time.time())
                 except Exception as exc:
                     errors.append(type(exc).__name__)
                     runs[run_id].update(status='failed')
@@ -147,8 +160,11 @@ def test_real_process_executor_completes_controlled_ten_step_contract(tmp_path):
             {'coding': 'coding-api', 'architect': 'architect-api'}, home=home,
             state_dir=state, idle_seconds=2).run())
         assert not errors, errors
-        assert receipt['live_scenario_completed'] is True, receipt['blockers']
-        assert all(step['status'] == 'passed' for step in receipt['steps'].values())
+        assert receipt['live_scenario_completed'] is False
+        assert all(receipt['steps'][str(i)]['status'] == 'passed' for i in range(1, 10)), receipt['blockers']
+        assert receipt['steps']['10']['status'] == 'not_run'
+        assert len(receipt['blockers']) == 1 and 'cannot discover new' in receipt['blockers'][0]
+        assert receipt['checks']['idle']['complete'] is False
         assert receipt['checks']['idle']['unchanged'] is True
         assert receipt['checks']['two_project_parallel']['distinct_channels'] is True
         assert all(row['original_bytes_restored'] for row in receipt['cleanup']['memory'].values())
