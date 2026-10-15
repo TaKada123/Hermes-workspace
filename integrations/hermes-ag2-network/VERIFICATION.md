@@ -1,6 +1,39 @@
 # AG2 ticket verification receipts
 
-## Ticket 21 — current authorized post-reload live
+## Ticket 21 — current source candidate, no Gateway deployment
+
+Candidate branch `feat/ag2-live-acceptance-executor`, exact tested source SHA
+`6d6f08285323239718256e17d2df834e60e81115` (merge includes integration commit
+`b92e1e01` and executor commit `a406fdbc`). This is source/tests evidence, not proof
+that the running Gateway has loaded it.
+
+- Full standalone AG2 suite on the exact merged candidate: **35 files, 148 passed,
+  0 failed, 1 skipped**, zero retries.
+- Relevant Hermes API Run/list/context suite on the merged candidate: **4 files,
+  195 passed, 0 failed**, zero retries.
+- `scripts/check --only health,ruff --base 122e97644ff6cd688d1d61c6deb0a305e1288089`:
+  code health **0 blocking, 0 advisory**. ty on changed AG2 runtime/executor sources:
+  **All checks passed**.
+- The new controlled process test verified all ten executor gates with a synthetic HTTP
+  owner runtime and real temporary Hub/Bridge processes. It is not live Hermes/model
+  acceptance. The new API lists only profile-owned Run status metadata for an exact session.
+- Active user Gateway remains the older `memv2-20261011T130106Z` release. No candidate
+  release was installed and no Gateway restart/reexec was performed. The previous real
+  Run on source `531201f6` remains blocked before Architect receipt because the active
+  runtime did not propagate admitted Run context. No new live scenario was run on this
+  uninstalled source.
+- Prior plugin deployment/reload backups and previous live receipt are documented below;
+  profile plugins were previously updated and supported-reloaded. Config/.env/SOUL and
+  memory backends were unchanged. The named previous deployment backups were verified.
+- Untracked `evidence/repair-*.log` files in this worktree are preserved but were not
+  staged in the current commits.
+
+**Next gate:** explicit user approval is still required for candidate Gateway/core deployment
+and one controlled restart/reexec. Afterward verify `/health`, both authenticated
+`/v1/capabilities` surfaces (`run_list_by_session`, `run_context_id`), run the actual new
+Coding/Architect acceptance, and verify rollback state. Push/issue closure are not authorized.
+
+## Ticket 21 — current authorized post-reload live (historical source 531201f6)
 
 Tested executable SHA `531201f68c77cd348f3d4addbd9351e40307c436`, package SHA-256
 `99e693e0fc8bafe1ff9a2defa94a52ed3f9e1175b10d2032460ce7ae6468ad7e`.

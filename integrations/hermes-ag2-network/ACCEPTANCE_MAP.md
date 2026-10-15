@@ -1,41 +1,46 @@
 # Live Coding/Architect executor: acceptance map
 
-## Current outcome — authorized plugin deployment and fresh post-reload live
+## Current source status — queued Run discovery implemented; live deployment pending
 
-**#21 remains blocked; no full live pass.** Exact tested executable commit:
-`531201f68c77cd348f3d4addbd9351e40307c436`; package SHA-256
-`99e693e0fc8bafe1ff9a2defa94a52ed3f9e1175b10d2032460ce7ae6468ad7e`.
-Interrupted deployment had already updated both profile plugins with verified protected
-backups. Reconciliation confirmed installed hashes and unchanged config/.env/SOUL;
-no duplicate plugin writes. Supported profile-scoped `reload-plugins` succeeded for
-Coding/Architect; Gateway PID 772/start-time 1197 stayed unchanged.
+**#21 remains blocked; the acceptance is not complete.** Candidate source is pinned at
+`6d6f08285323239718256e17d2df834e60e81115` on
+`feat/ag2-live-acceptance-executor`; its integration parent `feat/ag2-network-bridge`
+now contains source commit `b92e1e01` implementing the missing public Runs seam.
 
-A new genuine `--execute` used only a fresh acceptance session. Exit **2**:
-Coding Run `run_6bd9b60c00cc43969ad4b9f7976080d8` completed and called
-`agent_network_open`/`agent_network_ask`, but the ask returned the updated client's
-HTTP-429 mapping, `network request budget exceeded`. No Architect session/request/reply.
-Actual Gateway release `memv2-20261011T130106Z` lacks Run-context header parsing/binding
-and tool dispatch propagation; deploying the plugin alone cannot provide missing core
-kwargs. New client behavior is demonstrated in Coding; end-to-end context forwarding
-and Architect runtime behavior are **not** verified. No core/runtime repair or Gateway restart.
+The Gateway source adds authenticated `GET /v1/runs?session_id=<exact-id>`, advertises
+`run_list_by_session`, returns only profile-owned session/status/timestamp metadata with
+bounded pagination, and excludes prompts, outputs and errors. The acceptance executor
+fails closed if either profile lacks this capability, inventories Runs for every discovered
+fresh acceptance session before and after its idle interval, and blocks on any new/changing
+Run or session/token counters. Controlled real-process acceptance passed all ten executor
+steps against an explicitly synthetic HTTP owner runtime; this is structural test evidence,
+not live Hermes/model acceptance.
 
-All ten step gates remain `not_run`: step 1 attempted, success gate blocked. Multi-turn,
-two-project, error-matrix, memory, network-restart/history and idle criteria were not reached.
-Independent later blocker: executor deliberately refuses full step 10 without new queued-Run
-discovery; actual public Runs API has GET by known ID only. Operator control-socket idle
-metrics are supplemental, not a substitute for acceptance-scoped public Run discovery.
+Latest local verification on the merged candidate source, now including fail-closed mapping/history
+checks for both project boundaries:
+- Standalone AG2: **35 files, 151 passed, 0 failed, 1 skipped**.
+- Hermes API Runs/context regressions: **4 files, 195 passed, 0 failed** (on the API candidate).
+- Scoped `scripts/check --only health,ruff`: **0 blocking, 0 advisory**.
+- ty on the changed AG2 runtime/executor files: **All checks passed**.
+- Controlled process test confirms distinct expected session mappings for Coding's control
+  channel and Architect's peer channel in each project, and rejects cross-project operation IDs
+  or another project's result marker. This remains controlled fixture evidence.
 
-Cleanup readback: all three owned processes absent, temporary credentials removed, ToolAPI
-ports free, owning Run completed, `held=[]`, no memory canary attempted, configs/env/SOUL
-unchanged, both backends remain `file`, health HTTP 200. Source was unchanged; dirty flag
-came from preserved untracked repair logs. Sanitized evidence:
-[`evidence/live-postreload-blocked.json`](evidence/live-postreload-blocked.json).
+The actual active Gateway remains release `memv2-20261011T130106Z`, PID 772 at last
+readback. It has not loaded source commit `b92e1e01`, and prior live evidence on older
+source `531201f6` showed the fresh Coding call stopped because the active Gateway did not
+bind/forward `run_context_id`; no Architect session/request/reply occurred. The new public
+Run-list endpoint is not present in that running release either. No Gateway files, release
+pointer, service unit or process were modified/restarted. User has not yet separately
+approved production Gateway deployment/restart.
 
-**Approval needed for a new scope:** compatible Gateway/core release with admitted Run
-context validation/binding and propagation through tool/deferred dispatch, plus separately
-authorized Gateway restart/reexec. Full step 10 also needs agreed authenticated Run discovery
-or a proven equivalent public seam. No push/issue closure; independent Spec delta remains
-with parent. Earlier receipts below are historical and do not supersede this result.
+Next required actions: obtain that explicit approval; prepare a release candidate from
+exact source `6d6f08285323239718256e17d2df834e60e81115`, snapshot/verify rollback and idle;
+deploy and restart/re-exec the Gateway once; verify `/health` plus profile-prefixed
+`/v1/capabilities` reports `run_list_by_session` and real Run-context support; then run a
+fresh actual ten-step Coding↔Architect acceptance. No push or issue closure is authorized.
+The previous `live-postreload-blocked.json` remains historical evidence, not proof against
+this candidate. Older checkpoint receipts below are preserved for audit.
 
 ## Historical outcome — enrolled live follow-up
 

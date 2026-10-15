@@ -4,6 +4,45 @@ import json
 from pathlib import Path
 
 
+def test_two_project_isolation_requires_each_profile_to_have_distinct_project_mappings():
+    from hermes_ag2_network.live_scenario import validate_project_mappings
+
+    expected_channels = {
+        'project-alpha': {'coding': {'control-alpha'}, 'architect': {'coding-alpha'}},
+        'project-beta': {'coding': {'control-beta'}, 'architect': {'coding-beta'}},
+    }
+    mappings = [
+        {'profile': profile, 'project_id': project, 'channel_id': channel,
+         'origin_id': f'{profile}-origin-{project}', 'current_id': f'{profile}-current-{project}'}
+        for project, channels in expected_channels.items()
+        for profile, profile_channels in channels.items() for channel in profile_channels
+    ]
+    validate_project_mappings(('project-alpha', 'project-beta'), mappings, expected_channels)
+    mappings[-1] = {**mappings[-1], 'project_id': 'project-alpha'}
+    try:
+        validate_project_mappings(('project-alpha', 'project-beta'), mappings, expected_channels)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('mislabelled project session mapping must block isolation PASS')
+
+
+def test_project_history_rejects_cross_project_operation_and_content():
+    from hermes_ag2_network.live_scenario import validate_project_history
+
+    validate_project_history('project-alpha', 'project-beta', [
+        {'kind': 'request', 'operation_id': 'project-alpha-first', 'text': 'alpha result'}])
+    for row in (
+        {'kind': 'request', 'operation_id': 'project-beta-first', 'text': 'alpha result'},
+        {'kind': 'reply', 'operation_id': 'project-alpha-first', 'text': 'project-beta-result'},
+    ):
+        try:
+            validate_project_history('project-alpha', 'project-beta', [row])
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('cross-project history must block isolation PASS')
+
 
 def test_execute_with_unready_api_never_creates_network_state(cli, endpoint, tmp_path):
     run, receipt, _, _ = cli

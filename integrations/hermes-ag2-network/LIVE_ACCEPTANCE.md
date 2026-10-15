@@ -1,15 +1,18 @@
 # Ticket 21 live acceptance
 
-## Current implementation checkpoint
+## Current source checkpoint
 
-The reproducible ten-step executor is now implemented. Current HTTP 200 invalid Sessions
-JSON was documented API-shape drift (`object=list, data=[…]`), not HTML fallback; readiness
-passes after the correction. Actual Coding/Architect live execution remains blocked by the
-empty explicit bridge enrollment catalog, before any Hermes Session/Run. Enrollment/runtime
-repair, live Gateway restart and issue closure were not performed.
+The fail-closed ten-step executor and authenticated exact-session Run discovery are
+implemented in candidate source `6d6f08285323239718256e17d2df834e60e81115`. Controlled
+process acceptance verifies all ten executor steps, but it is not live Hermes evidence.
 
-See [ACCEPTANCE_MAP.md](ACCEPTANCE_MAP.md) for the current executable command, complete
-criterion/evidence map and limits; [VERIFICATION.md](VERIFICATION.md) for test receipts.
+The last genuine Gateway attempt remains blocked on older source/runtime `531201f6`: Coding
+called the network tool, but active release `memv2-20261011T130106Z` did not bind/forward
+Run context, so Architect received no request. The new Run-list API and candidate core changes
+have not been deployed. The Gateway was not restarted; no issue closure or push occurred.
+
+See [ACCEPTANCE_MAP.md](ACCEPTANCE_MAP.md) for the criterion map and required next actions,
+and [VERIFICATION.md](VERIFICATION.md) for exact live/history and current test receipts.
 
 ## Historical prerequisite-only checkpoint (superseded readiness)
 

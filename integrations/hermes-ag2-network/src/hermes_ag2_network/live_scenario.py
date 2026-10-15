@@ -46,6 +46,40 @@ def public_history(rows: list[dict]) -> list[dict]:
                 'causation_id', 'session_id', 'run_id')}, 'text_sha256': digest(row.get('text', ''))} for row in rows]
 
 
+def validate_project_mappings(projects: tuple[str, ...] | list[str], mappings: list[dict],
+                              expected_channels: dict[str, dict[str, set[str]]]) -> None:
+    """Require each execution profile's ledger mappings to match both acceptance projects."""
+    expected = set(projects)
+    for profile in ('coding', 'architect'):
+        owned = [row for row in mappings if row.get('profile') == profile]
+        if {row.get('project_id') for row in owned} != expected:
+            raise ValueError(f'{profile}: ledger project mappings are incomplete or out of scope')
+        for project in projects:
+            rows = [row for row in owned if row.get('project_id') == project]
+            channels = expected_channels[project][profile]
+            if {row.get('channel_id') for row in rows} != channels or len(rows) != len(channels):
+                matched_roles = [name for name, role_channels in expected_channels[project].items()
+                                 if role_channels & {row.get('channel_id') for row in rows}]
+                raise ValueError(f'{profile}: project {project} needs {len(channels)} expected channels, '
+                                 f'found {len(rows)} ledger mappings; matched roles={matched_roles}')
+        for field in ('channel_id', 'origin_id', 'current_id'):
+            values = [row.get(field) for row in owned]
+            if any(not isinstance(value, str) or not value for value in values) or len(set(values)) != len(values):
+                raise ValueError(f'{profile}: projects share or omit a {field}')
+
+
+def validate_project_history(project: str, other_project: str, history: list[dict]) -> None:
+    """Reject operation or result evidence that crosses the selected project boundary."""
+    for row in history:
+        if row.get('kind') in {'request', 'reply'}:
+            operation = row.get('operation_id')
+            if not isinstance(operation, str) or not operation.startswith(project + '-'):
+                raise ValueError('network operation belongs to another project')
+        text = row.get('text', '')
+        if isinstance(text, str) and other_project and other_project in text:
+            raise ValueError('network history contains another project identifier/result')
+
+
 class LiveScenario:
     def __init__(self, api_url: str, credentials: dict, *, home: Path, state_dir: Path, idle_seconds: float = 10):
         if idle_seconds < 2 or idle_seconds > 300:
@@ -251,6 +285,11 @@ class LiveScenario:
                     for data in self.memories.values():
                         if any(data['marker'] in json.dumps(row, ensure_ascii=False) for row in history):
                             raise AcceptanceBlocked('private memory canary leaked to native channel history')
+                    other = next((project_id for project_id in self.projects if project_id != project), '')
+                    try:
+                        validate_project_history(project, other, history)
+                    except ValueError:
+                        raise AcceptanceBlocked('native channel history contains another project operation/content') from None
                     for operation in {row['operation_id'] for row in history if row['kind'] == 'request'}:
                         try:
                             verify_exchange(history, operation)
@@ -344,13 +383,20 @@ class LiveScenario:
             parallel_outer = await caller.open(peer='coding', project_id=self.projects[1])
             await asyncio.gather(self.consult(caller, outer, self.projects[0], 'parallel'),
                                  self.consult(caller, parallel_outer, self.projects[1], 'parallel'))
-            self.receipt['checks']['two_project_parallel'] = {'submitted_concurrently': True,
-                'profile_execution_serialized': True, 'distinct_channels': primary_channel != self.receipt['channels'][self.projects[1]]['coding_architect']}
             mappings = ledger_metadata(self.state)['sessions']
-            for profile in ('coding', 'architect'):
-                owned = [r for r in mappings if r['profile'] == profile]
-                if len({r['origin_id'] for r in owned}) != len(owned) or len({r['current_id'] for r in owned}) != len(owned):
-                    raise AcceptanceBlocked(f'{profile}: projects share a Hermes session; parallel isolation failed')
+            expected_channels = {project: {
+                'coding': {self.receipt['channels'][project]['acceptance_coding']},
+                'architect': {self.receipt['channels'][project]['coding_architect']}}
+                for project in self.projects}
+            try:
+                validate_project_mappings(self.projects, mappings, expected_channels)
+            except ValueError as exc:
+                raise AcceptanceBlocked(str(exc)) from None
+            self.receipt['checks']['two_project_parallel'] = {'submitted_concurrently': True,
+                'profile_execution_serialized': True,
+                'distinct_channels': len({self.receipt['channels'][project]['coding_architect']
+                                          for project in self.projects}) == len(self.projects),
+                'project_mappings_verified': True}
             await self.verify_histories()
             before = await self.idle_activity()
             start = time.monotonic()

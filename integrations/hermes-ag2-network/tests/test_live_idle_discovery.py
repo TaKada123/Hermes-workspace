@@ -15,7 +15,8 @@ def test_idle_discovers_new_acceptance_session_and_queued_run():
             if request.url.path.endswith('/api/sessions'):
                 assert request.url.params['title'] == 'AG2 channel12345'
                 return httpx.Response(200, json={'object': 'list', 'data': [
-                    {'id': 'known'}, {'id': 'new-tip'}], 'limit': 100, 'offset': 0, 'has_more': False})
+                    {'id': 'known', 'title': 'AG2 channel12345'},
+                    {'id': 'new-tip', 'title': 'AG2 channel12345'}], 'limit': 100, 'offset': 0, 'has_more': False})
             if request.url.path == '/p/coding/v1/runs':
                 session_id = request.url.params['session_id']
                 rows = ([{'run_id': 'new-queued', 'session_id': session_id, 'status': 'queued'}]
@@ -34,6 +35,29 @@ def test_idle_discovers_new_acceptance_session_and_queued_run():
             assert found['run_discovery_available'] is True
             assert found['runs'] == {'coding:new-queued': {'status': 'queued', 'session_id': 'new-tip'}}
             assert len(calls) == 5
+        finally:
+            await owner.http.aclose()
+    asyncio.run(scenario())
+
+
+def test_idle_discovery_rejects_session_with_unexpected_title():
+    async def scenario():
+        def respond(request):
+            return httpx.Response(200, json={'object': 'list', 'data': [
+                {'id': 'not-acceptance', 'title': 'User private session'}],
+                'limit': 100, 'offset': 0, 'has_more': False})
+
+        owner = Readbacks('http://fixture', {'coding': 'test'})
+        await owner.http.aclose()
+        owner.http = httpx.AsyncClient(base_url='http://fixture', transport=httpx.MockTransport(respond))
+        try:
+            from hermes_ag2_network.live_runtime import AcceptanceBlocked
+            try:
+                await owner.activity({'coding': set()}, {'coding': {'channel12345abcd'}}, {})
+            except AcceptanceBlocked as exc:
+                assert 'unexpected title' in str(exc)
+            else:
+                raise AssertionError('unrelated session title must not count as acceptance evidence')
         finally:
             await owner.http.aclose()
     asyncio.run(scenario())

@@ -288,6 +288,11 @@ class Readbacks:
                             or body.get('limit') != 100 or not isinstance(body.get('has_more'), bool)
                             or not all(isinstance(r, dict) and isinstance(r.get('id'), str) for r in page)):
                         raise AcceptanceBlocked(f'{profile}: public acceptance-session discovery unavailable/incomplete')
+                    expected_title = 'AG2 ' + channel[:12]
+                    if not all(row.get('title') == expected_title for row in page):
+                        raise AcceptanceBlocked(
+                            f'{profile}: acceptance-session discovery returned an unexpected title; '
+                            'verify the exact-title Sessions API response and acceptance-session lineage before retrying')
                     discovered.setdefault(profile, set()).update(row['id'] for row in page)
                     if not body['has_more']:
                         break

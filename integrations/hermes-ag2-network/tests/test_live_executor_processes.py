@@ -174,7 +174,7 @@ def test_real_process_executor_verifies_controlled_steps_and_run_discovery(tmp_p
             {'coding': 'coding-api', 'architect': 'architect-api'}, home=home,
             state_dir=state, idle_seconds=2).run())
         assert not errors, errors
-        assert receipt['live_scenario_completed'] is True
+        assert receipt['live_scenario_completed'] is True, receipt['blockers']
         assert all(receipt['steps'][str(i)]['status'] == 'passed' for i in range(1, 11)), receipt['blockers']
         assert receipt['blockers'] == []
         assert receipt['checks']['idle']['complete'] is True

@@ -246,12 +246,13 @@ Run that per enrolled profile, using a different loopback port and key for each.
 
 ## Live acceptance prerequisite gate
 
-`python -m hermes_ag2_network.live_acceptance` performs only authenticated, read-only
-Coding/Architect Sessions API checks and writes a new sanitized readiness receipt.
-It never runs a model or modifies a session; readiness is **not** ten-step acceptance.
-See [LIVE_ACCEPTANCE.md](LIVE_ACCEPTANCE.md) for the actual current blocker, commands,
-CI publication path and explicitly unverified criteria. Historical smoke receipts below
-must not be used as current ticket #21 acceptance.
+The current source executor uses authenticated Coding/Architect Sessions discovery plus
+profile-scoped `GET /v1/runs?session_id=...` to detect new acceptance Runs during idle.
+This endpoint is in the candidate Hermes source, not in the currently active Gateway release;
+therefore the last real acceptance is still blocked and no live PASS is claimed. The readiness
+command itself only checks Sessions and writes a sanitized receipt. See [ACCEPTANCE_MAP.md](ACCEPTANCE_MAP.md)
+and [VERIFICATION.md](VERIFICATION.md) for the exact candidate, live blocker and tests.
+Historical smoke receipts do not replace current ticket #21 acceptance.
 
 ## Real-runtime smoke
 
