@@ -31,6 +31,20 @@ from gateway.platforms.api_server_run_context import parse_run_context_headers
 
 logger = logging.getLogger("gateway.platforms.api_server")
 
+
+def capability_features(static_features: Dict[str, Any]) -> dict[str, Any]:
+    """Append the Runs-specific feature without growing the API-server facade."""
+    return {**static_features, "run_list_by_session": True}
+
+
+def capability_endpoints(static_endpoints: tuple) -> dict[str, dict[str, str]]:
+    """Append Routes API metadata for the profile-scoped Run-list endpoint."""
+    endpoints = {name: {"method": method, "path": path}
+                 for name, (method, path) in static_endpoints}
+    endpoints["run_list_by_session"] = {
+        "method": "GET", "path": "/v1/runs?session_id={session_id}"}
+    return endpoints
+
 # Executor-thread lifetime for API-server agent turns (#116535). The handler-side
 # ``_inflight_agent_runs`` count in api_server.py drops in the handler's ``finally`` when the
 # handler task is cancelled (disconnect/shutdown) while the executor thread behind
@@ -233,8 +247,13 @@ def _initialize_run_state(self, *, store_factory) -> None:
 
 
 def _http_routes(self) -> list[tuple[str, str, Any]]:
+    async def list_runs(request):
+        from gateway.platforms import api_server as api_server_module
+        return await _handle_list_runs(self, request, _api_server=api_server_module)
+
     return [
-        ("POST", "/v1/runs", self._handle_runs), ("GET", "/v1/runs/{run_id}", self._handle_get_run),
+        ("POST", "/v1/runs", self._handle_runs), ("GET", "/v1/runs", list_runs),
+        ("GET", "/v1/runs/{run_id}", self._handle_get_run),
         ("GET", "/v1/runs/{run_id}/events", self._handle_run_events),
         ("POST", "/v1/runs/{run_id}/approval", self._handle_run_approval),
         ("POST", "/v1/runs/{run_id}/steer", self._handle_steer_run),
@@ -1071,6 +1090,44 @@ async def _handle_get_run(self, request: "web.Request", *, _api_server) -> "web.
     _, status, _, _, err = _load_owned_run(
         self, request, _api_server=_api_server, permission="status", active_fallback=True)
     return err or web.json_response(status)
+
+
+async def _handle_list_runs(self, request: "web.Request", *, _api_server) -> "web.Response":
+    """List bounded, redacted run receipts for one exact session in the caller's profile."""
+    auth_err = self._check_auth(request)
+    if auth_err is not None:
+        return auth_err
+    session_id = request.query.get("session_id", "").strip()
+    if not session_id or len(session_id) > 256:
+        return _json_error(_api_server._openai_error,
+                           "A valid exact session_id query parameter is required.",
+                           code="invalid_session_id", status=400)
+    try:
+        limit = int(request.query.get("limit", "100"))
+        offset = int(request.query.get("offset", "0"))
+    except (TypeError, ValueError):
+        return _json_error(_api_server._openai_error,
+                           "Run list limit and offset must be integers.",
+                           code="invalid_pagination", status=400)
+    if not 1 <= limit <= 100 or not 0 <= offset <= 100000:
+        return _json_error(_api_server._openai_error,
+                           "Run list limit must be 1..100 and offset 0..100000.",
+                           code="invalid_pagination", status=400)
+
+    scope = self._run_idempotency_scope(request)
+    matched = []
+    for run_id, status in self._run_statuses.items():
+        if self._run_owners.get(run_id) != scope or status.get("session_id") != session_id:
+            continue
+        matched.append({key: status[key] for key in (
+            "run_id", "session_id", "status", "created_at", "updated_at", "partial", "interrupted")
+            if key in status} | {"run_id": run_id})
+    matched.sort(key=lambda row: (float(row.get("created_at", 0) or 0), row["run_id"]))
+    page = matched[offset:offset + limit]
+    return web.json_response({
+        "object": "list", "session_id": session_id, "data": page,
+        "pagination": {"limit": limit, "offset": offset, "returned": len(page),
+                       "has_more": offset + len(page) < len(matched)}})
 
 
 async def _handle_run_events(self, request: "web.Request", *, _api_server) -> "web.StreamResponse":

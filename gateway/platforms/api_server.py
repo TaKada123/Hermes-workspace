@@ -2550,7 +2550,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                 "chat_completions": True, "chat_completions_streaming": True,
                 "responses_api": True, "responses_streaming": True, "run_submission": True,
                 "runs_idempotency": _api_runs._idempotency_capabilities(self, store_type=RunIdempotencyStore),
-                **_STATIC_FEATURE_FLAGS,
+                **_api_runs.capability_features(_STATIC_FEATURE_FLAGS),
                 "cors": bool(self._cors_origins),
                 # Always advertised for feature-detection; enabled follows config.
                 "browser_extension_control": {
@@ -2571,7 +2571,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                     "transports": {
                         "local_vps": "websocket-subprotocol-ticket",
                         "cloud": "authenticated-gateway-rpc"}}},
-            "endpoints": {name: {"method": m, "path": p} for name, (m, p) in _CAPABILITY_ENDPOINTS},
+            "endpoints": _api_runs.capability_endpoints(_CAPABILITY_ENDPOINTS),
         })
 
     # -- Browser-extension control (authenticated local/VPS API) ----------------------
