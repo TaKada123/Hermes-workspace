@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -84,13 +83,15 @@ def main() -> int:
         }, ensure_ascii=False))
         return 0
 
-    hermes = shutil.which("hermes")
-    if not hermes:
+    from hermes_platform.resolver import locate_command
+
+    hermes = locate_command("hermes")
+    if not hermes.found:
         print(json.dumps({"ok": False, "error": "hermes executable not found"}, ensure_ascii=False))
         return 3
 
     command = [
-        hermes,
+        *hermes.command,
         "-p",
         PROFILE,
         "chat",

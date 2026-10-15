@@ -11,8 +11,10 @@ from pathlib import Path
 
 from ruamel.yaml import YAML
 
+from tests.ci.workflow_sources import UPSTREAM_WORKFLOWS
+
 ROOT = Path(__file__).resolve().parents[2]
-WORKFLOWS = ROOT / ".github/workflows"
+WORKFLOW_ROOTS = (ROOT / ".github/workflows", UPSTREAM_WORKFLOWS)
 
 EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.S)
 JOB_REFERENCE = re.compile(r"\bneeds\.([A-Za-z0-9_-]+)")
@@ -21,8 +23,9 @@ JOB_REFERENCE = re.compile(r"\bneeds\.([A-Za-z0-9_-]+)")
 def _loaded():
     yaml = YAML(typ="base")
     return {
-        path.name: yaml.load(path.read_text(encoding="utf-8"))
-        for path in sorted(WORKFLOWS.glob("*.y*ml"))
+        path.relative_to(ROOT).as_posix(): yaml.load(path.read_text(encoding="utf-8"))
+        for directory in WORKFLOW_ROOTS
+        for path in sorted(directory.glob("*.y*ml"))
     }
 
 
@@ -64,7 +67,7 @@ def test_no_workflow_runs_from_a_tag_push():
             continue
         push = triggers["push"]
         # This nightly canary also gates releases with dedicated spend-capped keys.
-        if filename == "live-providers.yml" and push == {"tags": ["v*"]}:
+        if Path(filename).name == "live-providers.yml" and push == {"tags": ["v*"]}:
             continue
         if not isinstance(push, dict) or not ({"branches", "branches-ignore"} & set(push)):
             violations.append(filename)

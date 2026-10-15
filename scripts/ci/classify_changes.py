@@ -57,10 +57,10 @@ must never skip one a change could break:
   or a frontend-only package; an unrecognized path keeps it on.
 * ``skills/`` (incl. ``SKILL.md``) is python-relevant — the skill-doc tests
   read that tree, so a doc-looking edit can still break Python.
-* ``nix/``, ``flake.nix`` and ``flake.lock`` are the exception the other way:
-  only the flake reads them, so they skip the Python lanes and run ``nix``
-  alone. ``pyproject.toml`` and ``uv.lock`` are flake inputs too, but the
-  packaging tests read them, so they keep every Python lane.
+* This fork retired ``nix/``, ``flake.nix`` and ``flake.lock``; these paths
+  are unknown inputs and keep the Python fail-open default. The exported
+  ``nix`` lane remains compatible with archived upstream workflows and still
+  classifies their dependency-manifest inputs.
 * ``website/static/oauth/`` is python-relevant too: it publishes the OAuth
   Client ID Metadata Document that ``tests/tools/test_mcp_cimd.py`` checks
   against the pinned callback ports in ``tools/mcp_oauth.py``.
@@ -81,8 +81,6 @@ _FRONTEND = ("ui-tui/", "web/", "apps/")  # TS typecheck-matrix packages
 _FRONTEND_FILES = {"scripts/desktop-update/ui.html"}
 _ROOT_NPM = {"package.json", "package-lock.json"}  # shifts every package's tree
 _DOCKER_META = ("docker/", ".hadolint.yaml", "Dockerfile", ".dockerignore") # docker setup
-_NIX_PATHS = ("nix/",) # nix files
-_NIX_FILES = {"flake.nix", "flake.lock"} # base nix files
 _SITE = ("website/", "skills/", "optional-skills/")  # docs site + skill pages
 # Prose/frontend trees that can't touch Python. skills/ is excluded on purpose.
 _PY_SKIP = ("docs/", "website/") + _FRONTEND
@@ -235,7 +233,9 @@ _E2E_LANE_EXCLUDES = {
     "e2e_desktop_core": ("apps/desktop/e2e/update/",),
 }
 _DOCKER_PATHS = (*_DOCKER_META, *_DEP_MANIFESTS, *_NPM_MANIFESTS, "pm/", "tests/docker/")
-_NIX_LANE_PATHS = (*_NIX_PATHS, *_NIX_FILES, *_DEP_MANIFESTS, *_NPM_MANIFESTS)
+# Nix packaging was removed in this fork. Retain the exported lane and
+# surviving manifest inputs for compatibility with the archived upstream CI.
+_NIX_LANE_PATHS = (*_DEP_MANIFESTS, *_NPM_MANIFESTS)
 
 # A pull request with this label runs every slow lane, whatever it touches.
 RUN_E2E_LABEL = "run-e2e"
@@ -246,10 +246,6 @@ def _is_docs(p: str) -> bool:
     return p.endswith((".md", ".mdx")) or p.startswith("docs/") or p.startswith("LICENSE")
 
 
-def _is_nix(p: str) -> bool:
-    return p.startswith(_NIX_PATHS) or p in _NIX_FILES
-
-
 def _py_irrelevant(p: str) -> bool:
     if p.startswith(_PY_RELEVANT_SITE) or p in _PY_RELEVANT_CONTRACT_FILES:
         return False
@@ -258,7 +254,6 @@ def _py_irrelevant(p: str) -> bool:
         or p in _ROOT_NPM
         or p.startswith(_PY_SKIP)
         or p.startswith(_DOCKER_META)
-        or _is_nix(p)
     )
 
 

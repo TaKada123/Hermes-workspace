@@ -27,8 +27,10 @@ from tests.ci.desktop_release_roles import (
     native_builds, needs_of,
 )
 
+from tests.ci.workflow_sources import UPSTREAM_WORKFLOWS
+
 _REPO = Path(__file__).resolve().parents[2]
-_WORKFLOW = _REPO / ".github" / "workflows" / "desktop-bundled-release.yml"
+_WORKFLOW = UPSTREAM_WORKFLOWS / "desktop-bundled-release.yml"
 _SIGNING_ENV = "release-signing"
 _CONTROLLER = "c" * 40
 

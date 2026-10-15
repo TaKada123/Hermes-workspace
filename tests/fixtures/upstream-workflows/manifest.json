@@ -1,0 +1,211 @@
+{
+  "repository": "https://github.com/NousResearch/hermes-agent",
+  "revision": "6590f13a1ba21b18224a0f53ef2ead004b5fa7d6",
+  "source_directory": ".github/workflows",
+  "files": {
+    "archive-inputs.yml": {
+      "git_blob": "1ec41e6ff5e0f735ac99429b92d24a0539a1d447",
+      "sha256": "95f0ac324e89f76d26a03347f5fd00254707db04715794ca9b1e2b51ba23d1df"
+    },
+    "bootstrap-installer-build.yml": {
+      "git_blob": "52f315be6e535b852e4123e7f4b1d758aca0aa26",
+      "sha256": "9c07a8564b0de6109e28f41b8e4bfc13fcc0ca0ed4d1f1e3a806d11c534ed8b2"
+    },
+    "bootstrap-installer.yml": {
+      "git_blob": "127f6c7a53ba545920ebce7432cd1ee8179cdd2c",
+      "sha256": "bcb20b477cf7bde17b8a2627636fb0189f5cb926445140106d1fa0f56f27bf60"
+    },
+    "canary-release.yml": {
+      "git_blob": "6c6278190a64d843233ea81c2e228b5d61f6adc1",
+      "sha256": "6cb47a0a84013971a3388211592c4a6ec87bebcc7c92bd4557dc0a3aac8ca872"
+    },
+    "case-collision-check.yml": {
+      "git_blob": "b4dfe03f807a32a591f6df00b907146673883b84",
+      "sha256": "7d38ab33d781264367fda5e36871c30e8cbb8532221fe433e14ddc9ffb20b651"
+    },
+    "ci-review-comment.yml": {
+      "git_blob": "c456ab520bf0708b11de0edbe2f27a1858499dad",
+      "sha256": "5980cccf50b8da953b3455abae4290234eb09ca2e32c855a862c091faeadc6e2"
+    },
+    "ci.yaml": {
+      "git_blob": "cc5df3238e9b31dce9dfad2cbc86e862f9c837bf",
+      "sha256": "da0f3dd3b291d979ae0024e4b9100d0fe89eccd234f2a822a30b7a52909b2758"
+    },
+    "contributor-check.yml": {
+      "git_blob": "c6ccaf3ac782db5959166dc3a7f2e3e6e162c056",
+      "sha256": "46e3305e6754f26feb6a03f600b9a2b0d9168cbff40d90f4c95f6e6467df0d58"
+    },
+    "deploy-site.yml": {
+      "git_blob": "c46850afd69db771a7aac8061034cf194e3d086c",
+      "sha256": "9e445b7ed951640daf8e7c549bfc5a3dd47e997dd4248eb56a46d1c281b6a1c1"
+    },
+    "desktop-bundle-smoke.yml": {
+      "git_blob": "df397404b476e6b6b1e4c3e2ab66f6598bdc8ca6",
+      "sha256": "da6ec7d2e4de330d0bdf16af8fbf0cb6ab92cc67e16ff5f69c6632580c5c3deb"
+    },
+    "desktop-bundled-release.yml": {
+      "git_blob": "6fcb0691dd5859de9d2f2752343692b4a9fae5f2",
+      "sha256": "5ebbb21bfa5fd76700a0156ecae992e72941b9428cc11d2123f9097d5f0abc24"
+    },
+    "docker-lint.yml": {
+      "git_blob": "4aae36c82e54f5d51879880b40090bc0bbb15a14",
+      "sha256": "754c5c9e9d816671748d65e3efe50605a8456b10f19ee8283d483def2d5472b3"
+    },
+    "docker.yml": {
+      "git_blob": "c404f9be69459e152ccaa8206d4e108e810442bd",
+      "sha256": "8f504c96d06f29438245796df6e32a266e47e4f9952e1e4d5f1a16c5c28e54a8"
+    },
+    "docs-site-checks.yml": {
+      "git_blob": "d502e2e328179a2f190419bd0bf7c7f78a30189d",
+      "sha256": "46c279a39769bb31d3d047e8b8fb179095f04dc47c5e5fdac5ac6fda9e80ef96"
+    },
+    "e2e-desktop-core.yml": {
+      "git_blob": "16b9b329c21c26f53d111e0ec7fb0a73a992b22a",
+      "sha256": "4a50f2dfa077c79b46d6bc06c3e554abd24ec5276120273bad48d9e7fe47caeb"
+    },
+    "e2e-desktop-update.yml": {
+      "git_blob": "68ce12f3c50c0b24bd220c6dd48ab93bc377f605",
+      "sha256": "3095c2766ab380c17dda5e6bf68919af9f5d9f17d8bc92732c1ceaaa3f53558b"
+    },
+    "e2e-desktop.yml": {
+      "git_blob": "8583fe7384b4648f968b23a8a013946a4a2724a0",
+      "sha256": "0a9d6ac07ad641eef83ec669ee14d0c2dd76688a2136d7c2b124cbba37e6fd1f"
+    },
+    "history-check.yml": {
+      "git_blob": "8ba149e60e888a06b27c950eb5eed701093fb5a4",
+      "sha256": "6d0233de0e03b044346412cf7131dd7ead6a2d6748b1ace3706b97982bffbf7d"
+    },
+    "icons-freshness-check.yml": {
+      "git_blob": "1f451b013857430e1ee4516ef793aa9158eb54f8",
+      "sha256": "3a4d7e209f2091d4cd7e57e167a54936a66ef5189ab74ddb72473a9ff2e33063"
+    },
+    "infographic-check.yml": {
+      "git_blob": "eb01e7be1521279d5009f1d17a45db02415d3d14",
+      "sha256": "3e2bc427dd804fc500a7475420f8aec20323d22bb6fe3e352c72f879f0d0acc3"
+    },
+    "install-e2e-macos-run.yml": {
+      "git_blob": "4a558672c8d725c33fcb9f6bd4bc1ebd8556213b",
+      "sha256": "5e2a9eeaa867575965e4d154811d5d2d5985787540faa9bac7c4b003216760f6"
+    },
+    "install-e2e-red.yml": {
+      "git_blob": "a7e6d952246d83ec925e361fae523a5db6a13577",
+      "sha256": "6e4321a0d5ae4ddad8e0ce5be38372986fe9f20107d03d83b83e7204a00b9d01"
+    },
+    "install-e2e-run.yml": {
+      "git_blob": "97a27579e1fdc0ee6f5dcf51d17d9feef9aabfc2",
+      "sha256": "caeb3f512b558d39ac20409fb029050e0e4d1fab4943211c3add7389cfe82754"
+    },
+    "install-e2e-windows-run.yml": {
+      "git_blob": "64dafff079aa614d0c75de417a631d5640315950",
+      "sha256": "40c47093a50643b46a2fa89d358e5670e17af85d3f15e45b7d996ad9c27d861c"
+    },
+    "install-e2e.yml": {
+      "git_blob": "829d02c1259ed58b15a7cc51a29647d58aaec714",
+      "sha256": "bc1e139425a09ea32551485442474a77f76f9c9fc4b84905b34d38b393752a06"
+    },
+    "js-autofix.yml": {
+      "git_blob": "3ec1075c0e9d96b3d812290e2b82b984f56a8216",
+      "sha256": "c522ba1da55a410386077ff1c93cbb2b0f349e761ffad773a686f28eca161468"
+    },
+    "js-tests.yml": {
+      "git_blob": "252b135f276f300c0d05417ad914b2c0387d4383",
+      "sha256": "1fa9509bed7f390ad1a0148dfca648fec3ad5acf938726ee606128c9e8771e73"
+    },
+    "label-rerun.yml": {
+      "git_blob": "756193180b7b5f3071822c1d26e1e63e5a95ede9",
+      "sha256": "f7e0accc545e6d4f88638ae85c3a925496c2a57cbed7bbe23dfb0e5bd8086195"
+    },
+    "lazy-deps-guard.yml": {
+      "git_blob": "a78fae82c96223859dac142ec48e6bf0197222fe",
+      "sha256": "dddf58a07d3935522cb318cd6fd766520e43efce17aad3dae2f7a8a7661aece7"
+    },
+    "lint.yml": {
+      "git_blob": "82545d1e78efede62fffc9be1ea9c94e19ae8edd",
+      "sha256": "902f1df4b02883deeee454c19457d5f186e467700379c0a1625b998db2830f16"
+    },
+    "live-providers.yml": {
+      "git_blob": "4fc491886d65e9c8c15a3c68da1c8af600b1558d",
+      "sha256": "0d720d7082e17b187484e315a88a157898d4bcf3b900846f9ab2e2e1b44428e1"
+    },
+    "lockfile-diff.yml": {
+      "git_blob": "f7ccb41dd408ac877f3a466c5f1f65d9fdfcceb8",
+      "sha256": "446417f7bff87b3d4838318251b563ca77e5f3502fc563f59f492b046d1d994c"
+    },
+    "nix.yml": {
+      "git_blob": "fae453b64791d31e6ad7d28cdfc29ed19cf0d1dd",
+      "sha256": "661fbadb9b922860644c58290f11f186026d3bb2ccdbc10e97ac0c86eb9c282d"
+    },
+    "osv-scanner.yml": {
+      "git_blob": "11928250d5d0a4a298bad941b43ceafb8fd94dd0",
+      "sha256": "887512b5b85b1f0019aa9e1fa7c73d2620b3a2d0db73b4abf17769bccf65ce07"
+    },
+    "plugin-catalog-ci.yml": {
+      "git_blob": "fb728600c3c422b53994532b0458834433661df1",
+      "sha256": "1a4102042fd18abc2687207b4d78c313e0960d24f86e72f79647d7f28a0b1a12"
+    },
+    "pm-bundle.yml": {
+      "git_blob": "fee0b3d38385d94111b16dfb9c0fd9012e604a4c",
+      "sha256": "2a0974e0d06a01511a7f425e7f8dca7869e3091780acf2d2857c8d657ac76133"
+    },
+    "profile-artifact-check.yml": {
+      "git_blob": "e444b18e31e8a96f769f82dff1ea1dec211a8673",
+      "sha256": "cbff0e17ca0c41aff35c0d97399e32418a319579294448d7dce5938136186747"
+    },
+    "rust-tests.yml": {
+      "git_blob": "0c4c4e79fcca5fc0e55876b3403f8c862be8f1e7",
+      "sha256": "68b509fe063adcb7674aa8b7ba42b3cf87fa0b09f1f96ccdae24f72dbfc36cde"
+    },
+    "sandbox-image.yml": {
+      "git_blob": "de888e6ef062ac833e38cda9be79c45856bf9dad",
+      "sha256": "6ec95a5dc21e72e915e1ee3b63c64fd45b1bafafe72fb09d4ac191883d9d2200"
+    },
+    "skills-index-freshness.yml": {
+      "git_blob": "dcfcc5a0dd2d0650b2c7b4b0753e55837e11bad6",
+      "sha256": "183ee63009f11b6689d0850f5d737c52e904ddc2997465774625517142aa882f"
+    },
+    "skills-index.yml": {
+      "git_blob": "6fed6e292f26effd97ebbb4faf8d4b70db38ed83",
+      "sha256": "aa9f3a98c343aec53c8b50b602f992d2146a4652307d119b3c758970f3305c33"
+    },
+    "stable-release-publication.yml": {
+      "git_blob": "10288a0d7ca279e3eaf5f0c2b5153d19bde3fbd7",
+      "sha256": "93d14dfa2bc9c6a30ff8005ee0dba611feae9e69841853473be17421436b747a"
+    },
+    "stable-release.yml": {
+      "git_blob": "727f9ac72e8366fe16057f77e05e88145a688598",
+      "sha256": "f9dc11ffac45c506940c716c23d6e2e99005de591ff1cf03e10a48510048249e"
+    },
+    "supply-chain-audit.yml": {
+      "git_blob": "8f4cd851267b1d91c619a467986e27fdfa3d6bc8",
+      "sha256": "4d7477b708a1e6d822d167b4a9a1d2fe5a226590f8ec7756d0862f0726643f33"
+    },
+    "termux-verify.yml": {
+      "git_blob": "db33deda724cd84c5ad2dd109c76df45b705d140",
+      "sha256": "49514e26cdaeb8ac112ca9e25704d4b28c2e0328108a83c108cf5b1d22c5c18f"
+    },
+    "tests-os.yml": {
+      "git_blob": "451003c9adee137c5276639db3e6989c739bf9d1",
+      "sha256": "166eefb70b989775858a4b4b2e12494b15afaf89657aca271c137dc8283da577"
+    },
+    "tests.yml": {
+      "git_blob": "98a103c22b54d101f0816ffa2f57fc1e42abb3f2",
+      "sha256": "d9a8bcc6c9c1e8083c3e1ffb88ff155f2e1241ae75842b137fdee37e59414f8b"
+    },
+    "uv-lockfile-check.yml": {
+      "git_blob": "8daaab9c007d09c13df8c508dfaa8513f8fef86d",
+      "sha256": "2fc7aa027fd8d1dbd5b856d6ddde7ef9c47230249ab993f1a1b9e5dd9a797aff"
+    },
+    "windows-bundle-sdk.yml": {
+      "git_blob": "47276151b831be3d8e84cfcf0601ed6fd78407ca",
+      "sha256": "b5bfc8b7cd00bdaae6facbdeeb6310aea97ed57d4ad85bfadffc9ffb3ee1633d"
+    },
+    "windows-install-update-e2e.yml": {
+      "git_blob": "ec1180a612558abae329502aab08e11a9dab2b2e",
+      "sha256": "1d0f446971716dc022fc6972cdc69da786f95164d0c25b8ae61f43bcbff0c42c"
+    },
+    "windows-venv-e2e.yml": {
+      "git_blob": "33bf7ef72d64384f2694123c3b567f5a572d468b",
+      "sha256": "69537c97f38abf0a47360218f1c15e040c829ec8f25c0af4bc4ea489de438eab"
+    }
+  }
+}

@@ -18,9 +18,11 @@ from tests.ci.test_commit_build_staging import ROOT, shell_step
 from tests.ci.test_desktop_release_tag_admission import _child_env, _workflow
 from tests.scripts.test_release_r2 import r2_server  # noqa: F401
 
+from tests.ci.workflow_sources import UPSTREAM_WORKFLOWS
+
 
 def smoke_workflow():
-    return hermes_yaml.safe_load((ROOT / '.github/workflows/desktop-bundle-smoke.yml').read_text(encoding='utf-8-sig'))
+    return hermes_yaml.safe_load((UPSTREAM_WORKFLOWS / 'desktop-bundle-smoke.yml').read_text(encoding='utf-8-sig'))
 
 
 def smoke_fetch_script():

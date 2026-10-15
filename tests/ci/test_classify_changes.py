@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.ci.workflow_sources import UPSTREAM_WORKFLOWS
+
 _PATH = Path(__file__).resolve().parents[2] / "scripts" / "ci" / "classify_changes.py"
 _spec = importlib.util.spec_from_file_location("classify_changes", _PATH)
 if _spec is None or _spec.loader is None:
@@ -151,13 +153,14 @@ CASES = {
     # skill edit must still run Python.
     "skill md → python + site": (["skills/github/SKILL.md"], _lanes(python=True, site=True)),
     "dockerfile → docker meta": (["Dockerfile"], _lanes(docker_meta=True)),
-    # Only the flake reads these, so they run nix alone. No Python test opens
-    # them, unlike pyproject.toml and uv.lock below.
-    "nix module → nix only": (["nix/homeManagerModules.nix"], _lanes(nix=True)),
-    "flake.nix → nix only": (["flake.nix"], _lanes(nix=True)),
-    "flake.lock → nix only": (["flake.lock"], _lanes(nix=True)),
-    # A flake-only file must not mask a Python change beside it.
-    "nix + python → both": (["nix/checks.nix", "agent/x.py"], _lanes(python=True, scan=True, nix=True)),
+    # The fork removed Nix packaging deliberately. Retired paths are unknown
+    # input now and must fail open to Python, not silently bypass that lane.
+    "retired nix module → fail open": (["nix/homeManagerModules.nix"], _lanes(python=True)),
+    "retired flake.nix → fail open": (["flake.nix"], _lanes(python=True)),
+    "retired flake.lock → fail open": (["flake.lock"], _lanes(python=True)),
+    "retired nix + python → fail open": (
+        ["nix/checks.nix", "agent/x.py"], _lanes(python=True, scan=True),
+    ),
     # Product Python can still break the flake (nine checks run the built
     # binary), but the flake meets it on main, not on the PR.
     "product python → no nix on the PR": (["hermes_cli/config.py"], _lanes(python=True, scan=True)),
@@ -427,7 +430,9 @@ def test_ci_jobs_only_gate_on_detect_outputs_that_detect_actually_declares():
     the composite action re-exported it, but ci.yaml's ``detect`` job did not,
     so ``needs.detect.outputs.rust`` was never anything but "".
     """
-    ci = _yaml(".github/workflows/ci.yaml")
+    ci = pytest.importorskip("hermes_yaml").safe_load(
+        (UPSTREAM_WORKFLOWS / "ci.yaml").read_text(encoding="utf-8")
+    )
     declared = set(ci["jobs"]["detect"]["outputs"])
 
     referenced: set[str] = set()

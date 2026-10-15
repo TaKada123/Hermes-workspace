@@ -204,7 +204,7 @@ def export_legacy(
         atomic_write_text(path, ENTRY_DELIMITER.join(contents), tmp_prefix=".mem_")
         # Count verification: re-parse exactly what the flat store will read.
         written = len(MemoryStore._parse_entries(
-            path.read_text(encoding="utf-8")))
+            path.read_text(encoding="utf-8-sig")))
         report["targets"][target] = {
             "path": str(path),
             "expected": len(contents),

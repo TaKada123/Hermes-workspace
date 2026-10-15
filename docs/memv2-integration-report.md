@@ -8,7 +8,7 @@ Status: **validated on state-copies of both real profile homes; downgrade round-
 - Real homes: 1208/1208 copied files re-hashed after the run — all unchanged.
 - Full `scripts/run_tests.sh` run: completed, but **not green** because the borrowed test interpreter and the repository baseline fail outside the MEM-V2 scope; exact classification and green MEM-V2 gates are recorded in §6. Ticket #12 must not be treated as fully accepted on the full-suite criterion.
 
-All commands ran with the repo's test venv python (`.../installs/7d27e89e058145aa/test-environment/gen-61e60788dcb64beeaab611091e631020/venv/bin/python`), `HERMES_HOME` pointing at the copies, `HOME=/tmp/hh-cutover/fakehome`, never `scripts/setup-hermes.sh`. Copies live under `/tmp/hh-cutover/` (`main-home`, `main-home-control`, `design-root/profiles/design` — the design copy mirrors the real profile layout `<root>/profiles/design`, which is how `hermes_cli/profiles.py::get_profile_dir` resolves the design HERMES_HOME).
+All commands ran with the repo's test venv python (`.../installs/7d27e89e058145aa/test-environment/gen-61e60788dcb64beeaab611091e631020/venv/bin/python`), `HERMES_HOME` pointing at the copies, never `scripts/setup-hermes.sh`. Below, `<cutover-root>` denotes the historical disposable `hh-cutover` directory; paths are symbolic, not a claim that the receipts were moved. For a fresh run, resolve the scratch root with `hermes_constants.get_scratch_dir()` and create `hh-cutover` beneath it (or use `$TMPDIR` / `tempfile`, configured by Hermes). `HOME=<cutover-root>/fakehome`; copies: `<cutover-root>/main-home`, `<cutover-root>/main-home-control`, `<cutover-root>/design-root/profiles/design` — the design copy mirrors the real profile layout `<root>/profiles/design`, which is how `hermes_cli/profiles.py::get_profile_dir` resolves the design HERMES_HOME.
 
 ---
 
@@ -76,7 +76,7 @@ Rollout порядок (по спецификации): **тестовая ко�
 
 ## 6. Результаты валидации
 
-Копии: `/tmp/hh-cutover/main-home` (default), `/tmp/hh-cutover/main-home-control` (контроль: флаг без legacy-инсталлера), `/tmp/hh-cutover/design-root/profiles/design`. Базовая побайтовая сверка копий с оригиналами: **main 569/569, design 639/639 файлов — byte-identical** (sha256).
+Копии (символический `<cutover-root>` определён выше): `<cutover-root>/main-home` (default), `<cutover-root>/main-home-control` (контроль: флаг без legacy-инсталлера), `<cutover-root>/design-root/profiles/design`. Базовая побайтовая сверка копий с оригиналами: **main 569/569, design 639/639 файлов — byte-identical** (sha256).
 
 ### MAIN (default), полная последовательность
 

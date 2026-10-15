@@ -11,6 +11,8 @@ import sys
 import pytest
 from ruamel.yaml import YAML
 
+from tests.ci.workflow_sources import UPSTREAM_WORKFLOWS
+
 
 ROOT = Path(__file__).resolve().parents[2]
 DRIVER = ROOT / "scripts/termux/build.py"
@@ -166,7 +168,7 @@ def test_release_workflow_runs_the_shared_sequence(build_fixture, identity):
     (tools / "python3").symlink_to(sys.executable)
     env.update(HERMES_BUILD_COMMIT=identity[1] if identity[0] == "--commit" else "",
                HERMES_PAYLOAD_TAG=identity[1] if identity[0] == "--tag" else "")
-    workflow = YAML(typ="safe").load((ROOT / ".github/workflows/desktop-bundled-release.yml").read_text())
+    workflow = YAML(typ="safe").load((UPSTREAM_WORKFLOWS / "desktop-bundled-release.yml").read_text())
     step = next(step for step in workflow["jobs"]["termux-deb"]["steps"]
                 if step.get("name") == "Assemble the .deb")
     bash = shutil.which("bash")

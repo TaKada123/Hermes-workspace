@@ -15,13 +15,15 @@ from pathlib import Path
 import hermes_yaml as yaml
 import pytest
 
+from tests.ci.workflow_sources import UPSTREAM_WORKFLOWS
+
 pytestmark = pytest.mark.platforms("linux")
 
 ROOT = Path(__file__).resolve().parents[2]
 # CATALOG_CI_WORKFLOW points the harness at another workflow copy (e.g.
 # `git show origin/main:...`) to prove a case fails on the old gate.
 WORKFLOW = Path(os.environ.get(
-    "CATALOG_CI_WORKFLOW", ROOT / ".github/workflows/plugin-catalog-ci.yml"))
+    "CATALOG_CI_WORKFLOW", UPSTREAM_WORKFLOWS / "plugin-catalog-ci.yml"))
 REPO_URL = "https://fixture.invalid/repo"
 
 

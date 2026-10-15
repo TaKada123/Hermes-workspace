@@ -20,6 +20,8 @@ from tests.scripts.test_stable_release import https_origin  # noqa: F401
 from tests.scripts.test_release_darwin import _inputs
 from scripts.bundles import release_artifacts as artifacts
 
+from tests.ci.workflow_sources import UPSTREAM_WORKFLOWS
+
 ROOT = Path(__file__).resolve().parents[2]
 SMOKE_RESULTS = {name: {'result': 'success'} for name in (
     'smoke-darwin-arm64', 'smoke-darwin-x64', 'smoke-win32-arm64', 'smoke-win32-x64')}
@@ -276,9 +278,9 @@ def test_promote_refuses_when_one_macos_arch_is_missing(tmp_path, monkeypatch, r
 def candidate_workflow_step(tmp_path, r2_server, staged_candidate):
     """Run real workflow shell/CLIs; replace only service endpoints and tool setup."""
     manifest, fetched, base = staged_candidate
-    jobs = hermes_yaml.safe_load((ROOT / '.github/workflows/desktop-bundled-release.yml').read_text(encoding='utf-8-sig'))['jobs']
+    jobs = hermes_yaml.safe_load((UPSTREAM_WORKFLOWS / 'desktop-bundled-release.yml').read_text(encoding='utf-8-sig'))['jobs']
     stable_jobs = hermes_yaml.safe_load(
-        (ROOT / '.github/workflows/stable-release.yml').read_text(encoding='utf-8-sig'))['jobs']
+        (UPSTREAM_WORKFLOWS / 'stable-release.yml').read_text(encoding='utf-8-sig'))['jobs']
     render = next(step for step in stable_jobs['complete']['steps']
                   if step.get('name', '').startswith('Render the admitted'))
     jobs['controller-promote'] = {

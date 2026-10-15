@@ -24,12 +24,14 @@ from tests.ci.desktop_release_roles import canary_publisher, native_builds, stag
 from tests.ci.test_desktop_release_tag_admission import _git, _seed_repo
 from tests.scripts.test_release_r2 import r2_server  # noqa: F401
 
+from tests.ci.workflow_sources import UPSTREAM_WORKFLOWS
+
 ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.platforms("posix")
 
 
 def workflow_jobs():
-    return hermes_yaml.safe_load((ROOT / ".github/workflows/desktop-bundled-release.yml").read_text())["jobs"]
+    return hermes_yaml.safe_load((UPSTREAM_WORKFLOWS / "desktop-bundled-release.yml").read_text())["jobs"]
 
 
 def canary_job():

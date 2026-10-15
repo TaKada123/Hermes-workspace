@@ -29,7 +29,9 @@ def write_json(path: Path, value: object) -> None:
 
 def verify(output: Path, shards: int) -> dict:
     output.mkdir(parents=True, exist_ok=True)
-    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, timeout=30).strip()
+    head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True,
+        encoding="utf-8", errors="replace", timeout=30).strip()
     if os.environ.get("GITHUB_SHA") not in (None, head):
         raise ValueError("Checkout differs from GITHUB_SHA")
     files = runner._discover_files([ROOT / p for p in runner._DEFAULT_ROOTS])
@@ -62,12 +64,15 @@ def verify(output: Path, shards: int) -> dict:
 
 
 def run_slice(index: int, shards: int, output: Path, timeout: float) -> int:
+    import psutil
+    from agent.deadline import _process_tree_snapshot, kill_process_tree
+
     manifest = verify(output, shards)
     command = ["bash", "scripts/run_tests.sh", "--slice", f"{index}/{shards}",
                "-j", "2", "--file-retries", "0", "-v", "--tb=short"]
     started = time.time()
     result = {"head_sha": manifest["head_sha"], "slice": f"{index}/{shards}",
-              "files": (output / f"slice-{index:02d}.txt").read_text().splitlines(),
+              "files": (output / f"slice-{index:02d}.txt").read_text(encoding="utf-8-sig").splitlines(),
               "command": command, "started_unix": started, "exit_code": None,
               "status": "running"}
     write_json(output / "result.json", result)
@@ -78,17 +83,27 @@ def run_slice(index: int, shards: int, output: Path, timeout: float) -> int:
             code = process.wait(timeout=timeout)
             status = "passed" if code == 0 else "failed"
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGTERM)
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait(timeout=10)
+            # Retain PID + creation-time identities before SIGTERM can orphan
+            # detached children. Parent exit does not imply the tree is dead.
+            with _process_tree_snapshot(process.pid, hard_kill=False) as descendants:
+                try:
+                    kill_process_tree(process.pid, sig=signal.SIGTERM)
+                    try:
+                        process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        kill_process_tree(process.pid)
+                        process.wait(timeout=10)
+                finally:
+                    for child in reversed(descendants):
+                        try:
+                            child.kill()  # psutil rejects a recycled PID.
+                        except psutil.NoSuchProcess:
+                            pass
             code, status = 124, "timed_out"
     result.update(exit_code=code, status=status, finished_unix=time.time(),
                   duration_seconds=time.time() - started)
     write_json(output / "result.json", result)
-    print((output / "canonical.log").read_text(encoding="utf-8", errors="replace"), flush=True)
+    print((output / "canonical.log").read_text(encoding="utf-8-sig", errors="replace"), flush=True)
     return code
 
 

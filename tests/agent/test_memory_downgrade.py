@@ -69,6 +69,21 @@ def _report_target(report, target):
 
 
 class TestExportCounts:
+    def test_bom_only_export_is_still_empty(self, store, tmp_path, monkeypatch):
+        """Windows-added BOM must not turn an empty export into a memory row."""
+        import agent.memory_downgrade as downgrade
+
+        write = downgrade.atomic_write_text
+
+        def write_with_bom(path, contents, **kwargs):
+            write(path, "\ufeff" + contents, **kwargs)
+
+        monkeypatch.setattr(downgrade, "atomic_write_text", write_with_bom)
+        report = export_legacy(store, out_dir=tmp_path / "export")
+        for target in ("memory", "user"):
+            assert report["targets"][target]["written"] == 0
+            assert report["targets"][target]["ok"] is True
+
     def test_counts_match_visible_rows_per_target(self, store, tmp_path):
         """(a) expected == written == visible-row count; non-visible rows excluded."""
         for i in range(3):
