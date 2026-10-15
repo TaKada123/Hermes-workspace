@@ -460,6 +460,12 @@ Runs accept a simple `input` string and optional `session_id`, `instructions`, `
 
 For safely retryable creation, send an `Idempotency-Key` header (1–255 visible ASCII characters). Hermes durably reserves the key before starting work. An identical retry returns the original `run_id` with HTTP 202 and `Idempotency-Replayed: true`, including after a gateway restart and after the run has completed, failed, or been cancelled. Reusing the same key with a different JSON payload returns HTTP 409 with code `idempotency_key_conflict`. Keys are isolated by authenticated API profile/credential and retained for 24 hours after their last status update; clients should use unique, unguessable keys and must not reuse them for unrelated operations. Requests without the header retain the legacy behavior and always create a new run.
 
+### GET /v1/runs?session_id={session_id}
+
+List bounded status receipts for runs owned by the authenticated profile and exact session. The endpoint requires a nonempty session ID, bearer authentication and accepts `limit` (1–100) plus `offset` (0–100000). It returns only run ID, session ID, lifecycle status, creation/update timestamps, and partial/interrupted flags; output, errors, prompts and tool data are never included. `pagination.has_more` indicates additional matching receipts. The list covers statuses retained in the current gateway process; clients needing an individual durable idempotency receipt should continue to use `GET /v1/runs/{run_id}`.
+
+This endpoint is advertised as `features.run_list_by_session` and `endpoints.run_list_by_session` in `GET /v1/capabilities`. It lets an authenticated monitor detect a newly queued or running Run for an acceptance session, not inspect Runs from another profile or unrelated sessions.
+
 When `session_id` identifies an existing Hermes session and no explicit
 `conversation_history` or `previous_response_id` is supplied, the run loads
 that session's active transcript. Session turn leases serialize concurrent

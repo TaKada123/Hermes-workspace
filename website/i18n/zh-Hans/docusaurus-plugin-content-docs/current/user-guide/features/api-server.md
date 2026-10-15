@@ -255,6 +255,12 @@ OpenAI Responses API 格式。通过 `previous_response_id` 支持服务端对�
 
 Runs 接受简单的 `input` 字符串，以及可选的 `session_id`、`instructions`、`conversation_history` 或 `previous_response_id`。当提供 `session_id` 时，Hermes 会在 run 状态中暴露它，以便外部 UI 将 run 与自己的对话 ID 关联。
 
+### GET /v1/runs?session_id={session_id}
+
+列出经过身份验证的 profile 在指定 session 中的 Run 状态摘要。必须提供精确的 `session_id` 和 bearer 身份验证；可用 `limit`（1–100）及 `offset`（0–100000）分页。响应仅包含 run ID、session ID、生命周期状态、创建/更新时间以及 partial/interrupted 标志，不会包含输出、错误、提示词或工具数据。`pagination.has_more` 表示还有更多结果。列表仅覆盖当前 Gateway 进程中保留的状态；如需读取单个持久幂等 Run 的状态，请继续使用 `/v1/runs/{run_id}`。
+
+该端点通过 `GET /v1/capabilities` 中的 `features.run_list_by_session` 和 `endpoints.run_list_by_session` 公布，可用于发现 acceptance session 中新排队或运行中的 Run，不能读取其他 profile 或无关 session 的 Run。
+
 ### GET /v1/runs/\{run_id\}
 
 轮询当前 run 状态。适用于需要状态但不想保持 SSE 连接的仪表板，或在导航后重新连接的 UI。
