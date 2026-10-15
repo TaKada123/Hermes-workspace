@@ -1358,9 +1358,16 @@ async def test_interim_commentary_reaches_session_sse_and_responses_stream(adapt
     app.router.add_post("/v1/responses", adapter._handle_responses)
     with patch.object(adapter, "_create_agent", side_effect=fake_create_agent):
         async with TestClient(TestServer(app)) as cli:
-            sse = await (await cli.post(f"/api/sessions/{session_id}/chat/stream", json={"message": "go"})).text()
-            responses = await (await cli.post(
-                "/v1/responses", json={"model": "hermes-agent", "input": "go", "stream": True})).text()
+            sse_response = await cli.post(
+                f"/api/sessions/{session_id}/chat/stream", json={"message": "go"})
+            assert sse_response.status == 200, (
+                f"session SSE status={sse_response.status}, raw={(await sse_response.text())[:4096]!r}")
+            sse = await sse_response.text()
+            responses_response = await cli.post(
+                "/v1/responses", json={"model": "hermes-agent", "input": "go", "stream": True})
+            assert responses_response.status == 200, (
+                f"responses stream status={responses_response.status}, raw={(await responses_response.text())[:4096]!r}")
+            responses = await responses_response.text()
 
     def _events(body):
         out = []
@@ -1374,12 +1381,14 @@ async def test_interim_commentary_reaches_session_sse_and_responses_stream(adapt
 
     sse_events = _events(sse)
     commentary = [d for n, d in sse_events if n == "assistant.commentary"]
-    assert [(d["text"], d["already_streamed"]) for d in commentary] == [("Checking the docs first.", False)]
+    assert [(d["text"], d["already_streamed"]) for d in commentary] == [("Checking the docs first.", False)], (
+        f"session SSE status={sse_response.status}, raw={sse[:4096]!r}")
     assert next(d for n, d in sse_events if n == "assistant.completed")["content"] == "Done."
 
     done_items = [d["item"] for n, d in _events(responses) if n == "response.output_item.done"]
     assert [(i.get("phase"), i["content"][0]["text"]) for i in done_items if i["type"] == "message"] == [
-        ("commentary", "Checking the docs first."), (None, "Done.")]
+        ("commentary", "Checking the docs first."), (None, "Done.")], (
+        f"responses stream status={responses_response.status}, raw={responses[:4096]!r}")
 
     # Display gate: the callback is dropped before it reaches AIAgent, like the gateway/TUI.
     _patch_api_server_runtime(monkeypatch)
