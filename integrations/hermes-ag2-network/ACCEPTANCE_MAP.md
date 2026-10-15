@@ -1,6 +1,32 @@
 # Live Coding/Architect executor: acceptance map
 
-## Current source status — queued Run discovery implemented; live deployment pending
+## Verified live outcome — source 67b8ffa8
+
+Genuine Coding/Architect acceptance on clean commit
+`67b8ffa81cc1c802f08846c3610f19caf750f876` exited 0: all ten steps passed,
+including independent file-memory canaries, native Hub/Bridge restart continuity,
+two-project concurrent submissions, correlated replay suppression, HTTP error cases,
+and unchanged session/Run activity over the explicit idle interval. Receipt:
+`evidence/live-67b8ffa8-passed.json`. This is real Hermes/model evidence, not the
+controlled process fixture. Idle evidence is scoped to acceptance sessions, not global activity.
+
+The previous memory failure was capacity rejection (2146/2200 chars; long test markers).
+Short unique test markers now fit without consolidating/removing existing user entries.
+The regression fixture enforces that capacity. Canonical standalone suite with explicit
+current-source pytest pythonpath: 151 passed, 0 failed, 1 skipped. ty and health/Ruff pass.
+
+Five narrowly scoped runtime files were installed from candidate a47da9da with verified
+backups at `/home/vottak/.hermes/cache/scratch/ag2-core-deploy-3d0c5f29602a4b2bbef645c6530baa6d`;
+the underlying release directory name remains memv2-20261011T130106Z, so it must not be
+mistaken for an unchanged release or a whole-tree deployment of the candidate commit.
+Gateway was authorized-restarted and health/readbacks passed. Canary cleanup restored exact
+original memory bytes, profile configs are unchanged, held operations are empty, owned
+processes are absent, and temporary key files are absent.
+
+Closure remains pending final independent review and exact-final-SHA hosted CI/publication
+authorization. No push or issue closure performed. Older blocked checkpoints below are history.
+
+## Historical source checkpoint — queued Run discovery implemented; live deployment was pending
 
 **#21 remains blocked; the acceptance is not complete.** Candidate source is pinned at
 `6d6f08285323239718256e17d2df834e60e81115` on
