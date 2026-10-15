@@ -218,14 +218,17 @@ class LiveScenario:
             path = resource['root'] / 'memories' / 'MEMORY.md'
             if not path.is_file():
                 raise AcceptanceBlocked(f'{profile}: legacy memory acceptance file absent; preserve actual backend, no migration')
+            # Keep test entries small enough for a nearly full existing store; never
+            # consolidate unrelated profile memory to make room for acceptance evidence.
             self.memories[profile] = {'path': path, 'before': path.read_bytes(),
-                                      'marker': self.tag + '-private-' + profile, 'attempted': False}
+                                      'marker': 'acceptance-' + digest(self.tag + profile)[:16], 'attempted': False}
         for profile, data in self.memories.items():
             data['attempted'] = True
             await self.memory_turn(profile,
                 f'Authorized temporary private memory test. Use your owning memory tool to add exactly one entry '
                 f'"{data["marker"]}" to your general memory (not USER). Do not transmit it via agent_network, '
-                f'do not change backend/config/SOUL/skills/MCP or other entries. Reply "stored" only after the tool succeeds.',
+                f'do not change backend/config/SOUL/skills/MCP or other entries. If storage is full, stop: '
+                f'do not remove or consolidate existing entries. Reply "stored" only after the tool succeeds.',
                 self.tag + '-memory-add-' + profile)
         ownership = {}
         for profile, data in self.memories.items():

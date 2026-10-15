@@ -24,6 +24,7 @@ from hermes_ag2_network.live_scenario import LiveScenario
 def test_real_process_executor_verifies_controlled_steps_and_run_discovery(tmp_path):
     home = tmp_path / 'home'
     ports = {}
+    original_memory = 'x' * 2145 + '\n'
     import socket
     for index, profile in enumerate(('coding', 'architect')):
         with socket.socket() as sock:
@@ -33,7 +34,7 @@ def test_real_process_executor_verifies_controlled_steps_and_run_discovery(tmp_p
         (root / 'plugins' / 'agent-network').mkdir(parents=True)
         (root / 'plugins' / 'agent-network' / '__init__.py').write_text('# controlled installation marker\n')
         (root / 'memories').mkdir()
-        (root / 'memories' / 'MEMORY.md').write_text('original controlled private entry\n')
+        (root / 'memories' / 'MEMORY.md').write_text(original_memory)
         (root / 'config.yaml').write_text(f'plugins:\n  enabled: [agent-network]\n  entries:\n    agent-network:\n      settings:\n        bridge_url: http://127.0.0.1:{ports[profile]}\n')
         (root / '.env').write_text(f'AGENT_NETWORK_TOOLS_KEY={profile}-tools\n')
         (root / '.env').chmod(0o600)
@@ -124,7 +125,9 @@ def test_real_process_executor_verifies_controlled_steps_and_run_discovery(tmp_p
                         marker = capture(r'"(acceptance-[^"]+)"', text)
                         path = home / 'profiles' / profile / 'memories' / 'MEMORY.md'
                         if 'add exactly' in text:
-                            path.write_text(path.read_text() + marker + '\n')
+                            proposed = path.read_text() + marker + '\n'
+                            if len(proposed) <= 2200:
+                                path.write_text(proposed)
                         else:
                             path.write_text(path.read_text().replace(marker + '\n', ''))
                         row['messages'].append({'role': 'assistant', 'tool_calls': [{'id': run_id + '-tool',
@@ -185,7 +188,7 @@ def test_real_process_executor_verifies_controlled_steps_and_run_discovery(tmp_p
         assert not list(state.glob('*.key'))
         assert not (state / 'identities.json').exists()
         assert len(set(receipt['restart']['new_pids'])) == 3
-        assert all((home / 'profiles' / p / 'memories' / 'MEMORY.md').read_text() == 'original controlled private entry\n'
+        assert all((home / 'profiles' / p / 'memories' / 'MEMORY.md').read_text() == original_memory
                    for p in ('coding', 'architect'))
         # Refusing an existing state directory must never delete pre-existing credentials.
         sentinel = state / 'coding-api.key'
