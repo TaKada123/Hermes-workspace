@@ -21,7 +21,7 @@ from hermes_ag2_network.discovery import enroll_profile
 from hermes_ag2_network.live_scenario import LiveScenario
 
 
-def test_real_process_executor_verifies_controlled_steps_and_blocks_missing_run_discovery(tmp_path):
+def test_real_process_executor_verifies_controlled_steps_and_run_discovery(tmp_path):
     home = tmp_path / 'home'
     ports = {}
     import socket
@@ -59,7 +59,21 @@ def test_real_process_executor_verifies_controlled_steps_and_blocks_missing_run_
             assert self.headers.get('Authorization') == f'Bearer {profile}-api'
             if path == 'v1/capabilities':
                 return self.respond({'features': {'run_submission': True, 'run_status': True,
+                                                   'run_list_by_session': True,
                                                    'runs_idempotency': {'durable': True}}})
+            if path == 'v1/runs':
+                query = parse_qs(urlsplit(self.path).query)
+                session_id = query['session_id'][0]
+                limit = int(query.get('limit', ['100'])[0])
+                offset = int(query.get('offset', ['0'])[0])
+                rows = [{'run_id': run_id, 'session_id': row['session_id'], 'status': row['status'],
+                         'created_at': row['created_at'], 'updated_at': row.get('updated_at')}
+                        for run_id, row in runs.items()
+                        if row['session_id'] == session_id and run_id in idempotency.values()]
+                page = rows[offset:offset + limit]
+                return self.respond({'object': 'list', 'session_id': session_id, 'data': page,
+                    'pagination': {'limit': limit, 'offset': offset, 'returned': len(page),
+                                   'has_more': offset + len(page) < len(rows)}})
             if path == 'api/sessions':
                 query = parse_qs(urlsplit(self.path).query)
                 title = query.get('title', [''])[0]
@@ -160,11 +174,10 @@ def test_real_process_executor_verifies_controlled_steps_and_blocks_missing_run_
             {'coding': 'coding-api', 'architect': 'architect-api'}, home=home,
             state_dir=state, idle_seconds=2).run())
         assert not errors, errors
-        assert receipt['live_scenario_completed'] is False
-        assert all(receipt['steps'][str(i)]['status'] == 'passed' for i in range(1, 10)), receipt['blockers']
-        assert receipt['steps']['10']['status'] == 'not_run'
-        assert len(receipt['blockers']) == 1 and 'cannot discover new' in receipt['blockers'][0]
-        assert receipt['checks']['idle']['complete'] is False
+        assert receipt['live_scenario_completed'] is True
+        assert all(receipt['steps'][str(i)]['status'] == 'passed' for i in range(1, 11)), receipt['blockers']
+        assert receipt['blockers'] == []
+        assert receipt['checks']['idle']['complete'] is True
         assert receipt['checks']['idle']['unchanged'] is True
         assert receipt['checks']['two_project_parallel']['distinct_channels'] is True
         assert all(row['original_bytes_restored'] for row in receipt['cleanup']['memory'].values())

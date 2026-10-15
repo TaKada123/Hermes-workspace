@@ -293,18 +293,49 @@ class Readbacks:
                         break
                     if not page:
                         raise AcceptanceBlocked(f'{profile}: non-progressing acceptance-session discovery')
-                    offset += 100  # API pins can be backfilled beyond the recency window.
+                    offset += 100
                 else:
                     raise AcceptanceBlocked(f'{profile}: acceptance-session discovery bound exceeded')
+
         statuses = {}
-        for profile, ids in runs.items():
-            for run_id in sorted(ids):
+        for profile, ids in discovered.items():
+            for session_id in sorted(ids):
+                offset = 0
+                for _ in range(100):
+                    body = await self.get(profile, 'v1/runs', session_id=session_id, limit=100, offset=offset)
+                    page = body.get('data')
+                    pagination = body.get('pagination')
+                    if (body.get('object') != 'list' or body.get('session_id') != session_id
+                            or not isinstance(page, list) or not isinstance(pagination, dict)
+                            or pagination.get('limit') != 100 or pagination.get('offset') != offset
+                            or pagination.get('returned') != len(page)
+                            or not isinstance(pagination.get('has_more'), bool)
+                            or not all(isinstance(row, dict) and isinstance(row.get('run_id'), str)
+                                       and row.get('session_id') == session_id
+                                       and isinstance(row.get('status'), str) for row in page)):
+                        raise AcceptanceBlocked(f'{profile}: authenticated session Run discovery unavailable/incomplete')
+                    for row in page:
+                        statuses[f'{profile}:{row["run_id"]}'] = {
+                            'status': row['status'], 'session_id': row['session_id']}
+                    if not pagination['has_more']:
+                        break
+                    if not page:
+                        raise AcceptanceBlocked(f'{profile}: non-progressing session Run discovery')
+                    offset += len(page)
+                else:
+                    raise AcceptanceBlocked(f'{profile}: session Run discovery bound exceeded')
+
+        # Keep exact-ID reads for submitted Runs as a second public readback, including any
+        # continuation whose current session ID rotated between submit and observation.
+        for profile, run_ids in runs.items():
+            for run_id in sorted(run_ids):
                 body = await self.get(profile, f'v1/runs/{run_id}')
                 if not isinstance(body.get('status'), str):
                     raise AcceptanceBlocked(f'{profile}: known Run status unavailable')
-                statuses[f'{profile}:{run_id}'] = {'status': body['status'], 'session_id': body.get('session_id')}
-        return {'sessions': await self.snapshot(discovered), 'known_runs': statuses,
-                'run_discovery_available': False}
+                statuses[f'{profile}:{run_id}'] = {
+                    'status': body['status'], 'session_id': body.get('session_id')}
+        return {'sessions': await self.snapshot(discovered), 'runs': statuses,
+                'run_discovery_available': True}
 
     async def snapshot(self, sessions: dict[str, set[str]]) -> dict:
         result = {}

@@ -356,13 +356,14 @@ class LiveScenario:
             start = time.monotonic()
             await asyncio.sleep(self.idle_seconds)
             after = await self.idle_activity()
+            unchanged = before == after
             self.receipt['checks']['idle'] = {'observed_seconds': time.monotonic() - start,
-                'scope': 'public acceptance-channel session discovery/counters and known Run statuses; no unrelated/global-zero claim',
-                'before': before, 'after': after, 'unchanged': before == after,
-                'complete': False, 'new_run_discovery': 'unavailable: public Runs only supports GET by known ID'}
-            if before != after:
-                raise AcceptanceBlocked('idle acceptance sessions or known Runs produced activity')
-            raise AcceptanceBlocked('Idle acceptance incomplete: public API cannot discover new acceptance-related queued Runs; unchanged known counters are not full Run evidence')
+                'scope': 'public acceptance-channel session discovery, session counters, and every Run for each discovered acceptance session; no unrelated/global-zero claim',
+                'before': before, 'after': after, 'unchanged': unchanged,
+                'complete': True, 'new_run_discovery': 'authenticated exact-session GET /v1/runs'}
+            if not unchanged:
+                raise AcceptanceBlocked('idle acceptance sessions or Runs produced activity')
+            self.passed('10')
 
     def cancelled(self):
         self._cancelled = True
@@ -400,8 +401,9 @@ class LiveScenario:
                 capabilities = await self.readbacks.get(profile, 'v1/capabilities')
                 features = capabilities.get('features', {})
                 if (features.get('run_submission') is not True or features.get('run_status') is not True
+                        or features.get('run_list_by_session') is not True
                         or features.get('runs_idempotency', {}).get('durable') is not True):
-                    raise AcceptanceBlocked(f'{profile}: durable public Runs/idempotency required before mutation')
+                    raise AcceptanceBlocked(f'{profile}: durable public Runs/idempotency and exact-session Run discovery required before mutation')
             self.network = TemporaryNetwork(self.state, self.home, self.api_url, self.credentials, self.resources, self.projects)
             self.network.prepare()
             self.receipt['mutations'].append({'temporary_network_state': str(self.state)})
