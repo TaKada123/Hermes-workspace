@@ -1,0 +1,332 @@
+{
+  "tested_sha": "531201f68c77cd348f3d4addbd9351e40307c436",
+  "branch": "feat/ag2-live-acceptance-executor",
+  "package_source_sha256": "99e693e0fc8bafe1ff9a2defa94a52ed3f9e1175b10d2032460ce7ae6468ad7e",
+  "source_worktree_note": "execution_build.dirty=true is due only to nine preserved untracked evidence/repair-*.log files; tracked source diff was empty",
+  "deployment": {
+    "interrupted_side_effects_reconciled": true,
+    "duplicate_plugin_writes": false,
+    "backup_root": "/home/vottak/.hermes/cache/scratch/ag2-ticket21-deploy-b546b911e41b4510a0d92682b3a976da",
+    "backup_contents_readback_verified": {
+      "coding": true,
+      "architect": true
+    },
+    "source_manifest": {
+      "__init__.py": "5e939c5938944bbcad20152f0ec6f082eb0ad024d8fc358eb2f64261a30154f5",
+      "client.py": "60f6061a0f5c80aee8477dd1b1ba30a8b242bf9dd54b6fbbd2e0f57aeab6a0ed",
+      "plugin.yaml": "55fb0e3fbfc482c9933cbd8aca6ca0726d8dd2b93f834be4d40f65113fd1baf8"
+    },
+    "installed_readback_matches": {
+      "coding": true,
+      "architect": true
+    },
+    "protected_config_env_soul_unchanged": {
+      "coding": true,
+      "architect": true
+    },
+    "reload": {
+      "coding": {
+        "reloaded": true,
+        "home": "/home/vottak/.hermes/profiles/coding",
+        "adapters_rewired": 0,
+        "agent_network_activation": {
+          "name": "agent-network",
+          "key": "agent-network",
+          "activated_now": {},
+          "deferred": {
+            "tools": [
+              "agent_network_artifact_publish",
+              "agent_network_artifact_read",
+              "agent_network_ask",
+              "agent_network_history",
+              "agent_network_open",
+              "agent_network_peers",
+              "agent_network_send"
+            ]
+          }
+        }
+      },
+      "architect": {
+        "reloaded": true,
+        "home": "/home/vottak/.hermes/profiles/architect",
+        "adapters_rewired": 0,
+        "agent_network_activation": {
+          "name": "agent-network",
+          "key": "agent-network",
+          "activated_now": {},
+          "deferred": {
+            "tools": [
+              "agent_network_artifact_publish",
+              "agent_network_artifact_read",
+              "agent_network_ask",
+              "agent_network_history",
+              "agent_network_open",
+              "agent_network_peers",
+              "agent_network_send"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "live_exit_code": 2,
+  "live_receipt": {
+    "phase": "live",
+    "ready": true,
+    "live_scenario_completed": false,
+    "scenario_id": "acceptance-68a8c5cb600d4935a52006b2b3189c61",
+    "projects": [
+      "acceptance-68a8c5cb600d4935a52006b2b3189c61-alpha",
+      "acceptance-68a8c5cb600d4935a52006b2b3189c61-beta"
+    ],
+    "steps": {
+      "1": {
+        "criterion": "Coding initiates Architect consultation",
+        "status": "not_run"
+      },
+      "2": {
+        "criterion": "Architect receives native AG2 request",
+        "status": "not_run"
+      },
+      "3": {
+        "criterion": "Architect replies through owning Hermes Run",
+        "status": "not_run"
+      },
+      "4": {
+        "criterion": "Coding receives reply and continues",
+        "status": "not_run"
+      },
+      "5": {
+        "criterion": "Coding consults Architect again",
+        "status": "not_run"
+      },
+      "6": {
+        "criterion": "Both channel sessions continue",
+        "status": "not_run"
+      },
+      "7": {
+        "criterion": "Each owning runtime writes independent private memory",
+        "status": "not_run"
+      },
+      "8": {
+        "criterion": "Temporary Hub/Bridge processes restart",
+        "status": "not_run"
+      },
+      "9": {
+        "criterion": "History/identities/sessions continue after restart",
+        "status": "not_run"
+      },
+      "10": {
+        "criterion": "No duplicate, canary leakage or idle activity",
+        "status": "not_run"
+      }
+    },
+    "blockers": [
+      "Architect native WAL lacks exactly one correlated request/reply for the requested operation"
+    ],
+    "mutations": [
+      {
+        "temporary_network_state": "/home/vottak/.hermes/cache/scratch/ag2-ticket21-postreload-live-state-04"
+      },
+      {
+        "profile": "coding",
+        "run_id": "run_6bd9b60c00cc43969ad4b9f7976080d8",
+        "session_id": "ag2-4370f928d6f550cc9226304435757b39"
+      }
+    ],
+    "runs": [
+      {
+        "profile": "coding",
+        "run_id": "run_6bd9b60c00cc43969ad4b9f7976080d8",
+        "session_id": "ag2-4370f928d6f550cc9226304435757b39",
+        "origin_session_id": "ag2-4370f928d6f550cc9226304435757b39",
+        "status": "completed",
+        "tool_names": [
+          "skill_view",
+          "skill_view",
+          "tool_describe",
+          "tool_call",
+          "agent_network_open",
+          "tool_call",
+          "agent_network_ask"
+        ],
+        "tool_invocations": [
+          {
+            "tool_call_id": "call_108bc3e5e01045d182cc216c6d2229b2",
+            "tool_names": [
+              "skill_view"
+            ],
+            "arguments_sha256": "baef2a472730f7001e7361320afa544ef96d854100a97a26b5a957785adf4087",
+            "result_sha256": "a76689d93d293ad1394edbe4dd379624ec06e0aa7b5633620045881b79ebfa5e"
+          },
+          {
+            "tool_call_id": "call_a988177756034f349c8c0ffac5205769",
+            "tool_names": [
+              "skill_view"
+            ],
+            "arguments_sha256": "2152d0dfc405a64b78ca62d20632557e952a1f3844e39124728b400eb3afe949",
+            "result_sha256": "e1d4968809808f8251bc10a99a277099ca1a4a5779d7735654f8192909391e43"
+          },
+          {
+            "tool_call_id": "call_225d9694df084d7f914e9ae2350860e8",
+            "tool_names": [
+              "tool_describe"
+            ],
+            "arguments_sha256": "12e01fcc13072175d378f4fbfa65505a34dce03500fe083019bee6958ec9130b",
+            "result_sha256": "f9f13d43438ee54237222d8618de3abc8c375e7e8c61a9f61fe4255d4516d2a0"
+          },
+          {
+            "tool_call_id": "call_0a63d2931df244c88a91f99d32eefff1",
+            "tool_names": [
+              "tool_call",
+              "agent_network_open"
+            ],
+            "arguments_sha256": "70d05899fe8167eec6088bfb1b223fe6dff8c4d11a15e0502d6a23f1202f2f43",
+            "result_sha256": "752321ade904e66f3a9ca098b5deea1d313531ae62d8419aa0510e0548183bb8"
+          },
+          {
+            "tool_call_id": "call_2a0e3f889a5f446e8d1541775d10a198",
+            "tool_names": [
+              "tool_call",
+              "agent_network_ask"
+            ],
+            "arguments_sha256": "665653e380661ef90876fd12c3e513136532057bea0223fe2425fdef651b6b6c",
+            "result_sha256": "f520bd3dd2d3541ddac2a1df03266e0e3599ce2865e7fd885743b5ad584f93d0"
+          }
+        ],
+        "input_sha256": "5f37d04c68294f8039d01c2bd221be3834e31548357cff32165738f22ab0ccb5",
+        "counters": {
+          "message_count": 12,
+          "tool_call_count": 5,
+          "api_call_count": 6,
+          "input_tokens": 20814,
+          "output_tokens": 526
+        }
+      }
+    ],
+    "channels": {},
+    "checks": {},
+    "cleanup": {
+      "processes": [
+        {
+          "pid": 74551,
+          "returncode": 0
+        },
+        {
+          "pid": 74533,
+          "returncode": 0
+        },
+        {
+          "pid": 74508,
+          "returncode": 0
+        }
+      ],
+      "memory": {},
+      "temporary_credentials_removed": true,
+      "durable_state_retained": "/home/vottak/.hermes/cache/scratch/ag2-ticket21-postreload-live-state-04",
+      "profile_configs_unchanged": {
+        "coding": true,
+        "architect": true
+      }
+    },
+    "profile_backends": {
+      "coding": "file",
+      "architect": "file"
+    },
+    "identities": {
+      "coding": "18dea6fe511d180665acf78aafbc9f2a",
+      "architect": "18dea6fe9ab1684f93c43d7c9c26d8a1"
+    },
+    "ledger_metadata": {
+      "sessions": [
+        {
+          "profile": "coding",
+          "project_id": "acceptance-68a8c5cb600d4935a52006b2b3189c61-alpha",
+          "channel_id": "18dea6fea40223c21b50ee90b38850c8",
+          "origin_id": "ag2-4370f928d6f550cc9226304435757b39",
+          "current_id": "ag2-4370f928d6f550cc9226304435757b39"
+        }
+      ],
+      "held": []
+    },
+    "readiness": {
+      "phase": "readiness",
+      "ready": true,
+      "live_scenario_completed": false,
+      "profiles": {
+        "coding": {
+          "authenticated": true,
+          "http_status": 200,
+          "content_type": "application/json",
+          "response_kind": "json",
+          "sessions_schema": "list.data"
+        },
+        "architect": {
+          "authenticated": true,
+          "http_status": 200,
+          "content_type": "application/json",
+          "response_kind": "json",
+          "sessions_schema": "list.data"
+        }
+      },
+      "blockers": [],
+      "mutations": []
+    },
+    "execution_build": {
+      "package_source_sha256": "99e693e0fc8bafe1ff9a2defa94a52ed3f9e1175b10d2032460ce7ae6468ad7e",
+      "git_sha": "531201f68c77cd348f3d4addbd9351e40307c436",
+      "dirty": true
+    }
+  },
+  "diagnosis": {
+    "coding_ask_public_tool_result": {
+      "ok": false,
+      "error": "network request budget exceeded"
+    },
+    "loaded_client_behavior_proof": "HTTP-429 mapping is present only in updated client; prior backed-up client lacks this mapping. Genuine deferred-tool result matches updated mapping after supported reload.",
+    "context_propagation_verified": false,
+    "architect_runtime_behavior_verified": false,
+    "runtime_release": "memv2-20261011T130106Z",
+    "runtime_missing_support_files": [
+      "gateway/platforms/api_server_runs.py",
+      "model_tools.py"
+    ],
+    "finding": "Actual gateway release has no run_context_id or X-Hermes-Run-Context-Id support. Plugin can forward handler kwargs, but gateway does not supply them. Bridge rejects unbound nested work while Coding is active. No captured request headers; missing header is source-based diagnosis, not packet evidence.",
+    "later_acceptance_not_reached": [
+      "second consultation",
+      "two projects",
+      "error matrix",
+      "memory canaries",
+      "Hub/Bridge restart",
+      "history after restart",
+      "idle interval"
+    ],
+    "independent_idle_blocker": "Executor lines 362-365 deliberately require discovery of new queued acceptance Runs. Actual runtime public API exposes only GET by known Run ID; no list endpoint found. Control-socket active_runs=0 is supplemental global operator telemetry, not a replacement for agreed HTTP discovery/interval proof.",
+    "proposed_scope_requiring_new_approval": "Deploy compatible gateway/core release implementing admitted Run header validation/binding and propagation through agent tool dispatch/deferred calls, with isolated regressions; arrange separately authorized gateway restart/reexec. For full step 10 agree and implement authenticated acceptance-scoped Run discovery or a proven equivalent existing public seam. No such runtime/core changes performed."
+  },
+  "postcheck": {
+    "pid": 772,
+    "start_time": 1197,
+    "active_agents": 0,
+    "active_runs": 0,
+    "restart_requested": false
+  },
+  "cleanup_readback": {
+    "owned_pids_absent": true,
+    "owned_credentials_absent": true,
+    "tool_ports_free": [
+      8766,
+      8767
+    ],
+    "held_executions": [],
+    "owning_run_terminal": "completed",
+    "memory_canaries_never_attempted": true,
+    "health_http": 200
+  },
+  "review": "Prior independent Standards delta PASS at 531201f6 per handoff; Spec delta pending parent. No executable edits in this follow-up, no independent review claimed.",
+  "publication": {
+    "push": false,
+    "issue_closed": false
+  },
+  "tracked_executable_files_equal_tested_commit": true
+}

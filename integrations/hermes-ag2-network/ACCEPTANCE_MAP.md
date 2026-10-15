@@ -1,6 +1,43 @@
 # Live Coding/Architect executor: acceptance map
 
-## Current outcome — enrolled live follow-up
+## Current outcome — authorized plugin deployment and fresh post-reload live
+
+**#21 remains blocked; no full live pass.** Exact tested executable commit:
+`531201f68c77cd348f3d4addbd9351e40307c436`; package SHA-256
+`99e693e0fc8bafe1ff9a2defa94a52ed3f9e1175b10d2032460ce7ae6468ad7e`.
+Interrupted deployment had already updated both profile plugins with verified protected
+backups. Reconciliation confirmed installed hashes and unchanged config/.env/SOUL;
+no duplicate plugin writes. Supported profile-scoped `reload-plugins` succeeded for
+Coding/Architect; Gateway PID 772/start-time 1197 stayed unchanged.
+
+A new genuine `--execute` used only a fresh acceptance session. Exit **2**:
+Coding Run `run_6bd9b60c00cc43969ad4b9f7976080d8` completed and called
+`agent_network_open`/`agent_network_ask`, but the ask returned the updated client's
+HTTP-429 mapping, `network request budget exceeded`. No Architect session/request/reply.
+Actual Gateway release `memv2-20261011T130106Z` lacks Run-context header parsing/binding
+and tool dispatch propagation; deploying the plugin alone cannot provide missing core
+kwargs. New client behavior is demonstrated in Coding; end-to-end context forwarding
+and Architect runtime behavior are **not** verified. No core/runtime repair or Gateway restart.
+
+All ten step gates remain `not_run`: step 1 attempted, success gate blocked. Multi-turn,
+two-project, error-matrix, memory, network-restart/history and idle criteria were not reached.
+Independent later blocker: executor deliberately refuses full step 10 without new queued-Run
+discovery; actual public Runs API has GET by known ID only. Operator control-socket idle
+metrics are supplemental, not a substitute for acceptance-scoped public Run discovery.
+
+Cleanup readback: all three owned processes absent, temporary credentials removed, ToolAPI
+ports free, owning Run completed, `held=[]`, no memory canary attempted, configs/env/SOUL
+unchanged, both backends remain `file`, health HTTP 200. Source was unchanged; dirty flag
+came from preserved untracked repair logs. Sanitized evidence:
+[`evidence/live-postreload-blocked.json`](evidence/live-postreload-blocked.json).
+
+**Approval needed for a new scope:** compatible Gateway/core release with admitted Run
+context validation/binding and propagation through tool/deferred dispatch, plus separately
+authorized Gateway restart/reexec. Full step 10 also needs agreed authenticated Run discovery
+or a proven equivalent public seam. No push/issue closure; independent Spec delta remains
+with parent. Earlier receipts below are historical and do not supersede this result.
+
+## Historical outcome — enrolled live follow-up
 
 **#21 is still blocked, not completed.** Parent authorized and enrolled Coding/Architect.
 Fresh genuine `--execute` on clean source `57d39e553ed05d5f9c5ad657f1ea611c9b0774ed`

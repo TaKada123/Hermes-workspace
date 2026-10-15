@@ -1,6 +1,43 @@
 # AG2 ticket verification receipts
 
-## Ticket 21 — current enrolled live follow-up
+## Ticket 21 — current authorized post-reload live
+
+Tested executable SHA `531201f68c77cd348f3d4addbd9351e40307c436`, package SHA-256
+`99e693e0fc8bafe1ff9a2defa94a52ed3f9e1175b10d2032460ce7ae6468ad7e`.
+Fresh actual execution after supported plugin reload: **exit 2 / blocked**, not a pass.
+Full sanitized deployment/reload/live/cleanup receipt:
+`evidence/live-postreload-blocked.json`; current acceptance map describes the blocker.
+
+- Interrupted side effects inspected first: both plugins were already deployed. Existing
+  protected backup contents and installed source hashes reverified; no second deployment.
+  Backup root: `/home/vottak/.hermes/cache/scratch/ag2-ticket21-deploy-b546b911e41b4510a0d92682b3a976da`.
+- Supported `reload_gateway_plugins(..., profile_home=...)` read back `reloaded=true`
+  for both profiles, seven deferred network tools each. Gateway unchanged: PID 772,
+  start-time 1197, `restart_requested=false`; no Gateway restart or core/config edit.
+- Fresh Coding session `ag2-4370f928d6f550cc9226304435757b39`, Run
+  `run_6bd9b60c00cc43969ad4b9f7976080d8`, terminal `completed` read back via public API.
+  Actual `agent_network_ask` tool result: `ok=false`, `network request budget exceeded`.
+  This is the updated client's unique 429 mapping, absent in both backed-up clients.
+  Peer native WAL contains channel lifecycle only, no request/reply; Architect mapping empty.
+- Actual loaded release has **no** `run_context_id` support in Runs admission or tool dispatch.
+  Updated plugin forwards this kwarg only if supplied. Missing-header diagnosis is source-based,
+  not captured HTTP headers. End-to-end context propagation/Architect execution remain unverified.
+- All ten gates `not_run`; first consultation attempted and blocked. Multi-turn, errors,
+  two projects, memory, Hub/Bridge restart/history and idle were not reached. Executor's
+  additional step-10 queued-Run-discovery blocker is preserved; no criteria weakened.
+- Cleanup independently read back: owned PIDs 74551/74533/74508 absent, temporary credentials
+  absent, ports 8766/8767 free, `held=[]`, no memory canaries attempted, protected profile
+  config/.env/SOUL hashes unchanged, backend `file`, health HTTP 200, active Runs/agents zero
+  at final operator control-socket readback (not a timed idle-acceptance proof).
+- `execution_build.dirty=true` came only from nine preserved untracked repair logs; all
+  executable package/plugin files were verified byte-equal to the tested commit. No code
+  edits/tests rerun in this evidence-only follow-up; no slow local suite, push or issue closure.
+  Independent review is parent's responsibility; no new independent pass claimed.
+- New scope requires operator approval: compatible Gateway/core deployment (admitted Run
+  context validation/binding through tool/deferred dispatch) and a separately approved
+  restart/reexec; agreed authenticated queued-Run discovery/equivalent seam for full step 10.
+
+## Ticket 21 — historical enrolled live follow-up
 
 Exact clean live-tested source: `57d39e553ed05d5f9c5ad657f1ea611c9b0774ed`.
 Branch `feat/ag2-live-acceptance-executor`. Source SHA-256:
