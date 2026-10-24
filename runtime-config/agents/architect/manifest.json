@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "agent_id": "architect",
+  "version": "0.1.0",
+  "status": "pilot",
+  "public_files": ["SOUL.md", "manifest.json", "README.md"],
+  "inherit_runtime": ["config.yaml", "skills", "scripts", "references", "plugins", "skins"],
+  "private_snapshot": ["memories", "state.db", "sessions"],
+  "disable_plugins": ["agent-network", "gumar-runtime-policy"],
+  "required_local_plugin": "zaebal-hermes",
+  "credentials": "No credential copy. Use Hermes shared-root OAuth fallback; optional explicit credential-only .env symlink.",
+  "skills_policy": "Retain all installed source skills, scripts and references; do not prune the broad legacy set in this pilot.",
+  "external_dependencies": "Preserve MCP commands and installed tool symlinks with explicit absolute paths; parent verifies reachability.",
+  "memory_policy": "Preserve source backend and limits; SQLite online backup for history, no memory migration.",
+  "launch_command": "architect-direct",
+  "actions": [{"action_id": "architect.direct.install", "status": "experimental", "entrypoint": "scripts/direct_agent.py install"}]
+}

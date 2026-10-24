@@ -1,0 +1,4 @@
+name: gumar-runtime-policy
+version: "1.0.0"
+description: "Loads Gumar's Hermes governance and architecture policies into the runtime system prompt."
+author: "Gumar"

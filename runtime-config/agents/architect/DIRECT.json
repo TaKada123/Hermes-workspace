@@ -1,0 +1,8 @@
+{
+  "agent": "architect",
+  "home": "/home/vottak/Проекты/Hermes-workspace/agents/architect",
+  "command": "architect-direct",
+  "private_state": "Excluded from Git; lives in agents/architect",
+  "external_runtime": "Installed Hermes runtime and protected credential references; not bundled",
+  "automatic_routing": false
+}

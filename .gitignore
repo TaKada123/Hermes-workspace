@@ -320,3 +320,11 @@ native/fts5_cjk/*.so
 /pm/.lock.json.lock
 
 apps/desktop/.dist-build*
+
+# Private direct-agent homes; public definitions stay under runtime-config/agents/.
+/agents/architect/
+/agents/main/
+/agents/design/
+/agents/coding/
+/agents/university/
+

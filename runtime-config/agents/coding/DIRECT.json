@@ -1,0 +1,8 @@
+{
+  "agent": "coding",
+  "home": "/home/vottak/Проекты/Hermes-workspace/agents/coding",
+  "command": "coding-direct",
+  "private_state": "Excluded from Git; lives in agents/coding",
+  "external_runtime": "Installed Hermes runtime and protected credential references; not bundled",
+  "automatic_routing": false
+}

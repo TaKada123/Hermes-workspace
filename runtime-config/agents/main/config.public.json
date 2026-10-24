@@ -1,0 +1,183 @@
+{
+  "model": {
+    "provider": "openai-codex",
+    "default": "gpt-6.1-sol-900k",
+    "base_url": "https://chatgpt.com/backend-api/codex",
+    "api_mode": "codex_responses"
+  },
+  "_config_version": 49,
+  "web": {
+    "backend": "nous"
+  },
+  "browser": {
+    "cloud_provider": "nous"
+  },
+  "stt": {
+    "provider": "nous"
+  },
+  "image_gen": {
+    "provider": "nous"
+  },
+  "agent": {
+    "max_turns": 150,
+    "reasoning_effort": "medium",
+    "system_prompt": "\"Самостоятельный агент: пользователь обращается к вам напрямую. Выполняйте его задачу своими инструментами. Автоматическая передача другим постоянным профилям, обязательные Main/design.route/JEV/AG2 больше не используются. Старые инструкции о такой маршрутизации не действуют. Временные подагенты разрешены. Другого специалиста можно только посоветовать пользователю; не запускать его без явной просьбы. Душу и частную память других агентов не читать.\\nДругие самостоятельные агенты: Main/main-direct — универсальные задачи; Design/design-direct — визуальная работа; Coding/coding-direct — код; University/university-direct — учёба и учебный Telegram; Architect/architect-direct — архитектура. При необходимости скажите: «Вы можете попросить Design Agent — он поможет с оформлением». Это рекомендация пользователю, не передача задачи.\""
+  },
+  "telemetry": {
+    "shared_metrics": {
+      "enabled": true,
+      "send": false
+    }
+  },
+  "plugins": {
+    "enabled": [
+      "zaebal-hermes"
+    ],
+    "disabled": [
+      "tguser-platform",
+      "agent-network",
+      "gumar-runtime-policy"
+    ],
+    "entries": {
+      "zaebal-hermes": {
+        "allow_tool_override": false
+      }
+    }
+  },
+  "memory": {
+    "user_char_limit": 4000,
+    "backend": "sqlite_v2"
+  },
+  "tools": {
+    "tool_search": {
+      "defer": [
+        "computer_use",
+        "session_search",
+        "image_generate",
+        "todo_list",
+        "process_manage",
+        "cronjob_manage",
+        "drive_preview",
+        "gui_tour",
+        "desktop_preview",
+        "annotate_preview",
+        "show_tip",
+        "desktop_project",
+        "close_terminal",
+        "apply_layout",
+        "read_terminal",
+        "read_window_below",
+        "focus_pane",
+        "skill_manage",
+        "text_to_speech",
+        "browser_vault_list",
+        "browser_vault_fill",
+        "browser_vault_save_login",
+        "browser_vault_enter_code",
+        "browser_vault_unlock"
+      ]
+    }
+  },
+  "onboarding": {
+    "seen": {
+      "tool_progress_prompt": true,
+      "busy_input_prompt": true
+    }
+  },
+  "skills": {
+    "disabled": [
+      "superdesign",
+      "impeccable",
+      "design-production-pipeline",
+      "design-md",
+      "popular-web-designs",
+      "claude-design",
+      "architecture-diagram",
+      "baoyu-infographic",
+      "p5js",
+      "powerpoint",
+      "creative/hyperframes",
+      "hyperframes-animation",
+      "hyperframes-audio",
+      "hyperframes-cli",
+      "hyperframes-core",
+      "hyperframes-creative",
+      "hyperframes-keyframes",
+      "hyperframes-registry",
+      "hyperframes-studio",
+      "media-use",
+      "design-router"
+    ],
+    "trusted_project_dirs": [
+      "/home/vottak/Проекты/hyperframes-student-kit"
+    ]
+  },
+  "gateway": {
+    "multiplex_profiles": true
+  },
+  "mcp_servers": {
+    "flow": {
+      "command": "node",
+      "args": [
+        "/home/vottak/Проекты/flow-mcp/dist/index.js"
+      ],
+      "connect_timeout": 60.0,
+      "enabled": true,
+      "env": {
+        "FLOW_MCP_CHROME": "/usr/bin/google-chrome-stable"
+      }
+    },
+    "blender": {
+      "command": "/home/vottak/.local/bin/mcp-for-blender",
+      "env": {
+        "DISABLE_TELEMETRY": "true",
+        "BLENDER_MCP_SAFE_MODE": "1",
+        "BLENDER_HOST": "127.0.0.1",
+        "BLENDER_PORT": "9877"
+      },
+      "connect_timeout": 60.0,
+      "enabled": true,
+      "tools": {
+        "include": [
+          "get_addon_status",
+          "get_scene_info",
+          "execute_blender_code",
+          "look"
+        ],
+        "resources": false,
+        "prompts": false
+      },
+      "lazy": true,
+      "timeout": 300,
+      "sampling": {
+        "enabled": false
+      }
+    },
+    "colab": {
+      "command": "/home/vottak/Проекты/hermes-colab-agent/.venv/bin/colab-mcp",
+      "args": [
+        "--browser-cdp-endpoint",
+        "http://127.0.0.1:9222"
+      ],
+      "connect_timeout": 60.0,
+      "enabled": true,
+      "env": {
+        "DISPLAY": ":0",
+        "WAYLAND_DISPLAY": "wayland-1",
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus"
+      }
+    },
+    "deploychan": {
+      "url": "https://mcp.deploychan.webcam/mcp",
+      "enabled": true,
+      "sampling": {
+        "enabled": false
+      }
+    }
+  },
+  "platforms": {
+    "tguser": {
+      "enabled": false
+    }
+  }
+}

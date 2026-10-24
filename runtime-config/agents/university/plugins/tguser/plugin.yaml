@@ -1,0 +1,64 @@
+name: tguser-platform
+label: Telegram (user account)
+kind: platform
+version: 1.0.0
+description: >
+  Read-only monitoring gateway adapter for a personal Telegram USER account
+  over MTProto (telethon). It subscribes to the chats you explicitly name and
+  records their messages to a local JSONL inbox. It never forwards third-party
+  group text to the agent as an instruction, and it refuses every outbound send
+  except to your own Saved Messages / the configured home channel, so a
+  monitored group can never be answered by accident.
+author: vottak
+# ``requires_env`` and ``optional_env`` entries are surfaced in the
+# ``hermes config`` UI via the platform-plugin env var injector in
+# ``hermes_cli/config.py``.
+requires_env:
+  - name: TELETHON_API_ID
+    description: "Telegram API app id from https://my.telegram.org (integer)"
+    prompt: "Telegram API ID"
+    password: false
+  - name: TELETHON_API_HASH
+    description: "Telegram API app hash from https://my.telegram.org"
+    prompt: "Telegram API hash"
+    password: true
+optional_env:
+  - name: TGUSER_SESSION
+    description: "Path to the telethon session file (default: <HERMES_HOME>/tguser/tguser.session)"
+    prompt: "Telegram session file path (or empty for the default)"
+    password: false
+  - name: TGUSER_WATCH_CHATS
+    description: "Comma-separated @usernames or numeric ids (-100...) of chats to monitor"
+    prompt: "Chats to watch (comma-separated @name or -100... ids)"
+    password: false
+  - name: TGUSER_HOME_CHANNEL
+    description: "Only outbound destination allowed besides Saved Messages (default: me)"
+    prompt: "Allowed outbound channel (default 'me')"
+    password: false
+  - name: TGUSER_ALLOWED_USERS
+    description: "Comma-separated user ids whose messages may dispatch an agent turn"
+    prompt: "Allowed sender user ids (comma-separated)"
+    password: false
+  - name: TGUSER_ALLOW_ALL_USERS
+    description: "Let ANY sender dispatch an agent turn (dev only, dangerous)"
+    prompt: "Allow all senders? (true/false)"
+    password: false
+  - name: TGUSER_OUTBOUND
+    description: >-
+      Outbound policy. "self" (default) allows sending only to Saved Messages /
+      TGUSER_HOME_CHANNEL; "none" turns the account into a pure reader that never
+      sends anything anywhere.
+    prompt: "Outbound policy: self or none (default self)"
+    password: false
+  - name: TGUSER_MARK_READ
+    description: "Update read status after ingesting (true/false, default: true)"
+    prompt: "Mark ingested chats as read? (true/false)"
+    password: false
+  - name: TGUSER_MEDIA_DIR
+    description: "Directory for downloaded attachments (default: <HERMES_HOME>/tguser/media)"
+    prompt: "Media download directory (or empty for the default)"
+    password: false
+  - name: TGUSER_INBOX_PATH
+    description: "JSONL file for recorded messages (default: <HERMES_HOME>/tguser/inbox.jsonl)"
+    prompt: "Inbox JSONL path (or empty for the default)"
+    password: false

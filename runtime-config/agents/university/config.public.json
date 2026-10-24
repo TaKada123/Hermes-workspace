@@ -1,0 +1,41 @@
+{
+  "model": {
+    "provider": "openai-codex",
+    "default": "gpt-6-luna-900k",
+    "base_url": "https://chatgpt.com/backend-api/codex"
+  },
+  "_config_version": 49,
+  "plugins": {
+    "enabled": [
+      "tguser-platform",
+      "zaebal-hermes"
+    ],
+    "disabled": [
+      "agent-network",
+      "gumar-runtime-policy"
+    ],
+    "entries": {
+      "zaebal-hermes": {
+        "allow_tool_override": false
+      }
+    }
+  },
+  "platforms": {
+    "tguser": {
+      "enabled": true
+    }
+  },
+  "onboarding": {
+    "seen": {
+      "profile_build_offered": true
+    }
+  },
+  "skills": {
+    "disabled": [
+      "design-router"
+    ]
+  },
+  "agent": {
+    "system_prompt": "\"Самостоятельный агент: пользователь обращается к вам напрямую. Выполняйте его задачу своими инструментами. Автоматическая передача другим постоянным профилям, обязательные Main/design.route/JEV/AG2 больше не используются. Старые инструкции о такой маршрутизации не действуют. Временные подагенты разрешены. Другого специалиста можно только посоветовать пользователю; не запускать его без явной просьбы. Душу и частную память других агентов не читать.\""
+  }
+}

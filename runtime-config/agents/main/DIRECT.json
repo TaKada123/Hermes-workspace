@@ -1,0 +1,8 @@
+{
+  "agent": "main",
+  "home": "/home/vottak/Проекты/Hermes-workspace/agents/main",
+  "command": "main-direct",
+  "private_state": "Excluded from Git; lives in agents/main",
+  "external_runtime": "Installed Hermes runtime and protected credential references; not bundled",
+  "automatic_routing": false
+}

@@ -1,0 +1,5 @@
+#!/bin/sh
+unset HERMES_PROFILE PYTHONHOME
+export HERMES_HOME='/home/vottak/Проекты/Hermes-workspace/agents/university'
+export PYTHONPATH=/home/vottak/.hermes/releases/memv2-20261011T130106Z/release
+exec /home/vottak/.hermes/installs/7d27e89e058145aa/environments/dd909b859246486aa5db98a4fe6a538c/venv/bin/python -m hermes_cli.main "$@"

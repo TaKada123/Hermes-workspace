@@ -1,0 +1,172 @@
+{
+  "model": {
+    "provider": "openai-codex",
+    "base_url": "https://chatgpt.com/backend-api/codex",
+    "default": "gpt-6-luna-900k"
+  },
+  "_config_version": 49,
+  "agent": {
+    "reasoning_effort": "medium",
+    "max_turns": 150,
+    "system_prompt": "\"Самостоятельный агент: пользователь обращается к вам напрямую. Выполняйте его задачу своими инструментами. Автоматическая передача другим постоянным профилям, обязательные Main/design.route/JEV/AG2 больше не используются. Старые инструкции о такой маршрутизации не действуют. Временные подагенты разрешены. Другого специалиста можно только посоветовать пользователю; не запускать его без явной просьбы. Душу и частную память других агентов не читать.\""
+  },
+  "terminal": {
+    "backend": "local",
+    "cwd": "/home/vottak/Проекты"
+  },
+  "web": {
+    "backend": "nous"
+  },
+  "browser": {
+    "cloud_provider": "nous"
+  },
+  "image_gen": {
+    "provider": "openai-codex",
+    "openai-codex": {
+      "model": "gpt-image-2-medium"
+    }
+  },
+  "memory": {
+    "memory_enabled": true,
+    "user_profile_enabled": true,
+    "memory_char_limit": 5000,
+    "user_char_limit": 2000,
+    "write_approval": false,
+    "backend": "sqlite_v2"
+  },
+  "plugins": {
+    "enabled": [
+      "zaebal-hermes"
+    ],
+    "disabled": [
+      "agent-network",
+      "gumar-runtime-policy"
+    ],
+    "entries": {
+      "zaebal-hermes": {
+        "allow_tool_override": false
+      }
+    }
+  },
+  "platform_toolsets": {
+    "cli": [
+      "web",
+      "browser",
+      "terminal",
+      "file",
+      "code_execution",
+      "vision",
+      "image_gen",
+      "skills",
+      "todo",
+      "memory",
+      "clarify",
+      "computer_use",
+      "delegation"
+    ]
+  },
+  "tools": {
+    "tool_search": {
+      "defer": [
+        "computer_use",
+        "session_search",
+        "image_generate",
+        "todo_list",
+        "process_manage",
+        "cronjob_manage",
+        "drive_preview",
+        "gui_tour",
+        "desktop_preview",
+        "annotate_preview",
+        "show_tip",
+        "desktop_project",
+        "close_terminal",
+        "apply_layout",
+        "read_terminal",
+        "read_window_below",
+        "focus_pane",
+        "skill_manage",
+        "text_to_speech",
+        "browser_vault_list",
+        "browser_vault_fill",
+        "browser_vault_save_login",
+        "browser_vault_enter_code",
+        "browser_vault_unlock"
+      ]
+    }
+  },
+  "onboarding": {
+    "seen": {
+      "tool_progress_prompt": true
+    }
+  },
+  "telemetry": {
+    "shared_metrics": {
+      "enabled": false,
+      "send": false
+    }
+  },
+  "delegation": {
+    "max_spawn_depth": 1
+  },
+  "mcp_servers": {
+    "playwright": {
+      "command": "node",
+      "args": [
+        "/home/vottak/.hermes/mcp-tools/architecture2/mcp_ttl_proxy.mjs",
+        "--",
+        "node",
+        "/home/vottak/.hermes/mcp-tools/architecture2/node_modules/@playwright/mcp/cli.js",
+        "--headless",
+        "--isolated",
+        "--no-sandbox"
+      ],
+      "enabled": true,
+      "lazy": true,
+      "connect_timeout": 60,
+      "timeout": 120,
+      "tools": {
+        "include": [
+          "browser_navigate",
+          "browser_snapshot",
+          "browser_fill_form",
+          "browser_click",
+          "browser_take_screenshot",
+          "browser_console_messages",
+          "browser_evaluate"
+        ]
+      }
+    },
+    "blender": {
+      "command": "/home/vottak/.local/bin/mcp-for-blender",
+      "env": {
+        "DISABLE_TELEMETRY": "true",
+        "BLENDER_MCP_SAFE_MODE": "1",
+        "BLENDER_HOST": "127.0.0.1",
+        "BLENDER_PORT": "9877"
+      },
+      "connect_timeout": 60,
+      "enabled": true,
+      "tools": {
+        "include": [
+          "get_addon_status",
+          "get_scene_info",
+          "execute_blender_code",
+          "look"
+        ],
+        "prompts": false,
+        "resources": false
+      },
+      "lazy": true,
+      "timeout": 300,
+      "sampling": {
+        "enabled": false
+      }
+    }
+  },
+  "skills": {
+    "disabled": [
+      "design-router"
+    ]
+  }
+}

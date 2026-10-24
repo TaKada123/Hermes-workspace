@@ -1,0 +1,246 @@
+{
+  "model": {
+    "provider": "openai-codex",
+    "default": "gpt-6-sol-900k",
+    "base_url": "https://chatgpt.com/backend-api/codex"
+  },
+  "_config_version": 49,
+  "web": {
+    "backend": "nous"
+  },
+  "browser": {
+    "cloud_provider": "nous"
+  },
+  "stt": {
+    "provider": "nous"
+  },
+  "image_gen": {
+    "provider": "nous"
+  },
+  "agent": {
+    "max_turns": 150,
+    "reasoning_effort": "medium",
+    "system_prompt": "\"Самостоятельный агент: пользователь обращается к вам напрямую. Выполняйте его задачу своими инструментами. Автоматическая передача другим постоянным профилям, обязательные Main/design.route/JEV/AG2 больше не используются. Старые инструкции о такой маршрутизации не действуют. Временные подагенты разрешены. Другого специалиста можно только посоветовать пользователю; не запускать его без явной просьбы. Душу и частную память других агентов не читать.\""
+  },
+  "telemetry": {
+    "shared_metrics": {
+      "enabled": true,
+      "send": false
+    }
+  },
+  "plugins": {
+    "enabled": [
+      "zaebal-hermes"
+    ],
+    "entries": {
+      "agent-network": {
+        "settings": {
+          "bridge_url": "http://127.0.0.1:8766"
+        }
+      },
+      "zaebal-hermes": {
+        "allow_tool_override": false
+      }
+    },
+    "disabled": [
+      "agent-network",
+      "gumar-runtime-policy"
+    ]
+  },
+  "memory": {
+    "user_char_limit": 4000
+  },
+  "tools": {
+    "tool_search": {
+      "defer": [
+        "computer_use",
+        "session_search",
+        "image_generate",
+        "todo_list",
+        "process_manage",
+        "cronjob_manage",
+        "drive_preview",
+        "gui_tour",
+        "desktop_preview",
+        "annotate_preview",
+        "show_tip",
+        "desktop_project",
+        "close_terminal",
+        "apply_layout",
+        "read_terminal",
+        "read_window_below",
+        "focus_pane",
+        "skill_manage",
+        "text_to_speech",
+        "browser_vault_list",
+        "browser_vault_fill",
+        "browser_vault_save_login",
+        "browser_vault_enter_code",
+        "browser_vault_unlock"
+      ]
+    }
+  },
+  "onboarding": {
+    "seen": {
+      "tool_progress_prompt": true,
+      "busy_input_prompt": true
+    }
+  },
+  "skills": {
+    "disabled": [
+      "superdesign",
+      "impeccable",
+      "design-production-pipeline",
+      "design-md",
+      "popular-web-designs",
+      "claude-design",
+      "architecture-diagram",
+      "baoyu-infographic",
+      "p5js",
+      "powerpoint",
+      "creative/hyperframes",
+      "hyperframes-animation",
+      "hyperframes-audio",
+      "hyperframes-cli",
+      "hyperframes-core",
+      "hyperframes-creative",
+      "hyperframes-keyframes",
+      "hyperframes-registry",
+      "hyperframes-studio",
+      "media-use",
+      "design-router"
+    ],
+    "trusted_project_dirs": [
+      "/home/vottak/Проекты/hyperframes-student-kit"
+    ]
+  },
+  "mcp_servers": {
+    "serena": {
+      "command": "node",
+      "args": [
+        "/home/vottak/.hermes/mcp-tools/architecture2/mcp_ttl_proxy.mjs",
+        "--",
+        "/home/vottak/.hermes/mcp-tools/architecture2/serena/.venv/bin/python",
+        "/home/vottak/.hermes/mcp-tools/architecture2/serena_mcp_start.py",
+        "start-mcp-server",
+        "--project-from-cwd",
+        "--enable-web-dashboard",
+        "false",
+        "--open-web-dashboard",
+        "false"
+      ],
+      "env": {
+        "PYTHONPATH": "/home/vottak/.hermes/mcp-tools/architecture2/serena/src"
+      },
+      "enabled": true,
+      "lazy": true,
+      "connect_timeout": 60,
+      "timeout": 120,
+      "tools": {
+        "include": [
+          "initial_instructions",
+          "activate_project",
+          "find_symbol",
+          "find_referencing_symbols",
+          "get_diagnostics_for_file",
+          "rename_symbol",
+          "replace_symbol_body",
+          "insert_before_symbol",
+          "insert_after_symbol"
+        ]
+      }
+    },
+    "code_graph": {
+      "command": "node",
+      "args": [
+        "/home/vottak/.hermes/mcp-tools/architecture2/mcp_ttl_proxy.mjs",
+        "--",
+        "/home/vottak/.hermes/mcp-tools/architecture2/bin/code-graph-mcp",
+        "serve"
+      ],
+      "enabled": true,
+      "lazy": true,
+      "connect_timeout": 60,
+      "timeout": 120,
+      "tools": {
+        "include": [
+          "semantic_code_search",
+          "get_call_graph",
+          "get_ast_node",
+          "find_references",
+          "module_overview",
+          "project_map"
+        ]
+      }
+    },
+    "context7": {
+      "command": "node",
+      "args": [
+        "/home/vottak/.hermes/mcp-tools/architecture2/mcp_ttl_proxy.mjs",
+        "--",
+        "node",
+        "/home/vottak/.hermes/mcp-tools/architecture2/node_modules/@upstash/context7-mcp/dist/index.js"
+      ],
+      "enabled": true,
+      "lazy": true,
+      "connect_timeout": 60,
+      "timeout": 120,
+      "tools": {
+        "include": [
+          "resolve-library-id",
+          "query-docs"
+        ]
+      }
+    },
+    "playwright": {
+      "command": "node",
+      "args": [
+        "/home/vottak/.hermes/mcp-tools/architecture2/mcp_ttl_proxy.mjs",
+        "--",
+        "node",
+        "/home/vottak/.hermes/mcp-tools/architecture2/node_modules/@playwright/mcp/cli.js",
+        "--headless",
+        "--isolated",
+        "--no-sandbox"
+      ],
+      "enabled": true,
+      "lazy": true,
+      "connect_timeout": 60,
+      "timeout": 120,
+      "tools": {
+        "include": [
+          "browser_navigate",
+          "browser_snapshot",
+          "browser_fill_form",
+          "browser_click",
+          "browser_take_screenshot",
+          "browser_console_messages",
+          "browser_evaluate"
+        ]
+      }
+    },
+    "agent_browser": {
+      "command": "/home/vottak/.hermes/mcp-tools/architecture2/node_modules/.bin/agent-browser",
+      "args": [
+        "mcp"
+      ],
+      "enabled": false,
+      "lazy": true,
+      "connect_timeout": 60,
+      "timeout": 120,
+      "tools": {
+        "include": [
+          "agent_browser_open",
+          "agent_browser_snapshot",
+          "agent_browser_fill",
+          "agent_browser_click",
+          "agent_browser_screenshot"
+        ]
+      }
+    }
+  },
+  "delegation": {
+    "provider": "deepseek",
+    "model": "deepseek-flash"
+  }
+}

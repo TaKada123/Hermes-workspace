@@ -1,0 +1,4 @@
+name: zaebal-hermes
+version: "0.1.0"
+description: "Локальный pinned Z.A.E.B.A.L.; external auditor строго отключён"
+author: "local integration; upstream howdeploy"
