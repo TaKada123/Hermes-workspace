@@ -1,0 +1,109 @@
+{
+  "baseline_files_and_index_checked": 17345,
+  "baseline_changes": [],
+  "upstream_sha": "16927bdbb03cf97dc81d914648cc192fe71201d3",
+  "vendor_matches": {
+    "config.json": true,
+    "platform_runtime.py": true,
+    "protocol/L1.md": true,
+    "protocol/L2.md": true,
+    "protocol/L3.md": true,
+    "wordlists/en.txt": true,
+    "wordlists/ru.txt": true,
+    "wordlists/zh.txt": true,
+    "zaebal.py": true
+  },
+  "live_plugin_exists": {
+    "/home/vottak/.hermes": false,
+    "/home/vottak/.hermes/profiles/architect": false,
+    "/home/vottak/.hermes/profiles/coding": false,
+    "/home/vottak/.hermes/profiles/design": false,
+    "/home/vottak/.hermes/profiles/university": false
+  },
+  "host_receipts": [
+    {
+      "home": "/home/vottak/.hermes/cache/scratch/zaebal-host-lidgs3_m",
+      "loader": "installed PluginManager",
+      "same_process_profile_isolation": true,
+      "plugin": {
+        "name": "zaebal-hermes",
+        "key": "zaebal-hermes",
+        "kind": "standalone",
+        "version": "0.1.0",
+        "description": "Локальный pinned Z.A.E.B.A.L.; external auditor строго отключён",
+        "source": "user",
+        "enabled": true,
+        "tools": 0,
+        "hooks": 1,
+        "middleware": 0,
+        "commands": 1,
+        "error": null
+      },
+      "levels": [
+        1,
+        2,
+        2,
+        3
+      ],
+      "system_prefix": "unchanged",
+      "duplicate": "silent",
+      "history_only": "silent",
+      "model_calls": 0,
+      "live_install": false
+    },
+    {
+      "home": "/home/vottak/.hermes/cache/scratch/zaebal-host-lidgs3_m/profiles/design",
+      "loader": "installed PluginManager",
+      "same_process_profile_isolation": null,
+      "plugin": {
+        "name": "zaebal-hermes",
+        "key": "zaebal-hermes",
+        "kind": "standalone",
+        "version": "0.1.0",
+        "description": "Локальный pinned Z.A.E.B.A.L.; external auditor строго отключён",
+        "source": "user",
+        "enabled": true,
+        "tools": 0,
+        "hooks": 1,
+        "middleware": 0,
+        "commands": 1,
+        "error": null
+      },
+      "levels": [
+        1,
+        2,
+        2,
+        3
+      ],
+      "system_prefix": "unchanged",
+      "duplicate": "silent",
+      "history_only": "silent",
+      "model_calls": 0,
+      "live_install": false
+    }
+  ],
+  "artifact_sha256": {
+    ".gitignore": "599e8d09a18b6bac6f70ed12bf96f67e49c4d992ee2601bc173d92fbcb64b11d",
+    "ACCEPTANCE.md": "69315e6e0f5662f1f6ab36ff181a46c93df14b08e48fed8352ef6ac312016859",
+    "README.md": "b2ca92d1e791e26ad06c88dd1298fed9b6781a968655e22af059c6b2903277e1",
+    "install.py": "1007ad497dc4c54d9c6a321134f1a676229f75d73278cbede32c89b27f10e5c9",
+    "plugin/PROVENANCE.md": "354894c9e4f8831f54f2fc5743f63cf3048de971076a22e63f2d452cf9ec2128",
+    "plugin/__init__.py": "06a80a032d48be4322f0615d61f9b8b91208ba73e9bee54015e3b871f65e09d1",
+    "plugin/plugin.yaml": "2944a3e6fead9e68af9585626db9d44eefe8b32173b0960d21f3921d48b55cac",
+    "plugin/vendor/SHA256.json": "952e220ce573296c0ad469cf92f2faf995cda33047610fe8f1709ef72bef519d",
+    "plugin/vendor/core/config.json": "6934ee6da7ac5bd70e3047e1222cdc371b4a287f9062ed0561db47426ab20c95",
+    "plugin/vendor/core/platform_runtime.py": "c122e68a2036ee8beed30e9120e683c339b4793496826e646edb55436138fd20",
+    "plugin/vendor/core/protocol/L1.md": "4e502169d69c7b5cc038629d1754131851b0d4c233480867414904640eaf014e",
+    "plugin/vendor/core/protocol/L2.md": "7fffc4cfe270cb0ef2d661602f3fdde2cad2dafff01c85b6d036c4ff7f1b8be7",
+    "plugin/vendor/core/protocol/L3.md": "695aaeca40b35009c86e772d3f53ada2798a6e53a0b3b32de4b0698662345f5a",
+    "plugin/vendor/core/wordlists/en.txt": "cd542e4435059483bdaae2ce25e94250adfb1fc659730cbf2a2cdce8b1692ee8",
+    "plugin/vendor/core/wordlists/ru.txt": "bbf87fc85dc09427857eb203b096e0a307f887f91608803a840d3370ab3e3d75",
+    "plugin/vendor/core/wordlists/zh.txt": "30c19bb1112cd2115f4efc55cd4e60c1f8f5d8d8bf5c9fbf408c0fad67b8e430",
+    "plugin/vendor/core/zaebal.py": "2be36fe36c47b2a7ea614da75ed3294050b2f99246868b7db71d3aca6acb6fb5",
+    "plugin/worker.py": "2739795b16d7b0fdb11fa1a1cdab28d156f573bcaec4cdf45d0236a96984c773",
+    "tests/host_smoke.py": "f54a16d2527e5c17c7766600f6d8e40aa307de09d145668cce27184c1f8d823c",
+    "tests/test_adapter.py": "b1481e04bf7c80e30bf9be82341e23c3f7db89f37cb2a537dc1dc604f3b53cb0",
+    "tests/test_host.py": "53cb3d652a7faed92d995f4eb0e7e9aefba27103c23c2dd02d5578a0cc8ecf4d",
+    "tests/test_installer.py": "c8ea5c0c7299a6b7b9ac962fb1bddff3456fb5412304bd5d35f6e304a22ef660"
+  }
+}

@@ -93,6 +93,8 @@ REQUIRED_MARKERS = {
     "SKILLS write rule": "обязанность фиксировать знания не отменяется",
     "SKILLS pruned-skill rule": "SKILL_PRUNED",
     "Design profile routing": "Main обязан передавать запросы о дизайне",
+    "Direct Blender opt-in": "по явной просьбе пользователя работать в Blender напрямую из Main",
+    "Direct Blender action": "blender.direct",
 }
 # Full-text markers that must NOT reach the always-on prompt.
 FORBIDDEN_MARKERS = {

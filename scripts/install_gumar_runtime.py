@@ -101,6 +101,29 @@ def _copy_tree(skip_user_md: bool = False) -> list[str]:
     mappings.append((SOURCE / "CHANGELOG.md", home / "policies" / "CHANGELOG.md"))
     mappings.append((SOURCE / "action_registry.json", home / "policies" / "action_registry.json"))
 
+    # Install the policy plugin as a user override: the active release may be
+    # older than this runtime bundle. Never mutate an immutable release tree.
+    plugin_source = REPO_ROOT / "plugins" / PLUGIN_ID
+    mappings.extend(
+        (plugin_source / name, home / "plugins" / PLUGIN_ID / name)
+        for name in ("__init__.py", "registry.py", "plugin.yaml")
+    )
+    # Only the explicit Blender craft exception is shared with Main, not the
+    # design profile's memories or wider design skill catalog.
+    for relative in (
+        "routing/design-router",
+        "software-development/blender-mcp",
+        "video/cinedance",
+        "video/acting-system",
+        "creative/lira-image-prompts",
+    ):
+        skill_source = SOURCE / "skills" / relative
+        mappings.extend(
+            (src, home / "skills" / relative / src.relative_to(skill_source))
+            for src in sorted(skill_source.rglob("*"))
+            if src.is_file() and "__pycache__" not in src.parts
+        )
+
     for src, dst in mappings:
         if not src.is_file():
             continue

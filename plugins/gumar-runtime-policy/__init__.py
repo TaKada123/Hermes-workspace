@@ -68,7 +68,10 @@ MEMORY_HEADER_KEYS = ("Mode:",)
 DESIGN_ROUTING_HINT = (
     "Design routing: Main обязан передавать запросы о дизайне, сайтах, презентациях, портфолио, "
     "визуальных системах, графике, layout, branding или visual editing в on-demand skill `design-router` "
-    "через action `design.route`; не выполнять их в Main."
+    "через action `design.route`; не выполнять их в Main. "
+    "Исключение: по явной просьбе пользователя работать в Blender напрямую из Main использовать "
+    "`blender.direct` и `blender-mcp` + cinedance/acting-system/lira-image-prompts с references; "
+    "без design.route."
 )
 
 # On-demand pointers: (when it applies, policy file to read first).

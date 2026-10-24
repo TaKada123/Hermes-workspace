@@ -17,6 +17,8 @@ A narrow Main-Hermes handoff to the native `design` profile. It contains no desi
 
 ## When to Use
 
+Exception: if the user explicitly asks Main to work directly in Blender, select registered action `blender.direct` instead of `design.route`. Load `blender-mcp` plus `cinedance`, `acting-system`, and `lira-image-prompts` with their required references. Execute through Blender MCP in Main: inspect existing objects, checkpoint, fix static composition, verify camera and angles, then animate and visually verify the requested frames. The three creative skills supply applicable craft only, never replace the Blender artifact with a text prompt. Other visual work still routes to design.
+
 Use for requests about design, websites, presentations, portfolios, visual systems, graphics, layout, branding or visual editing.
 
 Do not use for ordinary research, coding, engineering analysis without a visual deliverable, home, finance or document extraction. Do not load Superdesign, Impeccable or engineering-portfolio in Main Hermes.

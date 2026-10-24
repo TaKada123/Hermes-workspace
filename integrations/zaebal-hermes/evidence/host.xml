@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="0" skipped="0" tests="1" time="15.592" timestamp="2026-10-20T16:28:35.486629+00:00" hostname="vottak"><testcase classname="integrations.zaebal-hermes.tests.test_host.HostTests" name="test_real_cli_install_enable_and_hook_in_two_profiles" time="15.548"><system-out>--------------------------------- Captured Log ---------------------------------
+
+--------------------------------- Captured Out ---------------------------------
+HOST_RECEIPT {"home": "/home/vottak/.hermes/cache/scratch/zaebal-host-lidgs3_m", "loader": "installed PluginManager", "same_process_profile_isolation": true, "plugin": {"name": "zaebal-hermes", "key": "zaebal-hermes", "kind": "standalone", "version": "0.1.0", "description": "Локальный pinned Z.A.E.B.A.L.; external auditor строго отключён", "source": "user", "enabled": true, "tools": 0, "hooks": 1, "middleware": 0, "commands": 1, "error": null}, "levels": [1, 2, 2, 3], "system_prefix": "unchanged", "duplicate": "silent", "history_only": "silent", "model_calls": 0, "live_install": false}
+HOST_RECEIPT {"home": "/home/vottak/.hermes/cache/scratch/zaebal-host-lidgs3_m/profiles/design", "loader": "installed PluginManager", "same_process_profile_isolation": null, "plugin": {"name": "zaebal-hermes", "key": "zaebal-hermes", "kind": "standalone", "version": "0.1.0", "description": "Локальный pinned Z.A.E.B.A.L.; external auditor строго отключён", "source": "user", "enabled": true, "tools": 0, "hooks": 1, "middleware": 0, "commands": 1, "error": null}, "levels": [1, 2, 2, 3], "system_prefix": "unchanged", "duplicate": "silent", "history_only": "silent", "model_calls": 0, "live_install": false}
+
+</system-out><system-err>--------------------------------- Captured Err ---------------------------------
+
+</system-err></testcase></testsuite></testsuites>

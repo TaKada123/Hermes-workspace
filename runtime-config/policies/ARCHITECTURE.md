@@ -37,6 +37,8 @@ escalation_target: main
 ```text
 Design Agent
   → domain skill
+      → Ecommerce Card Designer (temporary subordinate via delegate_task)
+          → ecommerce-listing-suite + selected ecommerce image skills
       → Superdesign только для исследования концепций
       → Impeccable только для critique/audit/polish
       → browser/computer-use/vision для проверки рендера
@@ -45,11 +47,15 @@ Design Agent
 
 `engineering-portfolio` — domain skill профиля `design`, а не отдельный постоянный агент. Его зарегистрированные режимы: `engineering_portfolio.create`, `engineering_portfolio.extend`, `engineering_portfolio.edit`.
 
+`ecommerce-card-designer` — временный subordinate-агент под управлением Design Agent, а не отдельный Profile. Design Agent владеет брифом и quality gate, запускает его только через `ecommerce_card.create`, передаёт отдельную инструкцию `agents/ecommerce-card-designer.md`, явные изображения и project context. Исполнитель не получает память профиля автоматически и не делегирует дальше.
+
 ## Временный routing до JEV
 
 Main Hermes маршрутизирует визуальные запросы через `design.route` и передаёт профилю `design` исходный user request verbatim, явные attachments и минимальный project context. Main не загружает Superdesign, Impeccable или engineering-portfolio и не передаёт свой reasoning или нерелевантную память.
 
-После подключения JEV меняется только верхняя точка выбора маршрута: `JEV → design.route → profile design`. Внутренняя архитектура Design Agent не меняется.
+Узкое исключение `blender.direct`: по явной просьбе пользователя работать в Blender напрямую из Main главный Hermes сам использует Blender MCP и bpy, без передачи дизайн-агенту. Перед работой загружаются `blender-mcp`, `cinedance`, `acting-system`, `lira-image-prompts` и обязательные references. Порядок: get_scene_info → checkpoint → статичная композиция → look camera/angles → keyframes → look frames (1, 24, 48, 72, 96 и финальный кадр). Существующие объекты исправляются адресно; произвольное удаление и перезапись исходника запрещены. Готовность подтверждается визуальной проверкой и сохранёнными артефактами. Одновременно сцену изменяет только один исполнитель. Это не разрешает Main выполнять остальные визуальные задачи напрямую.
+
+После подключения JEV меняется только верхняя точка выбора маршрута: `JEV → design.route → profile design`, с сохранением явного исключения `blender.direct`. Внутренняя архитектура Design Agent не меняется.
 
 ## SUBAGENT
 

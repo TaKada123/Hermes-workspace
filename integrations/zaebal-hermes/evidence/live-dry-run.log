@@ -1,0 +1,15 @@
+$ python integrations/zaebal-hermes/install.py --root /home/vottak/.hermes --all-profiles --hermes /home/vottak/.local/bin/hermes
+{
+  "mode": "dry-run",
+  "shared_source": "/home/vottak/.hermes/plugins/zaebal-hermes",
+  "targets": [
+    "/home/vottak/.hermes",
+    "/home/vottak/.hermes/profiles/architect",
+    "/home/vottak/.hermes/profiles/coding",
+    "/home/vottak/.hermes/profiles/design",
+    "/home/vottak/.hermes/profiles/university"
+  ],
+  "auditor": "none",
+  "activation": "enable may hot-reload gateway/backend; fresh process guaranteed; no restart performed"
+}
+exit_code=0
