@@ -1,5 +1,5 @@
 #!/bin/sh
 unset HERMES_PROFILE PYTHONHOME
-export HERMES_HOME='/home/vottak/Проекты/Hermes-workspace/agents/coding'
+export HERMES_HOME=/home/vottak/.hermes/profiles/direct-coding
 export PYTHONPATH=/home/vottak/.hermes/releases/memv2-20261011T130106Z/release
-exec /home/vottak/.hermes/installs/7d27e89e058145aa/environments/dd909b859246486aa5db98a4fe6a538c/venv/bin/python -m hermes_cli.main "$@"
+exec /home/vottak/.hermes/installs/f5aff7c256d636c5/environments/6f5d589fc0194816958eac6d821526cd/venv/bin/python -m hermes_cli.main "$@"

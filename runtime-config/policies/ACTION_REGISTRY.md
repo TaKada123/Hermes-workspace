@@ -32,6 +32,12 @@ status: experimental|stable|deprecated|replaced
 - `replaced` указывает новый `action_id` в описании или метаданных реализации.
 - Registry не содержит секретов.
 
+## Пилот прямого Architect
+
+Завершение общего перехода зарегистрировано отдельно: `agents.direct.cutover`. Пользователь разрешил доперенос истории и собственных `.env`, прямые команды `hermes`, нативные алиасы для общего OAuth и переключение работающего University Gateway. Общий runtime/OAuth сохраняются, старые homes не удаляются; MCP/model tests и push не выполняются.
+
+`architect.direct.install` — experimental workflow, разрешённый пользователем только для Architect. Допускает реализацию `scripts/direct_agent.py`, тесты `tests/scripts/install/test_direct_agent.py` через canonical runner, определения `runtime-config/agents/architect`, документы `docs/direct-agents`, scoped диагностику и установку в `/home/vottak/Проекты/Hermes-workspace/agents/architect`. Разрешены защищённые backups, SQLite/FTS/hash проверки, offline prompt, read-only MCP и ограниченный model smoke, отдельный launcher `architect-direct`, локальный commit. Старый профиль только читается. Не разрешены другие profile migrations, вывод/копирование credentials, перезапуск Gateway/AG2, push или новые платные сервисы. Точный контракт — в `action_registry.json` и `docs/direct-agents/architect-pilot.md`. Регистрация разрешает реализацию, но не означает успешную проверку; статус experimental.
+
 ## Начальный fallback
 
 ```yaml

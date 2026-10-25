@@ -322,6 +322,7 @@ native/fts5_cjk/*.so
 apps/desktop/.dist-build*
 
 # Private direct-agent homes; public definitions stay under runtime-config/agents/.
+/.migration-backups/
 /agents/architect/
 /agents/main/
 /agents/design/

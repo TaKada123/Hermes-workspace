@@ -22,7 +22,12 @@
   },
   "platforms": {
     "tguser": {
-      "enabled": true
+      "enabled": true,
+      "extra": {
+        "session": "/home/vottak/Проекты/Hermes-workspace/agents/university/tguser/tguser.session",
+        "media_dir": "/home/vottak/Проекты/Hermes-workspace/agents/university/tguser/media",
+        "inbox_path": "/home/vottak/Проекты/Hermes-workspace/agents/university/tguser/inbox.jsonl"
+      }
     }
   },
   "onboarding": {
@@ -37,5 +42,9 @@
   },
   "agent": {
     "system_prompt": "\"Самостоятельный агент: пользователь обращается к вам напрямую. Выполняйте его задачу своими инструментами. Автоматическая передача другим постоянным профилям, обязательные Main/design.route/JEV/AG2 больше не используются. Старые инструкции о такой маршрутизации не действуют. Временные подагенты разрешены. Другого специалиста можно только посоветовать пользователю; не запускать его без явной просьбы. Душу и частную память других агентов не читать.\""
+  },
+  "gateway": {
+    "multiplex_profiles": false,
+    "standalone": true
   }
 }

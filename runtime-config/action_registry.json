@@ -5,6 +5,33 @@
   "notes": "Machine-readable view of the action registry. A router selects a registered action_id from here; arbitrary shell commands are forbidden. Keep in sync with ACTION_REGISTRY.md.",
   "actions": [
     {
+      "id": "agents.direct.cutover",
+      "type": "workflow",
+      "description": "Согласованный финальный перенос: история, собственные .env, инструменты, команды hermes и переключение Telegram Gateway на новый University.",
+      "when_to_use": "Только утверждённый пользователем план перехода на самостоятельные агенты.",
+      "input_schema": "Existing old/new homes; preserved shared runtime/OAuth; protected backup; current systemd unit.",
+      "profile": "main",
+      "permissions": "Scoped backup and state copy for five new agents; native profile aliases for shared OAuth without token copying; private .env detachment; launcher and bash alias updates; systemd user Gateway stop/drop-in/start for University, preserving outbound restrictions. No old-home deletion, no MCP/model tests, no push. Keep rollback and read back exact saved targets/service state.",
+      "risk": "medium",
+      "verification": "File/SQLite preservation and credential-reference metadata; command home selection; new University Gateway PID/home and connection status; no private data in Git. No LLM or MCP calls.",
+      "version": "0.1.0",
+      "status": "experimental"
+    },
+    {
+      "id": "architect.direct.install",
+      "type": "workflow",
+      "description": "Разрешённый пользователем пилот прямого Architect: реализация установщика, focused tests, установка и проверка отдельного home.",
+      "when_to_use": "Только согласованный пилот Architect; действие не разрешает перенос других профилей.",
+      "input_schema": "Source Architect home; empty target home; versioned definitions; provisioned Hermes launcher; existing test interpreter.",
+      "profile": "main",
+      "permissions": "Scoped file edits in scripts/direct_agent.py, tests/scripts/install/test_direct_agent.py, runtime-config/agents/architect and docs/direct-agents; scoped terminal commands for implementation, syntax/lint, canonical focused tests, local Git review/commit, SQLite backup/integrity/hash/FTS checks, offline prompt inspection, provisioned Hermes config operations, direct launcher and read-only MCP/model smoke. Source profile read-only; runtime writes only to /home/vottak/Проекты/Hermes-workspace/agents/architect, protected pilot backups and scratch; unique architect-direct launcher may be installed in ~/.local/bin. No secret printing or credential copying, no changes to other profiles, no Gateway/AG2 restart, no push or new paid services.",
+      "risk": "medium",
+      "verification": "Focused tests; actual target home and launcher readback; preserved memory/history/FTS/resources; source unchanged; MCP and bounded direct launch; no private runtime state in Git. Report unverified criteria explicitly.",
+      "version": "0.1.0",
+      "status": "experimental",
+      "entrypoint": "scripts/direct_agent.py install"
+    },
+    {
       "id": "main.reasoning_fallback",
       "type": "fallback",
       "description": "Сложные, новые, междисциплинарные или неуверенно маршрутизируемые задачи.",

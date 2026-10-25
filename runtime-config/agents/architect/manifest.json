@@ -8,7 +8,7 @@
   "private_snapshot": ["memories", "state.db", "sessions"],
   "disable_plugins": ["agent-network", "gumar-runtime-policy"],
   "required_local_plugin": "zaebal-hermes",
-  "credentials": "No credential copy. Use Hermes shared-root OAuth fallback; optional explicit credential-only .env symlink.",
+  "credentials": "Own private .env in each runtime home; native direct-* profile aliases reuse the existing shared-root OAuth store. OAuth tokens are not copied or committed.",
   "skills_policy": "Retain all installed source skills, scripts and references; do not prune the broad legacy set in this pilot.",
   "external_dependencies": "Preserve MCP commands and installed tool symlinks with explicit absolute paths; parent verifies reachability.",
   "memory_policy": "Preserve source backend and limits; SQLite online backup for history, no memory migration.",

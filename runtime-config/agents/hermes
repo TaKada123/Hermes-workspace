@@ -1,0 +1,15 @@
+#!/bin/sh
+# Explicit agent selection; all other Hermes commands use the new Main.
+agent=main
+case "${1-}" in
+  main|design|coding|university|architect) agent=$1; shift ;;
+  -p|--profile)
+    if [ "$#" -lt 2 ]; then printf '%s\n' 'Usage: hermes [main|design|coding|university|architect] [command ...]' >&2; exit 2; fi
+    agent=$2; shift 2 ;;
+  --profile=*) agent=${1#--profile=}; shift ;;
+esac
+case "$agent" in
+  main|design|coding|university|architect)
+    exec "/home/vottak/.local/bin/$agent-direct" "$@" ;;
+  *) printf '%s\n' 'Unknown agent. Choose main, design, coding, university or architect.' >&2; exit 2 ;;
+esac
