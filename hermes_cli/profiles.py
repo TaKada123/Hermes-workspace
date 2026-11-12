@@ -2121,7 +2121,16 @@ def get_active_profile_name() -> str:
     """Profile name inferred from HERMES_HOME: ``"default"`` when unset or ``~/.hermes``, the
     name under ``~/.hermes/profiles/<name>``, ``"custom"`` for any other path."""
     from hermes_constants import get_hermes_home
-    resolved = get_hermes_home().resolve()
+    home = get_hermes_home()
+    # Preserve the selected profile's lexical name before resolving symlinks.
+    # Standalone profiles may link to homes outside ~/.hermes/profiles.
+    try:
+        parts = home.absolute().relative_to(_get_profiles_root().absolute()).parts
+        if len(parts) == 1 and _PROFILE_ID_RE.fullmatch(parts[0]):
+            return parts[0]
+    except ValueError:
+        pass
+    resolved = home.resolve()
     if resolved == _get_default_hermes_home().resolve():
         return "default"
     profiles_root = _get_profiles_root().resolve()
